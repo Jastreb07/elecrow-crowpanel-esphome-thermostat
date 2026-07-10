@@ -2,3 +2,4 @@ secrets.yaml
 .esphome
 *.bin
 .venv
+.idea
