@@ -1,0 +1,342 @@
+# lvgl_preview.py
+#
+# Parst thermostat_480.yaml + thermostat_240.yaml (inkl. gemeinsamem
+# Package thermostat_common.yaml per `packages: !include`) und rendert
+# die LVGL-Screens beider Boards als HTML-Vorschau: 480er-Board in einer
+# Kachel-Reihe, darunter in eigener Reihe das 240er-Board. Kein Ersatz
+# fuer das echte Rendering, aber gut genug, um Positionen/Groessen zu
+# pruefen.
+#
+# Nutzung:
+#   python tools\lvgl_preview.py          -> Watcher: Server auf
+#       http://localhost:8123/preview.html, Browser laedt bei jeder
+#       YAML-Aenderung (480/240/common) automatisch neu (Strg+C beendet)
+#   python tools\lvgl_preview.py --once   -> nur einmal generieren
+#
+# Ergebnis: tools\preview.html
+
+import re
+import sys
+import time
+import threading
+import webbrowser
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+import yaml
+
+HERE = Path(__file__).resolve().parent
+PROJECT = HERE.parent
+COMMON_FILE = PROJECT / "thermostat_common.yaml"
+OUT_FILE = HERE / "preview.html"
+VERSION_FILE = HERE / "preview_version.txt"
+PORT = 8123
+
+# Board-Varianten: Name -> (YAML-Datei, natives Panel-Format)
+BOARDS = [
+    ("480x480", PROJECT / "thermostat_480.yaml", 480),
+    ("240x240", PROJECT / "thermostat_240.yaml", 240),
+]
+WATCH_FILES = [COMMON_FILE] + [p for _, p, _ in BOARDS]
+
+
+# ---- ESPHome-YAML laden (unbekannte Tags wie !lambda/!secret ignorieren,
+# !include tatsaechlich aufloesen fuer packages:) ----
+class EsphomeLoader(yaml.SafeLoader):
+    pass
+
+
+def _unknown(loader, tag_suffix, node):
+    if isinstance(node, yaml.ScalarNode):
+        return f"<{node.tag}>"
+    if isinstance(node, yaml.SequenceNode):
+        return loader.construct_sequence(node)
+    return loader.construct_mapping(node)
+
+
+def _include(loader, node):
+    rel = loader.construct_scalar(node)
+    path = PROJECT / rel
+    return load_yaml(path)
+
+
+EsphomeLoader.add_multi_constructor("!", _unknown)
+EsphomeLoader.add_constructor("!include", _include)
+
+
+def load_yaml(path):
+    raw = path.read_text(encoding="utf-8")
+    return yaml.load(raw, Loader=EsphomeLoader) or {}
+
+
+def merge_config(old, new):
+    """Vereinfachtes packages-Merge: dicts rekursiv, Listen aneinandergehaengt."""
+    if isinstance(new, dict):
+        if not isinstance(old, dict):
+            return new
+        res = dict(old)
+        for k, v in new.items():
+            res[k] = merge_config(old.get(k), v)
+        return res
+    if isinstance(new, list):
+        if not isinstance(old, list):
+            return new
+        return old + new
+    if new is None:
+        return old
+    return new
+
+
+def load_board_config(path):
+    """Laedt ein Board-YAML und mergt seine packages: (thermostat_common.yaml) rein."""
+    config = load_yaml(path)
+    packages = config.pop("packages", {}) or {}
+    merged = {}
+    for pkg_config in packages.values():
+        merged = merge_config(merged, pkg_config)
+    merged = merge_config(merged, config)
+    return merged
+
+
+# ---- Fonts: id -> (size, weight, family) ----
+WEIGHTS = {"bold": 700, "semibold": 600, "medium": 500, "regular": 400}
+
+
+def font_map(config):
+    fonts = {}
+    for f in config.get("font", []):
+        fid = f.get("id", "")
+        size = f.get("size", 24)
+        file_ = str(f.get("file", "")).lower()
+        family = "bootstrap-icons" if "bootstrap" in file_ else "Rajdhani"
+        weight = 400
+        for key, w in WEIGHTS.items():
+            if key in fid.lower() or key in file_:
+                weight = w
+        fonts[fid] = (size, weight, family)
+    return fonts
+
+
+# Echte Bootstrap-Icon-Glyphen je Widget-ID (Codepoints wie in
+# thermostat_helpers.h; werden dort erst zur Laufzeit gesetzt)
+ICON_HINTS = [
+    (re.compile(r"hum"), ""),            # droplet-half
+    (re.compile(r"thermo_current"), ""),  # thermometer-high
+    (re.compile(r"mode"), ""),            # fire
+    (re.compile(r"menu_icon"), ""),       # thermometer-half
+]
+
+
+def label_text(widget):
+    wid = widget.get("id", "")
+    txt = str(widget.get("text", ""))
+    if txt.startswith("<"):  # !lambda
+        txt = "(lambda)"
+    if "icon" in wid:
+        for rx, repl in ICON_HINTS:
+            if rx.search(wid):
+                return repl
+        return ""  # bi-question-circle
+    return txt if txt else "(leer)"
+
+
+def color_css(value, default="#FFFFFF"):
+    if value is None:
+        return default
+    s = str(value)
+    if s.startswith("0x"):
+        return "#" + s[2:].zfill(6)
+    if re.fullmatch(r"[0-9A-Fa-f]{6}", s):
+        return "#" + s
+    if s.isdigit():
+        return f"#{int(s):06X}"
+    return default
+
+
+def pos_css(widget, size):
+    """align + x/y -> CSS-Position im size x size-Container."""
+    align = str(widget.get("align", "TOP_LEFT")).upper()
+    x = int(widget.get("x", 0) or 0)
+    y = int(widget.get("y", 0) or 0)
+    css, tx, ty = [], "0", "0"
+    # horizontal
+    if "MID" in align or align == "CENTER":
+        css.append(f"left:{size // 2 + x}px")
+        tx = "-50%"
+    elif "RIGHT" in align:
+        css.append(f"right:{-x}px")
+    else:
+        css.append(f"left:{x}px")
+    # vertikal
+    if align.startswith("TOP"):
+        css.append(f"top:{y}px")
+    elif align.startswith("BOTTOM"):
+        css.append(f"bottom:{-y}px")
+    else:  # CENTER / LEFT_MID / RIGHT_MID
+        css.append(f"top:{size // 2 + y}px")
+        ty = "-50%"
+    css.append(f"transform:translate({tx},{ty})")
+    return ";".join(css)
+
+
+def render_widget(widget_entry, fonts, size):
+    (wtype, w), = widget_entry.items()
+    wid = w.get("id", "?")
+    hidden = w.get("hidden", False)
+    hid_css = "opacity:.35;outline:1px dashed #666;" if hidden else ""
+    title = f"{wid} ({wtype})" + (" [hidden]" if hidden else "")
+
+    if wtype == "label":
+        fsize, weight, family = fonts.get(str(w.get("text_font", "")), (24, 400, "Rajdhani"))
+        color = color_css(w.get("text_color"))
+        extra = ""
+        if w.get("width"):
+            ta = str(w.get("text_align", "CENTER")).lower()
+            extra = f"width:{int(w['width'])}px;text-align:{ta};"
+        return (
+            f'<div class="w" title="{title}" style="{pos_css(w, size)};'
+            f"font-family:'{family}';font-size:{fsize}px;font-weight:{weight};"
+            f'color:{color};{extra}{hid_css}">'
+            f"{label_text(w)}</div>"
+        )
+    if wtype == "arc":
+        d = int(w.get("width", 200))
+        aw = int((w.get("indicator") or {}).get("arc_width", w.get("arc_width", 10)))
+        color = color_css((w.get("indicator") or {}).get("arc_color"), "#FF5A2D")
+        bg = color_css(w.get("arc_color"), "#2A2A2A")
+        return (
+            f'<div class="w" title="{title}" style="{pos_css(w, size)};width:{d - aw}px;'
+            f"height:{d - aw}px;border-radius:50%;border:{aw}px solid {bg};"
+            f'border-top-color:{color};border-right-color:{color};{hid_css}"></div>'
+        )
+    if wtype == "obj":
+        wd, ht = int(w.get("width", 10)), int(w.get("height", 10))
+        bg = color_css(w.get("bg_color"), "#3A3A3A")
+        return (
+            f'<div class="w" title="{title}" style="{pos_css(w, size)};width:{wd}px;'
+            f'height:{ht}px;background:{bg};{hid_css}"></div>'
+        )
+    return ""  # button (transparent) etc. ueberspringen
+
+
+def render_board(name, path, size):
+    config = load_board_config(path)
+    fonts = font_map(config)
+    pages = config.get("lvgl", {}).get("pages", [])
+
+    tiles = []
+    for page in pages:
+        pid = page.get("id", "?")
+        widgets = "".join(render_widget(we, fonts, size) for we in page.get("widgets", []))
+        tiles.append(
+            f'<div class="page"><h2>{pid}</h2>'
+            f'<div class="screen" style="width:{size}px;height:{size}px">{widgets}</div></div>'
+        )
+
+    return (
+        f'<section class="board">'
+        f'<h1>{name} &ndash; {path.name}</h1>'
+        f'<div class="board-row">{"".join(tiles)}</div>'
+        f'</section>'
+    )
+
+
+def generate():
+    board_html = "".join(render_board(name, path, size) for name, path, size in BOARDS)
+
+    version = str(time.time_ns())
+    VERSION_FILE.write_text(version, encoding="utf-8")
+    OUT_FILE.write_text(
+        f"""<!doctype html><html><head><meta charset="utf-8">
+<title>LVGL Preview - thermostat_480 / thermostat_240</title>
+<style>
+ @font-face{{font-family:'Rajdhani';font-weight:700;
+   src:url('../assets/fonts/Rajdhani-Bold.ttf') format('truetype')}}
+ @font-face{{font-family:'Rajdhani';font-weight:600;
+   src:url('../assets/fonts/Rajdhani-SemiBold.ttf') format('truetype')}}
+ @font-face{{font-family:'Rajdhani';font-weight:500;
+   src:url('../assets/fonts/Rajdhani-Medium.ttf') format('truetype')}}
+ @font-face{{font-family:'Rajdhani';font-weight:400;
+   src:url('../assets/fonts/Rajdhani-Regular.ttf') format('truetype')}}
+ @font-face{{font-family:'bootstrap-icons';
+   src:url('../assets/fonts/bootstrap-icons.woff') format('woff')}}
+ body{{background:#1b1b1b;color:#ddd;font-family:'Rajdhani','Segoe UI',sans-serif;
+      padding:24px}}
+ h1{{font-size:18px;font-weight:600;color:#ccc;margin:0 0 12px}}
+ h2{{font-size:16px;font-weight:500;color:#9a9a9a;text-align:center}}
+ .board{{margin-bottom:36px}}
+ .board-row{{display:flex;gap:40px;flex-wrap:wrap}}
+ .screen{{position:relative;background:#000;
+      border-radius:50%;overflow:hidden;box-shadow:0 0 0 6px #333}}
+ .w{{position:absolute;white-space:nowrap;line-height:1}}
+ .w:hover{{outline:1px solid #0f0}}
+ #status{{position:fixed;right:12px;top:8px;font-size:13px;color:#6a6}}
+</style></head><body>
+<div id="status">live \N{BLACK CIRCLE}</div>
+{board_html}
+<script>
+const VERSION = "{version}";
+async function poll() {{
+  try {{
+    const r = await fetch("preview_version.txt", {{cache: "no-store"}});
+    const v = (await r.text()).trim();
+    if (v && v !== VERSION) location.reload();
+    document.getElementById("status").style.color = "#6a6";
+  }} catch (e) {{
+    document.getElementById("status").style.color = "#a66";
+  }}
+  setTimeout(poll, 700);
+}}
+poll();
+</script></body></html>""",
+        encoding="utf-8",
+    )
+    print(f"[{time.strftime('%H:%M:%S')}] preview.html aktualisiert")
+
+
+class QuietHandler(SimpleHTTPRequestHandler):
+    def log_message(self, *args):
+        pass  # keine Request-Logs in der Konsole
+
+
+def serve():
+    # Projektordner serven, damit ../assets/fonts/* erreichbar ist
+    handler = partial(QuietHandler, directory=str(PROJECT))
+    httpd = ThreadingHTTPServer(("127.0.0.1", PORT), handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    return httpd
+
+
+def watch():
+    generate()
+    serve()
+    url = f"http://localhost:{PORT}/tools/preview.html"
+    print(f"Watcher laeuft: {url}  (Strg+C beendet)")
+    webbrowser.open(url)
+    last = {p: p.stat().st_mtime_ns for p in WATCH_FILES}
+    try:
+        while True:
+            time.sleep(0.5)
+            changed = False
+            for p in WATCH_FILES:
+                mtime = p.stat().st_mtime_ns
+                if mtime != last[p]:
+                    last[p] = mtime
+                    changed = True
+            if changed:
+                time.sleep(0.2)  # Editor evtl. noch am Schreiben
+                try:
+                    generate()
+                except yaml.YAMLError as e:
+                    print(f"[{time.strftime('%H:%M:%S')}] YAML-Fehler: {e}")
+    except KeyboardInterrupt:
+        print("\nWatcher beendet.")
+
+
+if __name__ == "__main__":
+    if "--once" in sys.argv:
+        generate()
+        webbrowser.open(OUT_FILE.as_uri())
+    else:
+        watch()

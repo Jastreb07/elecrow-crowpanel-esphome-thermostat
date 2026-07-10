@@ -1,0 +1,659 @@
+########################################################################
+# thermostat_480.yaml
+#
+# Board-Variante: CrowPanel 2.1" HMI ESP32-S3 Rotary Display 480x480,
+# ST7701S RGB-Panel, CST826-Touch (extern, lokal gepatcht), PCF8574-
+# Expander, Encoder GPIO4/42 (Pins getauscht = Drehrichtungs-Fix).
+# Alle Software-Logik (Climate, LVGL-Screens, Scripts) kommt aus dem
+# gemeinsamen Package thermostat_common.yaml.
+########################################################################
+
+packages:
+  common: !include thermostat_common.yaml
+
+# Eigener Basisname pro Board-Typ, sonst teilen sich 480er/240er denselben
+# PlatformIO-Build-Ordner (.esphome/build/thermostat) -> jeder Wechsel
+# zwischen den Varianten erzwingt einen fast kompletten Rebuild, weil sich
+# Display-/Touch-Komponenten grundlegend unterscheiden. MAC-Suffix bleibt
+# aktiv (name_add_mac_suffix in thermostat_common.yaml), mehrere 480er
+# Boards bekommen also weiterhin automatisch eindeutige Namen.
+substitutions:
+  device_name: thermostat480
+
+esphome:
+  on_boot:
+    - priority: 800
+      then:
+        - output.turn_on: lcd_power
+        - output.turn_on: display_reset
+        - delay: 100ms
+        - output.turn_off: display_reset
+        - delay: 100ms
+        - output.turn_on: tp_reset
+        - delay: 100ms
+        - output.turn_off: tp_reset
+        - delay: 120ms
+        - output.turn_on: tp_reset
+        - delay: 120ms
+        - output.turn_on: tp_intr
+
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [cst826]
+
+# ------------------------------------------------------------------
+# I2C + PCF8574
+# ------------------------------------------------------------------
+i2c:
+  sda: GPIO38
+  scl: GPIO39
+  id: bus_a
+  scan: true
+
+pcf8574:
+  - id: pcf
+    address: 0x21
+
+output:
+  - platform: ledc
+    pin: GPIO6
+    id: bl_pwm
+    frequency: 19531Hz
+  - platform: gpio
+    id: lcd_power
+    pin:
+      pcf8574: pcf
+      number: 3
+      mode:
+        output: true
+  - platform: gpio
+    id: tp_reset
+    pin:
+      pcf8574: pcf
+      number: 0
+      mode:
+        output: true
+  - platform: gpio
+    id: display_reset
+    pin:
+      pcf8574: pcf
+      number: 4
+      mode:
+        output: true
+      inverted: true
+  - platform: gpio
+    id: tp_intr
+    pin:
+      pcf8574: pcf
+      number: 2
+      mode:
+        output: true
+
+# ------------------------------------------------------------------
+# Display / Touch (Elecrow-Referenz)
+# ------------------------------------------------------------------
+spi:
+  clk_pin: GPIO2
+  mosi_pin: GPIO1
+
+touchscreen:
+  platform: cst826
+  id: my_touchscreen
+  i2c_id: bus_a
+  skip_probe: true
+  update_interval: 25ms
+  address: 0x15
+  on_touch:
+    - script.execute: wake_display
+    - lambda: |-
+        id(swipe_start_x) = touch.x;
+        id(swipe_last_x) = touch.x;
+  on_update:
+    - lambda: |-
+        for (auto t : touches)
+          if (t.state <= 2) id(swipe_last_x) = t.x;
+  on_release:
+    - script.execute: handle_swipe_release
+
+display:
+  - platform: st7701s
+    id: my_display
+    update_interval: 50ms
+    spi_mode: MODE3
+    color_order: RGB
+    invert_colors: false
+    dimensions:
+      width: 480
+      height: 480
+    cs_pin: GPIO16
+    de_pin: GPIO40
+    hsync_pin: GPIO15
+    vsync_pin: GPIO7
+    pclk_pin: GPIO41
+    data_pins:
+      red: [46, 3, 8, 18, 17]
+      green: [14, 13, 12, 11, 10, 9]
+      blue: [5, 45, 48, 47, 21]
+    hsync_front_porch: 20
+    hsync_pulse_width: 10
+    hsync_back_porch: 10
+    vsync_front_porch: 8
+    vsync_pulse_width: 10
+    vsync_back_porch: 10
+    show_test_card: false
+    pclk_frequency: 18MHz
+    pclk_inverted: true
+    init_sequence:
+      - [0x01]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x10]
+      - [0xCC, 0x10]
+      - [0xCD, 0x08]
+      - [0xB0, 0x02, 0x13, 0x1B, 0x0D, 0x10, 0x05, 0x08, 0x07, 0x07, 0x24, 0x04, 0x11, 0x0E, 0x2C, 0x33, 0x1D]
+      - [0xB1, 0x05, 0x13, 0x1B, 0x0D, 0x11, 0x05, 0x08, 0x07, 0x07, 0x24, 0x04, 0x11, 0x0E, 0x2C, 0x33, 0x1D]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x11]
+      - [0xB0, 0x5D]
+      - [0xB1, 0x43]
+      - [0xB2, 0x81]
+      - [0xB3, 0x80]
+      - [0xB5, 0x43]
+      - [0xB7, 0x85]
+      - [0xB8, 0x20]
+      - [0xC1, 0x78]
+      - [0xC2, 0x78]
+      - [0xD0, 0x88]
+      - [0xE0, 0x00, 0x00, 0x02]
+      - [0xE1, 0x03, 0xA0, 0x00, 0x00, 0x04, 0xA0, 0x00, 0x00, 0x00, 0x20, 0x20]
+      - [0xE2, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+      - [0xE3, 0x00, 0x00, 0x11, 0x00]
+      - [0xE4, 0x22, 0x00]
+      - [0xE5, 0x05, 0xEC, 0xA0, 0xA0, 0x07, 0xEE, 0xA0, 0xA0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+      - [0xE6, 0x00, 0x00, 0x11, 0x00]
+      - [0xE7, 0x22, 0x00]
+      - [0xE8, 0x06, 0xED, 0xA0, 0xA0, 0x08, 0xEF, 0xA0, 0xA0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+      - [0xEB, 0x00, 0x00, 0x40, 0x40, 0x00, 0x00, 0x00]
+      - [0xED, 0xFF, 0xFF, 0xFF, 0xBA, 0x0A, 0xBF, 0x45, 0xFF, 0xFF, 0x54, 0xFB, 0xA0, 0xAB, 0xFF, 0xFF, 0xFF]
+      - [0xEF, 0x10, 0x0D, 0x04, 0x08, 0x3F, 0x1F]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x13]
+      - [0xEF, 0x08]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x00]
+      - [0x36, 0x00]
+      - [0x3A, 0x60]
+      - [0x11]
+      - delay 100ms
+      - [0x29]
+      - delay 50ms
+
+# ------------------------------------------------------------------
+# LVGL – 3 Screens
+# ------------------------------------------------------------------
+lvgl:
+  displays:
+    - my_display
+  touchscreens:
+    - my_touchscreen
+  bg_color: "0x000000"
+  default_font: rajdhani_medium_24
+
+  on_idle:
+    - timeout: !lambda 'return (uint32_t)(id(dim_delay_num).state * 1000.0f);'
+      then:
+        - lambda: 'id(display_dimmed) = true;'
+        - light.turn_on:
+            id: display_backlight
+            brightness: !lambda 'return id(dim_level_num).state / 100.0f;'
+        - script.execute: update_status_led
+    - timeout: !lambda 'return (uint32_t)(id(idle_home_num).state * 1000.0f);'
+      then:
+        - lambda: 'id(ui_context) = 0;'
+        - script.execute: refresh_temps
+        - script.execute: refresh_status
+        - lvgl.page.show: screen_home
+
+  pages:
+    # ================= Home-Screen =================
+    - id: screen_home
+      bg_color: "0x000000"
+      widgets:
+        - button:
+            id: button_home_background
+            align: CENTER
+            width: 480
+            height: 480
+            radius: 0
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            on_click:
+              - script.execute: wake_display
+              - lambda: 'id(ui_context) = 1;'
+              - lvgl.page.show: screen_thermostat
+
+        - label:
+            id: label_home_hvac_mode
+            text: "Heat"
+            text_font: rajdhani_medium_24
+            text_color: 0xEDEDED
+            align: TOP_MID
+            y: 45
+        - label:
+            id: label_home_preset
+            text: ""
+            text_font: rajdhani_medium_24
+            text_color: 0x9A9A9A
+            align: TOP_MID
+            y: 80
+        - label:
+            id: label_conn_home
+            text: "Connection failed"
+            text_font: rajdhani_medium_24
+            text_color: 0x9A9A9A
+            align: CENTER
+            y: -110
+            hidden: true
+
+        - label:
+            id: label_home_current_temperature
+            text: "38"
+            text_font: rajdhani_bold_220
+            text_color: 0xFFFFFF
+            align: CENTER
+            x: -15
+            y: 10
+            width: 260
+            text_align: RIGHT
+        - label:
+            id: label_home_current_unit
+            text: "°C"
+            text_font: rajdhani_semibold_74
+            text_color: 0xB0B0B0
+            align: CENTER
+            x: 150
+            y: -35
+            width: 80
+            text_align: LEFT
+        - label:
+            id: label_home_current_decimal
+            text: ".0"
+            text_font: rajdhani_semibold_74
+            text_color: 0xFFFFFF
+            align: CENTER
+            x: 160
+            y: 50
+            width: 80
+            text_align: LEFT
+        - label:
+            id: icon_mode_home
+            text: ""
+            text_font: icons_90
+            text_color: 0x9A9A9A
+            align: CENTER
+            x: -160
+            y: 10
+
+        - label:
+            id: label_home_humidity
+            text: "43%"
+            text_font: rajdhani_semibold_44
+            text_color: 0x9A9A9A
+            align: CENTER
+            y: 115
+            width: 100
+            text_align: CENTER
+            hidden: true
+
+        - label:
+            id: label_home_time
+            text: "21:05"
+            text_font: rajdhani_semibold_42
+            text_color: 0xE0E0E0
+            align: BOTTOM_MID
+            x: -44
+            y: -50
+            width: 110
+            text_align: RIGHT
+        - label:
+            id: label_home_weekday
+            text: "Tue"
+            text_font: rajdhani_medium_22
+            text_color: 0xB0B0B0
+            align: BOTTOM_MID
+            x: 65
+            y: -76
+            width: 90
+            text_align: LEFT
+        - label:
+            id: label_home_date
+            text: "07 Jul"
+            text_font: rajdhani_medium_22
+            text_color: 0x8A8A8A
+            align: BOTTOM_MID
+            x: 65
+            y: -54
+            width: 90
+            text_align: LEFT
+
+    # ================= Thermostat-Screen =================
+    - id: screen_thermostat
+      bg_color: "0x000000"
+      widgets:
+        - button:
+            id: button_thermostat_background
+            align: CENTER
+            width: 480
+            height: 480
+            radius: 0
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            on_click:
+              - script.execute: wake_display
+              - lambda: 'id(ui_context) = 0;'
+              - lvgl.page.show: screen_home
+
+        - arc:
+            id: arc_temperature
+            align: CENTER
+            width: 460
+            height: 460
+            min_value: 0
+            max_value: 100
+            value: 55
+            start_angle: 0
+            end_angle: 360
+            rotation: 270
+            arc_color: 0x2A2A2A
+            arc_width: 14
+            adjustable: false
+            clickable: false
+            x: 1
+            y: 5
+            indicator:
+              arc_color: 0xFF5A2D
+              arc_width: 14
+
+        - label:
+            id: label_hvac_mode
+            text: "Heat"
+            text_font: rajdhani_medium_24
+            text_color: 0xEDEDED
+            align: TOP_MID
+            y: 45
+        - label:
+            id: label_preset
+            text: ""
+            text_font: rajdhani_medium_24
+            text_color: 0x9A9A9A
+            align: TOP_MID
+            y: 80
+        - label:
+            id: label_conn_thermo
+            text: "Connection failed"
+            text_font: rajdhani_medium_24
+            text_color: 0x9A9A9A
+            align: CENTER
+            y: -110
+            hidden: true
+
+        - label:
+            id: icon_mode_thermo
+            text: ""
+            text_font: icons_62
+            text_color: 0x9A9A9A
+            align: CENTER
+            x: -110
+            y: -50
+        - label:
+            id: icon_thermo_current
+            text: ""
+            text_font: icons_24
+            text_color: 0xFF5A2D
+            align: CENTER
+            x: -170
+            y: 15
+            hidden: true
+        - label:
+            id: label_current_temperature
+            text: "20.5°"
+            text_font: rajdhani_semibold_40
+            text_color: 0xDADADA
+            align: CENTER
+            x: -110
+            y: 15
+            width: 90
+            text_align: RIGHT
+        - label:
+            id: icon_hum_thermo
+            text: ""
+            text_font: icons_24
+            text_color: 0x6EC6FF
+            align: CENTER
+            x: -170
+            y: 65
+            hidden: true
+        - label:
+            id: label_humidity_thermo
+            text: "48%"
+            text_font: rajdhani_semibold_40
+            text_color: 0x9A9A9A
+            align: CENTER
+            x: -110
+            y: 63
+            width: 90
+            text_align: RIGHT
+            hidden: true
+
+        - obj:
+            id: divider_thermostat
+            align: CENTER
+            x: -55
+            y: 12
+            width: 3
+            height: 160
+            bg_color: 0x3A3A3A
+            border_width: 0
+            radius: 0
+
+        - label:
+            id: label_target_temperature
+            text: "38"
+            text_font: rajdhani_bold_186
+            text_color: 0xFFFFFF
+            align: CENTER
+            x: 38
+            y: 10
+            width: 220
+            text_align: RIGHT
+        - label:
+            id: label_target_unit
+            text: "°C"
+            text_font: rajdhani_semibold_60
+            text_color: 0xB0B0B0
+            align: CENTER
+            x: 170
+            y: -30
+            width: 60
+            text_align: LEFT
+        - label:
+            id: label_target_decimal
+            text: ".0"
+            text_font: rajdhani_semibold_60
+            text_color: 0xFFFFFF
+            align: CENTER
+            x: 180
+            y: 47
+            width: 60
+            text_align: LEFT
+        # Zeigt bei Dual-Setpoint-Entitäten (heat_cool), welcher Sollwert
+        # gerade per Encoder verstellt wird: TRV (low) oder AC (high).
+        - label:
+            id: label_setpoint_mode
+            text: ""
+            text_font: rajdhani_medium_24
+            text_color: 0x9A9A9A
+            align: CENTER
+            x: 65
+            y: 95
+            hidden: true
+
+        - label:
+            id: label_clock_time
+            text: "21:05"
+            text_font: rajdhani_semibold_42
+            text_color: 0xE0E0E0
+            align: BOTTOM_MID
+            x: -44
+            y: -50
+            width: 110
+            text_align: RIGHT
+        - label:
+            id: label_thermo_weekday
+            text: "Tue"
+            text_font: rajdhani_medium_22
+            text_color: 0xB0B0B0
+            align: BOTTOM_MID
+            x: 65
+            y: -76
+            width: 90
+            text_align: LEFT
+        - label:
+            id: label_thermo_date
+            text: "07 Jul"
+            text_font: rajdhani_medium_22
+            text_color: 0x8A8A8A
+            align: BOTTOM_MID
+            x: 65
+            y: -54
+            width: 90
+            text_align: LEFT
+
+    # ================= Settings-Menü =================
+    - id: screen_settings
+      bg_color: "0x000000"
+      widgets:
+        - label:
+            id: label_settings_title
+            text: "Settings"
+            text_font: rajdhani_medium_24
+            text_color: 0x9A9A9A
+            align: TOP_MID
+            y: 48
+        - label:
+            id: label_menu_icon
+            text: ""
+            text_font: icons_32
+            text_color: 0xFFFFFF
+            align: TOP_MID
+            y: 92
+        - label:
+            id: label_menu_prev
+            text: ""
+            text_font: rajdhani_medium_24
+            text_color: 0x555555
+            align: CENTER
+            y: -80
+        - label:
+            id: label_menu_current
+            text: ""
+            text_font: rajdhani_semibold_40
+            text_color: 0xFFFFFF
+            align: CENTER
+        - label:
+            id: label_menu_next
+            text: ""
+            text_font: rajdhani_medium_24
+            text_color: 0x555555
+            align: CENTER
+            y: 80
+        - label:
+            id: label_menu_value
+            text: ""
+            text_font: rajdhani_medium_24
+            text_color: 0x9A9A9A
+            align: BOTTOM_MID
+            y: -68
+
+# ------------------------------------------------------------------
+# Fonts (nur was dieses Board wirklich braucht -> spart Flash/RAM)
+# ------------------------------------------------------------------
+font:
+  - file: "assets/fonts/Rajdhani-Bold.ttf"
+    id: rajdhani_bold_186
+    size: 186
+    bpp: 4
+    glyphs: ["0123456789", ".-"]
+  - file: "assets/fonts/Rajdhani-Bold.ttf"
+    id: rajdhani_bold_220
+    size: 220
+    bpp: 4
+    glyphs: ["0123456789", ".-"]
+  - file: "assets/fonts/Rajdhani-SemiBold.ttf"
+    id: rajdhani_semibold_40
+    size: 40
+    bpp: 4
+    glyphs: &rajdhani_glyphs [
+        "0123456789",
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        "abcdefghijklmnopqrstuvwxyz",
+        "äöüÄÖÜß",
+        " .,:%°·-/=()",
+      ]
+  - file: "assets/fonts/Rajdhani-SemiBold.ttf"
+    id: rajdhani_semibold_42
+    size: 42
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+  - file: "assets/fonts/Rajdhani-SemiBold.ttf"
+    id: rajdhani_semibold_44
+    size: 44
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+  - file: "assets/fonts/Rajdhani-SemiBold.ttf"
+    id: rajdhani_semibold_60
+    size: 60
+    bpp: 4
+    glyphs: ["0123456789", ".-°CF%"]
+  - file: "assets/fonts/Rajdhani-SemiBold.ttf"
+    id: rajdhani_semibold_74
+    size: 74
+    bpp: 4
+    glyphs: ["0123456789", ".-°CF%"]
+  - file: "assets/fonts/Rajdhani-Medium.ttf"
+    id: rajdhani_medium_22
+    size: 22
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+  - file: "assets/fonts/Rajdhani-Medium.ttf"
+    id: rajdhani_medium_24
+    size: 24
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+  - file: "assets/fonts/bootstrap-icons.woff"
+    id: icons_24
+    size: 24
+    bpp: 4
+    glyphs: &icon_glyphs_all [
+        "", "", "", "", "", ""      ]
+  - file: "assets/fonts/bootstrap-icons.woff"
+    id: icons_62
+    size: 62
+    bpp: 4
+    glyphs: *icon_glyphs_all
+  - file: "assets/fonts/bootstrap-icons.woff"
+    id: icons_90
+    size: 90
+    bpp: 4
+    glyphs: *icon_glyphs_all
+
+  # Menü-Icons (16 unique Glyphen für 17 Menüpunkte, Index 13 nutzt
+  # bewusst denselben Glyph wie Index 1 wieder -> eigener Glyphen-Satz,
+  # NICHT icon_glyphs_all, sonst fehlen fast alle Menü-Piktogramme)
+  - file: "assets/fonts/bootstrap-icons.woff"
+    id: icons_32
+    size: 32
+    bpp: 4
+    glyphs: &menu_icons_all [
+        "", "", "", "", "", "",
+        "", "", "", "", "", "",
+        "", "", "", "", "", ""      ]

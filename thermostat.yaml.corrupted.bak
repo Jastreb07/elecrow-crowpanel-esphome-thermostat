@@ -1,0 +1,2070 @@
+﻿########################################################################
+# thermostat.yaml
+#
+# CrowPanel 2.1" HMI ESP32-S3 Rotary Display â€“ Home-Assistant Thermostat-
+# Controller (Nest-artiges dunkles Design).
+#
+# EINE Home-Assistant-climate-EntitÃ¤t steuert alles: reine Heizung (TRV),
+# reine Klimaanlage ODER beides gleichzeitig (z.B. Split-Klima oder
+# better_thermostat mit cooler). Die verfÃ¼gbaren hvac_modes/preset_modes
+# werden zur Laufzeit aus der EntitÃ¤t gelesen; Modus-Icon/Ringfarbe
+# richten sich nach dem aktuellen HVAC-Modus (Heizen = rot-orange,
+# KÃ¼hlen = hellblau, Aus = grau; im Mono-Design alles weiÃŸ).
+#
+# Screens: screen_home (Standard) -> screen_thermostat -> screen_settings
+#
+# Bedienung (Knob):
+#   Home:        drehen ODER kurz drÃ¼cken -> Thermostat-Screen
+#   Thermostat:  drehen        -> Zieltemperatur +/- 0.5 Â°C (entprellt)
+#                kurz drÃ¼cken  -> Settings-MenÃ¼
+#   Settings:    drehen = scrollen/Wert Ã¤ndern, kurz = auswÃ¤hlen/OK
+#   Ãœberall:     1 s drÃ¼cken   -> zurÃ¼ck; 3 s -> HVAC/Preset-UntermenÃ¼
+#                Idle          -> nach einstellbarer Zeit dimmen + Home
+#
+# WICHTIG fÃ¼r HA: Damit climate.set_temperature & Co. wirken, muss in
+# Home Assistant unter GerÃ¤te -> ESPHome -> (GerÃ¤t) -> Konfigurieren die
+# Option "Erlaube dem GerÃ¤t, Home-Assistant-Aktionen auszufÃ¼hren" AN sein.
+#
+# ESPHome-Limitierung: homeassistant-Sensoren binden zur COMPILE-Zeit.
+# LIVE-States kommen von climate_default_entity (Substitution); das in
+# HA editierbare EntitÃ¤ts-Textfeld steuert alle AUSGEHENDEN Calls.
+#
+# Hardware (verifiziert gegen Elecrow-Referenz): ESP32-S3R8, ST7701S
+# RGB-Panel, CST826-Touch (extern, lokal gepatcht), PCF8574-Expander,
+# Encoder GPIO4/42 (Pins getauscht = Drehrichtungs-Fix).
+########################################################################
+
+substitutions:
+  device_name: thermostat
+  friendly_name: "Thermostat Knob"
+
+  # ---- Die EINE Climate-EntitÃ¤t (Live-State-Quelle, Compile-Zeit).
+  # Kann TRV und/oder AC steuern (z.B. Split-Klima, better_thermostat). ----
+  climate_default_entity: "climate.wohnzimmer_better_thermostat"
+
+  # ---- Verhalten ----
+  temperature_step: "0.5"       # Â°C pro Encoder-Detent (intern immer Â°C)
+  temperature_min: "5.0"
+  temperature_max: "30.0"
+  debounce_ms: "800ms"          # Ruhezeit vor climate.set_temperature
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  comment: "ESPHome CrowPanel Thermostat Knob fÃ¼r Home Assistant"
+  includes:
+    - thermostat_helpers.h
+  platformio_options:
+    build_flags: "-DBOARD_HAS_PSRAM"
+    board_build.esp-idf.memory_type: qio_opi
+    board_build.flash_mode: dio
+  on_boot:
+    - priority: 800
+      then:
+        - output.turn_on: lcd_power
+        - output.turn_on: display_reset
+        - delay: 100ms
+        - output.turn_off: display_reset
+        - delay: 100ms
+        - output.turn_on: tp_reset
+        - delay: 100ms
+        - output.turn_off: tp_reset
+        - delay: 120ms
+        - output.turn_on: tp_reset
+        - delay: 120ms
+        - output.turn_on: tp_intr
+    - priority: -100
+      then:
+        - lambda: |-
+            // Dual-Setpoint-Cache aus HA-Sensoren initialisieren
+            id(target_low_v) = id(target_low_ha).state;
+            id(target_high_v) = id(target_high_ha).state;
+            // Anzeige: aktiver Sollwert (TRV = low) vor Single-Setpoint
+            if (!std::isnan(id(target_low_v))) {
+              id(target_temperature) = id(adjust_target) == 1 && !std::isnan(id(target_high_v))
+                                           ? id(target_high_v) : id(target_low_v);
+            } else if (!std::isnan(id(target_temperature_ha).state)) {
+              id(target_temperature) = id(target_temperature_ha).state;
+            }
+            int b = (int) roundf(id(display_backlight).current_values.get_brightness() * 100.0f);
+            id(brightness_pct) = clamp(b > 0 ? b : 50, 5, 100);
+        - script.execute: refresh_temps
+        - script.execute: refresh_status
+        - script.execute: refresh_connection
+        - script.execute: update_clock_labels
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: y
+      CONFIG_ESP32S3_DATA_CACHE_64KB: y
+      CONFIG_SPIRAM_FETCH_INSTRUCTIONS: y
+      CONFIG_SPIRAM_RODATA: y
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [cst826]
+
+# ------------------------------------------------------------------
+# Netzwerk
+# ------------------------------------------------------------------
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "${friendly_name} Fallback"
+    password: !secret wifi_ap_password
+
+captive_portal:
+
+logger:
+  level: INFO
+
+# API OHNE VerschlÃ¼sselung -> GerÃ¤t ohne Key in HA hinzufÃ¼gbar.
+api:
+  on_client_connected:
+    - lambda: 'id(ha_connected) = true;'
+    - script.execute: refresh_connection
+  on_client_disconnected:
+    - lambda: 'id(ha_connected) = false;'
+    - script.execute: refresh_connection
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+web_server:
+  port: 80
+
+# ------------------------------------------------------------------
+# Globale ZustÃ¤nde
+# ------------------------------------------------------------------
+globals:
+
+  - id: target_temperature
+    type: float
+    restore_value: false
+    initial_value: "21.0"
+
+  - id: pending_temperature_change
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+  - id: ha_connected
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+  # UI-Navigation: 0 Home, 1 Thermostat, 2 MenÃ¼, 3 UntermenÃ¼
+  - id: ui_context
+    type: int
+    restore_value: false
+    initial_value: "0"
+
+  - id: menu_index
+    type: int
+    restore_value: false
+    initial_value: "0"
+
+  - id: submenu_type
+    type: int
+    restore_value: false
+    initial_value: "0"
+
+  - id: submenu_index
+    type: int
+    restore_value: false
+    initial_value: "0"
+
+  - id: submenu_count
+    type: int
+    restore_value: false
+    initial_value: "1"
+
+  - id: num_preview
+    type: int
+    restore_value: false
+    initial_value: "0"
+
+  - id: encoder_delta
+    type: int
+    restore_value: false
+    initial_value: "0"
+
+  - id: brightness_pct
+    type: int
+    restore_value: false
+    initial_value: "50"
+
+  - id: display_dimmed
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+  - id: apply_service
+    type: int
+    restore_value: false
+    initial_value: "0"
+
+  # Rohdaten aus HA-Attributen
+  - id: hvac_modes_raw
+    type: std::string
+    restore_value: false
+  - id: preset_modes_raw
+    type: std::string
+    restore_value: false
+  - id: current_hvac_raw
+    type: std::string
+    restore_value: false
+  - id: current_action_raw
+    type: std::string
+    restore_value: false
+  - id: current_preset_raw
+    type: std::string
+    restore_value: false
+
+  # Service-Call-Parameter
+  - id: pending_entity_id_holder
+    type: std::string
+    restore_value: false
+  - id: pending_mode_holder
+    type: std::string
+    restore_value: false
+
+  # Uhr/Datum
+  - id: pending_clock_time
+    type: std::string
+    restore_value: false
+  - id: pending_clock_day
+    type: std::string
+    restore_value: false
+  - id: pending_home_date
+    type: std::string
+    restore_value: false
+
+  # Dual-Setpoint (heat_cool): 0 = TRV/Heizen (target_temp_low),
+  # 1 = AC/KÃ¼hlen (target_temp_high). Doppelklick wechselt.
+  - id: adjust_target
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: target_low_v
+    type: float
+    restore_value: false
+    initial_value: "NAN"
+  - id: target_high_v
+    type: float
+    restore_value: false
+    initial_value: "NAN"
+
+  - id: pending_current_temperature
+    type: float
+    restore_value: false
+    initial_value: "20.0"
+  - id: pending_humidity
+    type: float
+    restore_value: false
+    initial_value: "NAN"
+
+  # Settings-Rendertexte
+  - id: set_title
+    type: std::string
+    restore_value: false
+  - id: set_prev
+    type: std::string
+    restore_value: false
+  - id: set_cur
+    type: std::string
+    restore_value: false
+  - id: set_next
+    type: std::string
+    restore_value: false
+  - id: set_value
+    type: std::string
+    restore_value: false
+
+# ------------------------------------------------------------------
+# I2C + PCF8574
+# ------------------------------------------------------------------
+i2c:
+  sda: GPIO38
+  scl: GPIO39
+  id: bus_a
+  scan: true
+
+pcf8574:
+  - id: pcf
+    address: 0x21
+
+output:
+  - platform: ledc
+    pin: GPIO6
+    id: bl_pwm
+    frequency: 19531Hz
+  - platform: gpio
+    id: lcd_power
+    pin:
+      pcf8574: pcf
+      number: 3
+      mode:
+        output: true
+  - platform: gpio
+    id: tp_reset
+    pin:
+      pcf8574: pcf
+      number: 0
+      mode:
+        output: true
+  - platform: gpio
+    id: display_reset
+    pin:
+      pcf8574: pcf
+      number: 4
+      mode:
+        output: true
+      inverted: true
+  - platform: gpio
+    id: tp_intr
+    pin:
+      pcf8574: pcf
+      number: 2
+      mode:
+        output: true
+
+light:
+  - platform: monochromatic
+    name: "${friendly_name} Backlight"
+    output: bl_pwm
+    id: display_backlight
+    default_transition_length: 0s
+    restore_mode: RESTORE_DEFAULT_ON
+    # HelligkeitsÃ¤nderungen aus HA in brightness_pct Ã¼bernehmen, sonst
+    # Ã¼berschreibt das nÃ¤chste Aufwecken/Dimmen den HA-Wert wieder.
+    # WÃ¤hrend des Dimmens (display_dimmed) nicht synchronisieren.
+    on_state:
+      - lambda: |-
+          if (!id(display_dimmed)) {
+            int b = (int) roundf(id(display_backlight).current_values.get_brightness() * 100.0f);
+            if (id(display_backlight).current_values.is_on() && b > 0)
+              id(brightness_pct) = clamp(b, 5, 100);
+          }
+
+# ------------------------------------------------------------------
+# Persistierte Einstellungen â€“ ALLE auch in Home Assistant steuerbar
+# ------------------------------------------------------------------
+text:
+  - platform: template
+    name: "Climate EntitÃ¤t"
+    id: climate_entity
+    mode: text
+    optimistic: true
+    restore_value: true
+    initial_value: "${climate_default_entity}"
+
+switch:
+  - platform: template
+    name: "Uhrzeit 24h-Format"
+    id: time_24h
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - script.execute: update_clock_labels
+    on_turn_off:
+      - script.execute: update_clock_labels
+
+  - platform: template
+    name: "Icons anzeigen"
+    id: icons_enabled
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - script.execute: refresh_status
+      - script.execute: refresh_temps
+    on_turn_off:
+      - script.execute: refresh_status
+      - script.execute: refresh_temps
+
+select:
+  - platform: template
+    name: "Sprache / Language"
+    id: language_select
+    optimistic: true
+    restore_value: true
+    options: ["English", "Deutsch"]
+    initial_option: "English"
+    on_value:
+      then:
+        - script.execute: refresh_status
+        - script.execute: refresh_connection
+        - script.execute: update_clock_labels
+        - script.execute: update_settings_labels
+
+  - platform: template
+    name: "Design"
+    id: design_select
+    optimistic: true
+    restore_value: true
+    options: ["Mono", "Color"]
+    initial_option: "Mono"
+    on_value:
+      then:
+        - script.execute: refresh_status
+        - script.execute: refresh_temps
+
+  - platform: template
+    name: "Temperatur-Einheit"
+    id: unit_select
+    optimistic: true
+    restore_value: true
+    options: ["Celsius", "Fahrenheit"]
+    initial_option: "Celsius"
+    on_value:
+      then:
+        - script.execute: refresh_temps
+
+  - platform: template
+    name: "3s-Taste Ã¶ffnet"
+    id: longpress3_select
+    optimistic: true
+    restore_value: true
+    options: ["HVAC", "Preset"]
+    initial_option: "HVAC"
+
+  - platform: template
+    name: "Knob HVAC-Modi"
+    id: knob_hvac_modes
+    optimistic: true
+    restore_value: true
+    options: ["Heat/Off", "All"]
+    initial_option: "Heat/Off"
+
+number:
+  - platform: template
+    name: "Idle bis Home (s)"
+    id: idle_home_num
+    optimistic: true
+    restore_value: true
+    initial_value: 15
+    min_value: 5
+    max_value: 300
+    step: 5
+    unit_of_measurement: "s"
+    mode: box
+
+  - platform: template
+    name: "Dimmen nach (s)"
+    id: dim_delay_num
+    optimistic: true
+    restore_value: true
+    initial_value: 30
+    min_value: 5
+    max_value: 300
+    step: 5
+    unit_of_measurement: "s"
+    mode: box
+
+  - platform: template
+    name: "Dimm-Stufe (%)"
+    id: dim_level_num
+    optimistic: true
+    restore_value: true
+    initial_value: 20
+    min_value: 5
+    max_value: 80
+    step: 5
+    unit_of_measurement: "%"
+    mode: box
+
+button:
+  - platform: factory_reset
+    name: "${friendly_name} Werksreset"
+    id: factory_reset_btn
+
+# ------------------------------------------------------------------
+# Encoder-Taster (on_multi_click fÃ¼r saubere Einzel-/Doppel-Trennung)
+# ------------------------------------------------------------------
+binary_sensor:
+  - platform: status
+    name: "${friendly_name} Status"
+
+  - platform: gpio
+    id: encoder_button
+    pin:
+      pcf8574: pcf
+      number: 5
+      mode:
+        input: true
+      inverted: true
+    filters:
+      - delayed_on_off: 10ms
+    on_press:
+      - script.execute: wake_display
+    on_multi_click:
+      # Doppelklick: von Home/Settings schnell zum Thermostat; AUF dem
+      # Thermostat-Screen: zwischen TRV- (Heizen) und AC- (KÃ¼hlen)
+      # Sollwert wechseln (nur bei Dual-Setpoint-EntitÃ¤ten).
+      - timing:
+          - ON for at most 350ms
+          - OFF for 40ms to 350ms
+          - ON for at most 350ms
+          - OFF for at least 50ms
+        then:
+          - if:
+              condition:
+                lambda: 'return id(ui_context) != 1;'
+              then:
+                - lambda: 'id(ui_context) = 1;'
+                - lvgl.page.show: screen_thermostat
+              else:
+                - lambda: |-
+                    // Cache ggf. direkt aus den HA-Sensoren auffrischen
+                    if (std::isnan(id(target_low_v)))  id(target_low_v)  = id(target_low_ha).state;
+                    if (std::isnan(id(target_high_v))) id(target_high_v) = id(target_high_ha).state;
+                - if:
+                    condition:
+                      lambda: 'return !std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v));'
+                    then:
+                      # Echte Dual-Setpoint-EntitÃ¤t (heat_cool): zwischen
+                      # low (TRV) und high (AC) wechseln
+                      - lambda: |-
+                          id(adjust_target) = 1 - id(adjust_target);
+                          id(target_temperature) = id(adjust_target) == 1 ? id(target_high_v) : id(target_low_v);
+                      - script.execute: refresh_temps
+                      - script.execute: refresh_status
+                    else:
+                      # better_thermostat-Stil: EIN temperature-Attribut,
+                      # TRV = heat-Modus, AC = cool-Modus -> Modus togglen
+                      - if:
+                          condition:
+                            lambda: |-
+                              auto v = ha_parse_list(id(hvac_modes_raw));
+                              bool h = false, c = false;
+                              for (auto &m : v) { if (m == "heat") h = true; if (m == "cool") c = true; }
+                              return h && c;
+                          then:
+                            - homeassistant.service:
+                                service: climate.set_hvac_mode
+                                data:
+                                  entity_id: !lambda 'return id(climate_entity).state;'
+                                  hvac_mode: !lambda |-
+                                    return id(current_hvac_raw) == "cool" ? std::string("heat") : std::string("cool");
+      # Einzelklick
+      - timing:
+          - ON for at most 350ms
+          - OFF for at least 400ms
+        then:
+          - if:
+              condition:
+                lambda: 'return id(ui_context) == 0;'
+              then:
+                - lambda: 'id(ui_context) = 1;'
+                - lvgl.page.show: screen_thermostat
+              else:
+                - if:
+                    condition:
+                      lambda: 'return id(ui_context) == 1;'
+                    then:
+                      - script.execute: open_settings
+                    else:
+                      - if:
+                          condition:
+                            lambda: 'return id(ui_context) == 2;'
+                          then:
+                            - script.execute: menu_enter
+                          else:
+                            - script.execute: submenu_apply
+      # 1 s: eine Ebene zurÃ¼ck
+      - timing:
+          - ON for 800ms to 2500ms
+          - OFF for at least 50ms
+        then:
+          - if:
+              condition:
+                lambda: 'return id(ui_context) == 3;'
+              then:
+                - lambda: 'id(ui_context) = 2;'
+                - script.execute: update_settings_labels
+              else:
+                - if:
+                    condition:
+                      lambda: 'return id(ui_context) == 2;'
+                    then:
+                      - lambda: 'id(ui_context) = 1;'
+                      - lvgl.page.show: screen_thermostat
+                    else:
+                      - lambda: 'id(ui_context) = 0;'
+                      - lvgl.page.show: screen_home
+      # 3 s: direkt ins HVAC- oder Preset-UntermenÃ¼
+      - timing:
+          - ON for at least 2800ms
+          - OFF for at least 50ms
+        then:
+          - lambda: |-
+              id(menu_index) = id(longpress3_select).state == "Preset" ? 1 : 0;
+          - lvgl.page.show: screen_settings
+          - script.execute: menu_enter
+
+# ------------------------------------------------------------------
+# Drehencoder (Pins getauscht = Drehrichtungs-Fix)
+# ------------------------------------------------------------------
+sensor:
+  - platform: rotary_encoder
+    id: temperature_encoder
+    pin_a:
+      number: GPIO4
+      mode:
+        input: true
+        pullup: true
+    pin_b:
+      number: GPIO42
+      mode:
+        input: true
+        pullup: true
+    min_value: -100000
+    max_value: 100000
+    on_value:
+      then:
+        - script.execute: wake_display
+        - lambda: |-
+            static int32_t last_raw = 0;
+            int32_t raw = (int32_t) x;
+            id(encoder_delta) = raw - last_raw;
+            last_raw = raw;
+        - if:
+            condition:
+              lambda: 'return id(encoder_delta) != 0 && id(ui_context) == 0;'
+            then:
+              - lambda: |-
+                  id(ui_context) = 1;
+                  id(encoder_delta) = 0;
+              - lvgl.page.show: screen_thermostat
+        - if:
+            condition:
+              lambda: 'return id(encoder_delta) != 0 && id(ui_context) == 1;'
+            then:
+              - lambda: |-
+                  float new_temp = id(target_temperature) + (${temperature_step} * id(encoder_delta));
+                  if (new_temp < ${temperature_min}) new_temp = ${temperature_min};
+                  if (new_temp > ${temperature_max}) new_temp = ${temperature_max};
+                  id(target_temperature) = new_temp;
+                  id(pending_temperature_change) = true;
+              - script.execute: refresh_temps
+              - script.execute: send_temperature_update
+        - if:
+            condition:
+              lambda: 'return id(encoder_delta) != 0 && id(ui_context) == 2;'
+            then:
+              - lambda: |-
+                  int d = id(encoder_delta) > 0 ? 1 : -1;
+                  id(menu_index) = (id(menu_index) + d + SETTINGS_MENU_COUNT) % SETTINGS_MENU_COUNT;
+              - script.execute: update_settings_labels
+        - if:
+            condition:
+              lambda: 'return id(encoder_delta) != 0 && id(ui_context) == 3;'
+            then:
+              - lambda: |-
+                  int d = id(encoder_delta) > 0 ? 1 : -1;
+                  switch (id(submenu_type)) {
+                    case 0:
+                    case 1:
+                      if (id(submenu_count) > 0)
+                        id(submenu_index) = (id(submenu_index) + d + id(submenu_count)) % id(submenu_count);
+                      break;
+                    case 2:
+                      id(brightness_pct) = clamp(id(brightness_pct) + d * 5, 5, 100);
+                      break;
+                    case 3: case 4: case 5: case 6: case 7:
+                    case 11: case 12: case 15:
+                      id(submenu_index) = 1 - id(submenu_index);
+                      break;
+                    case 8:
+                    case 9:
+                      id(num_preview) = clamp(id(num_preview) + d * 5, 5, 300);
+                      break;
+                    case 10:
+                      id(num_preview) = clamp(id(num_preview) + d * 5, 5, 80);
+                      break;
+                    default:
+                      break;
+                  }
+              - if:
+                  condition:
+                    lambda: 'return id(submenu_type) == 2;'
+                  then:
+                    - light.turn_on:
+                        id: display_backlight
+                        brightness: !lambda 'return id(brightness_pct) / 100.0f;'
+              - script.execute: update_settings_labels
+
+  # ---- Ist-Temperatur ----
+  - platform: homeassistant
+    id: current_temperature_ha
+    entity_id: ${climate_default_entity}
+    attribute: current_temperature
+    on_value:
+      then:
+        - if:
+            condition:
+              lambda: 'return !std::isnan(x);'
+            then:
+              - lambda: 'id(pending_current_temperature) = x;'
+              - script.execute: refresh_temps
+
+  # ---- Soll-Temperatur (nur Single-Setpoint; bei Dual-Setpoint
+  # Ã¼bernehmen target_temp_low/high die Anzeige) ----
+  - platform: homeassistant
+    id: target_temperature_ha
+    entity_id: ${climate_default_entity}
+    attribute: temperature
+    on_value:
+      then:
+        - if:
+            condition:
+              lambda: |-
+                return !id(pending_temperature_change) && !std::isnan(x)
+                       && std::isnan(id(target_low_v));
+            then:
+              - lambda: 'id(target_temperature) = x;'
+              - script.execute: refresh_temps
+
+  # ---- Dual-Setpoint (TRV = heizen / AC = kÃ¼hlen) ----
+  - platform: homeassistant
+    id: target_low_ha
+    entity_id: ${climate_default_entity}
+    attribute: target_temp_low
+    on_value:
+      then:
+        - lambda: 'id(target_low_v) = x;'
+        - if:
+            condition:
+              lambda: 'return !id(pending_temperature_change) && !std::isnan(x) && id(adjust_target) == 0;'
+            then:
+              - lambda: 'id(target_temperature) = x;'
+              - script.execute: refresh_temps
+  - platform: homeassistant
+    id: target_high_ha
+    entity_id: ${climate_default_entity}
+    attribute: target_temp_high
+    on_value:
+      then:
+        - lambda: 'id(target_high_v) = x;'
+        - if:
+            condition:
+              lambda: 'return !id(pending_temperature_change) && !std::isnan(x) && id(adjust_target) == 1;'
+            then:
+              - lambda: 'id(target_temperature) = x;'
+              - script.execute: refresh_temps
+
+  # ---- Luftfeuchte: better_thermostat "humidity" ODER Standard
+  # "current_humidity". ----
+  - platform: homeassistant
+    id: humidity_ha
+    entity_id: ${climate_default_entity}
+    attribute: humidity
+    on_value:
+      then:
+        - if:
+            condition:
+              lambda: 'return !std::isnan(x);'
+            then:
+              - lambda: 'id(pending_humidity) = x;'
+              - script.execute: refresh_temps
+  - platform: homeassistant
+    id: current_humidity_ha
+    entity_id: ${climate_default_entity}
+    attribute: current_humidity
+    on_value:
+      then:
+        - if:
+            condition:
+              lambda: 'return !std::isnan(x);'
+            then:
+              - lambda: 'id(pending_humidity) = x;'
+              - script.execute: refresh_temps
+
+  - platform: wifi_signal
+    id: wifi_rssi
+    name: "${friendly_name} WLAN Signal"
+    update_interval: 60s
+
+# ------------------------------------------------------------------
+# HVAC-ZustÃ¤nde, Modi-/Preset-Listen, aktives Preset
+# ------------------------------------------------------------------
+text_sensor:
+  - platform: homeassistant
+    id: hvac_state_ha
+    entity_id: ${climate_default_entity}
+    on_value:
+      then:
+        - lambda: 'id(current_hvac_raw) = x;'
+        - script.execute: refresh_status
+
+  # LÃ¤uft gerade eine Heiz-/KÃ¼hlphase? (heating / cooling / idle / off)
+  - platform: homeassistant
+    id: hvac_action_ha
+    entity_id: ${climate_default_entity}
+    attribute: hvac_action
+    on_value:
+      then:
+        - lambda: 'id(current_action_raw) = x;'
+        - script.execute: refresh_status
+
+  - platform: homeassistant
+    id: hvac_modes_ha
+    entity_id: ${climate_default_entity}
+    attribute: hvac_modes
+    on_value:
+      then:
+        - lambda: 'id(hvac_modes_raw) = x;'
+
+  - platform: homeassistant
+    id: preset_modes_ha
+    entity_id: ${climate_default_entity}
+    attribute: preset_modes
+    on_value:
+      then:
+        - lambda: 'id(preset_modes_raw) = x;'
+
+  - platform: homeassistant
+    id: preset_ha
+    entity_id: ${climate_default_entity}
+    attribute: preset_mode
+    on_value:
+      then:
+        - lambda: 'id(current_preset_raw) = x;'
+        - script.execute: refresh_status
+
+  - platform: version
+    id: fw_version
+    name: "${friendly_name} Firmware"
+
+  - platform: wifi_info
+    ip_address:
+      id: wifi_ip_txt
+      name: "${friendly_name} IP"
+    ssid:
+      id: wifi_ssid_txt
+      name: "${friendly_name} SSID"
+
+# ------------------------------------------------------------------
+# Skripte
+# ------------------------------------------------------------------
+script:
+  - id: send_temperature_update
+    mode: restart
+    then:
+      - delay: ${debounce_ms}
+      - if:
+          condition:
+            lambda: 'return id(pending_temperature_change);'
+          then:
+            - lambda: |-
+                // Cache ggf. direkt aus den HA-Sensoren auffrischen
+                if (std::isnan(id(target_low_v)))  id(target_low_v)  = id(target_low_ha).state;
+                if (std::isnan(id(target_high_v))) id(target_high_v) = id(target_high_ha).state;
+            - if:
+                condition:
+                  lambda: 'return !std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v));'
+                then:
+                  # Dual-Setpoint: beide Grenzen senden, aktive Ã¼berschrieben
+                  - lambda: |-
+                      if (id(adjust_target) == 1) id(target_high_v) = id(target_temperature);
+                      else id(target_low_v) = id(target_temperature);
+                      if (id(target_low_v) > id(target_high_v)) {
+                        if (id(adjust_target) == 1) id(target_low_v) = id(target_high_v);
+                        else id(target_high_v) = id(target_low_v);
+                      }
+                  - homeassistant.service:
+                      service: climate.set_temperature
+                      data:
+                        entity_id: !lambda 'return id(climate_entity).state;'
+                        target_temp_low: !lambda |-
+                          char buf[16];
+                          snprintf(buf, sizeof(buf), "%.1f", id(target_low_v));
+                          return std::string(buf);
+                        target_temp_high: !lambda |-
+                          char buf[16];
+                          snprintf(buf, sizeof(buf), "%.1f", id(target_high_v));
+                          return std::string(buf);
+                else:
+                  - homeassistant.service:
+                      service: climate.set_temperature
+                      data:
+                        entity_id: !lambda 'return id(climate_entity).state;'
+                        temperature: !lambda |-
+                          char buf[16];
+                          snprintf(buf, sizeof(buf), "%.1f", id(target_temperature));
+                          return std::string(buf);
+            - lambda: 'id(pending_temperature_change) = false;'
+
+  - id: wake_display
+    then:
+      # LVGL-Idle-Timer zuruecksetzen: Encoder/Taster sind keine LVGL-
+      # Eingabegeraete, ohne das hier wuerden "Dimmen nach" und "Idle
+      # bis Home" die Knob-Bedienung nicht mitbekommen.
+      - lambda: 'lv_disp_trig_activity(nullptr);'
+      - if:
+          condition:
+            lambda: 'return id(display_dimmed);'
+          then:
+            - lambda: 'id(display_dimmed) = false;'
+            - light.turn_on:
+                id: display_backlight
+                brightness: !lambda 'return id(brightness_pct) / 100.0f;'
+
+  # Alle Temperatur-/Feuchte-Anzeigen + RingfÃ¼llstand
+  - id: refresh_temps
+    then:
+      # Icon-Glyphen (aus thermostat_helpers.h, keine PUA-Zeichen im YAML)
+      - lvgl.label.update:
+          id: icon_thermo_current
+          text: !lambda 'return std::string(ICON_THERMO_HIGH);'
+      - lvgl.label.update:
+          id: icon_hum_thermo
+          text: !lambda 'return std::string(ICON_DROPLET_HALF);'
+      # TRV/AC-Indikator (nur bei Dual-Setpoint sichtbar)
+      - if:
+          condition:
+            lambda: 'return !std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v));'
+          then:
+            - lvgl.label.update:
+                id: label_setpoint_mode
+                text: !lambda 'return id(adjust_target) == 1 ? std::string("AC") : std::string("TRV");'
+            - lvgl.widget.show: label_setpoint_mode
+          else:
+            - lvgl.widget.hide: label_setpoint_mode
+      - lvgl.label.update:
+          id: label_target_temperature
+          text: !lambda |-
+            bool f = id(unit_select).state == "Fahrenheit";
+            return to_string((int) display_temp(id(target_temperature), f));
+      - lvgl.label.update:
+          id: label_target_decimal
+          text: !lambda |-
+            bool f = id(unit_select).state == "Fahrenheit";
+            float t = display_temp(id(target_temperature), f);
+            int frac = (int) roundf((t - (int) t) * 10.0f);
+            char buf[8];
+            snprintf(buf, sizeof(buf), ".%d", abs(frac));
+            return std::string(buf);
+      - lvgl.label.update:
+          id: label_target_unit
+          text: !lambda 'return id(unit_select).state == "Fahrenheit" ? std::string("Â°F") : std::string("Â°C");'
+      - lvgl.label.update:
+          id: label_current_temperature
+          text: !lambda |-
+            bool f = id(unit_select).state == "Fahrenheit";
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%.1fÂ°", display_temp(id(pending_current_temperature), f));
+            return std::string(buf);
+      - lvgl.label.update:
+          id: label_home_current_temperature
+          text: !lambda |-
+            bool f = id(unit_select).state == "Fahrenheit";
+            return to_string((int) display_temp(id(pending_current_temperature), f));
+      - lvgl.label.update:
+          id: label_home_current_decimal
+          text: !lambda |-
+            bool f = id(unit_select).state == "Fahrenheit";
+            float c = display_temp(id(pending_current_temperature), f);
+            int frac = (int) roundf((c - (int) c) * 10.0f);
+            char buf[8];
+            snprintf(buf, sizeof(buf), ".%d", abs(frac));
+            return std::string(buf);
+      - lvgl.label.update:
+          id: label_home_current_unit
+          text: !lambda 'return id(unit_select).state == "Fahrenheit" ? std::string("Â°F") : std::string("Â°C");'
+      - lvgl.arc.update:
+          id: arc_temperature
+          value: !lambda |-
+            return (int) roundf((id(target_temperature) - ${temperature_min}) /
+                                (${temperature_max} - ${temperature_min}) * 100.0f);
+      # Luftfeuchte (nur wenn Wert vorhanden)
+      - if:
+          condition:
+            lambda: 'return !std::isnan(id(pending_humidity));'
+          then:
+            - lvgl.label.update:
+                id: label_humidity_thermo
+                text: !lambda |-
+                  char buf[8];
+                  snprintf(buf, sizeof(buf), "%.0f%%", id(pending_humidity));
+                  return std::string(buf);
+            - lvgl.label.update:
+                id: label_home_humidity
+                text: !lambda |-
+                  char buf[8];
+                  snprintf(buf, sizeof(buf), "%.0f%%", id(pending_humidity));
+                  return std::string(buf);
+            - lvgl.widget.show: label_humidity_thermo
+            - lvgl.widget.show: label_home_humidity
+            - if:
+                condition:
+                  lambda: 'return id(icons_enabled).state;'
+                then:
+                  - lvgl.widget.show: icon_hum_thermo
+                else:
+                  - lvgl.widget.hide: icon_hum_thermo
+          else:
+            - lvgl.widget.hide: label_humidity_thermo
+            - lvgl.widget.hide: label_home_humidity
+            - lvgl.widget.hide: icon_hum_thermo
+      - if:
+          condition:
+            lambda: 'return id(icons_enabled).state;'
+          then:
+            - lvgl.widget.show: icon_thermo_current
+          else:
+            - lvgl.widget.hide: icon_thermo_current
+
+  # Statuszeilen + Modus-Icons + Ringfarbe
+  - id: refresh_status
+    then:
+      - lvgl.label.update:
+          id: label_hvac_mode
+          text: !lambda 'return ha_hvac_mode_label(id(current_hvac_raw), id(language_select).state == "Deutsch");'
+      - lvgl.label.update:
+          id: label_home_hvac_mode
+          text: !lambda 'return ha_hvac_mode_label(id(current_hvac_raw), id(language_select).state == "Deutsch");'
+      - lvgl.label.update:
+          id: label_preset
+          text: !lambda 'return ha_preset_label(id(current_preset_raw), id(language_select).state == "Deutsch");'
+      - lvgl.label.update:
+          id: label_home_preset
+          text: !lambda 'return ha_preset_label(id(current_preset_raw), id(language_select).state == "Deutsch");'
+      - lvgl.label.update:
+          id: icon_mode_thermo
+          text: !lambda |-
+            if (id(current_hvac_raw) == "off") return std::string(ICON_TOGGLE_OFF);
+            if (!std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v)))
+              return std::string(id(adjust_target) == 1 ? ICON_SNOW : ICON_FIRE);
+            if (id(current_hvac_raw) == "cool" || id(current_hvac_raw) == "dry"
+                || id(current_hvac_raw) == "fan_only") return std::string(ICON_SNOW);
+            return std::string(ICON_FIRE);
+      - lvgl.label.update:
+          id: icon_mode_home
+          text: !lambda |-
+            if (id(current_hvac_raw) == "off") return std::string(ICON_TOGGLE_OFF);
+            if (!std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v)))
+              return std::string(id(adjust_target) == 1 ? ICON_SNOW : ICON_FIRE);
+            if (id(current_hvac_raw) == "cool" || id(current_hvac_raw) == "dry"
+                || id(current_hvac_raw) == "fan_only") return std::string(ICON_SNOW);
+            return std::string(ICON_FIRE);
+      - lvgl.widget.update:
+          id: icon_mode_thermo
+          text_color: !lambda |-
+            // Keine aktive Heiz-/KÃ¼hlphase (idle/off) -> dunkelgrau
+            if (id(current_action_raw) != "heating" && id(current_action_raw) != "cooling")
+              return lv_color_hex(0x9A9A9A);
+            // AC-Sollwert aktiv -> Schneeflocke immer blau
+            if (!std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v)) && id(adjust_target) == 1)
+              return lv_color_hex(0x6EC6FF);
+            if (id(design_select).state != "Color") return lv_color_hex(0xFFFFFF);
+            if (id(current_hvac_raw) == "cool" || id(current_hvac_raw) == "dry"
+                || id(current_hvac_raw) == "fan_only") return lv_color_hex(0x6EC6FF);
+            return lv_color_hex(0xFF8A3D);
+      - lvgl.widget.update:
+          id: icon_mode_home
+          text_color: !lambda |-
+            // Keine aktive Heiz-/KÃ¼hlphase (idle/off) -> dunkelgrau
+            if (id(current_action_raw) != "heating" && id(current_action_raw) != "cooling")
+              return lv_color_hex(0x9A9A9A);
+            // AC-Sollwert aktiv -> Schneeflocke immer blau
+            if (!std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v)) && id(adjust_target) == 1)
+              return lv_color_hex(0x6EC6FF);
+            if (id(design_select).state != "Color") return lv_color_hex(0xFFFFFF);
+            if (id(current_hvac_raw) == "cool" || id(current_hvac_raw) == "dry"
+                || id(current_hvac_raw) == "fan_only") return lv_color_hex(0x6EC6FF);
+            return lv_color_hex(0xFF8A3D);
+      # Ring-Indikatorfarbe: Mono -> weiÃŸ, sonst nach Modus; bei Dual-
+      # Setpoint zeigt sie den aktiven Sollwert (TRV = orange, AC = blau).
+      - lvgl.arc.update:
+          id: arc_temperature
+          indicator:
+            arc_color: !lambda |-
+              if (id(design_select).state != "Color") return lv_color_hex(0xFFFFFF);
+              if (!std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v)))
+                return id(adjust_target) == 1 ? lv_color_hex(0x6EC6FF) : lv_color_hex(0xFF5A2D);
+              if (id(current_hvac_raw) == "off") return lv_color_hex(0x555555);
+              if (id(current_hvac_raw) == "cool" || id(current_hvac_raw) == "dry"
+                  || id(current_hvac_raw) == "fan_only") return lv_color_hex(0x6EC6FF);
+              return lv_color_hex(0xFF5A2D);
+      - if:
+          condition:
+            lambda: 'return id(icons_enabled).state && id(ha_connected);'
+          then:
+            - lvgl.widget.show: icon_mode_thermo
+            - lvgl.widget.show: icon_mode_home
+          else:
+            - lvgl.widget.hide: icon_mode_thermo
+            - lvgl.widget.hide: icon_mode_home
+
+  # Verbindungszustand: bei Verlust HVAC/Preset/Icon aus, "Connection
+  # failed" an; bei Verbindung umgekehrt.
+  - id: refresh_connection
+    then:
+      - if:
+          condition:
+            lambda: 'return id(ha_connected);'
+          then:
+            - lvgl.widget.hide: label_conn_thermo
+            - lvgl.widget.hide: label_conn_home
+            - lvgl.widget.show: label_hvac_mode
+            - lvgl.widget.show: label_home_hvac_mode
+            - lvgl.widget.show: label_preset
+            - lvgl.widget.show: label_home_preset
+            - script.execute: refresh_status
+          else:
+            - lvgl.label.update:
+                id: label_conn_thermo
+                text: !lambda 'return id(language_select).state == "Deutsch" ? std::string("Verbindung fehlt") : std::string("Connection failed");'
+            - lvgl.label.update:
+                id: label_conn_home
+                text: !lambda 'return id(language_select).state == "Deutsch" ? std::string("Verbindung fehlt") : std::string("Connection failed");'
+            - lvgl.widget.show: label_conn_thermo
+            - lvgl.widget.show: label_conn_home
+            - lvgl.widget.hide: label_hvac_mode
+            - lvgl.widget.hide: label_home_hvac_mode
+            - lvgl.widget.hide: label_preset
+            - lvgl.widget.hide: label_home_preset
+            - lvgl.widget.hide: icon_mode_thermo
+            - lvgl.widget.hide: icon_mode_home
+
+  - id: open_settings
+    then:
+      - lambda: |-
+          id(ui_context) = 2;
+          id(menu_index) = 0;
+      - script.execute: update_settings_labels
+      - lvgl.page.show: screen_settings
+
+  - id: menu_enter
+    then:
+      - lambda: |-
+          id(submenu_type) = id(menu_index);
+          id(submenu_index) = 0;
+          switch (id(menu_index)) {
+            case 0: {
+              auto vec = ha_filter_modes(id(hvac_modes_raw), id(knob_hvac_modes).state != "All");
+              id(submenu_count) = (int) vec.size();
+              for (size_t i = 0; i < vec.size(); i++)
+                if (vec[i] == id(current_hvac_raw)) { id(submenu_index) = (int) i; break; }
+              break;
+            }
+            case 1: {
+              auto vec = ha_filter_presets(id(preset_modes_raw));
+              id(submenu_count) = (int) vec.size();
+              for (size_t i = 0; i < vec.size(); i++)
+                if (vec[i] == id(current_preset_raw)) { id(submenu_index) = (int) i; break; }
+              break;
+            }
+            case 2: break;
+            case 3:  id(submenu_index) = id(time_24h).state ? 1 : 0; break;
+            case 4:  id(submenu_index) = id(language_select).state == "Deutsch" ? 1 : 0; break;
+            case 5:  id(submenu_index) = id(design_select).state == "Color" ? 1 : 0; break;
+            case 6:  id(submenu_index) = id(icons_enabled).state ? 1 : 0; break;
+            case 7:  id(submenu_index) = id(unit_select).state == "Fahrenheit" ? 1 : 0; break;
+            case 8:  id(num_preview) = (int) id(idle_home_num).state; break;
+            case 9:  id(num_preview) = (int) id(dim_delay_num).state; break;
+            case 10: id(num_preview) = (int) id(dim_level_num).state; break;
+            case 11: id(submenu_index) = id(longpress3_select).state == "Preset" ? 1 : 0; break;
+            case 12: id(submenu_index) = id(knob_hvac_modes).state == "All" ? 1 : 0; break;
+            default: break;
+          }
+          id(ui_context) = 3;
+      - script.execute: update_settings_labels
+
+  - id: submenu_apply
+    then:
+      - lambda: |-
+          id(apply_service) = 0;
+          switch (id(submenu_type)) {
+            case 0: {
+              auto vec = ha_filter_modes(id(hvac_modes_raw), id(knob_hvac_modes).state != "All");
+              int n = (int) vec.size();
+              int idx = ((id(submenu_index) % n) + n) % n;
+              id(pending_mode_holder) = vec[idx];
+              id(apply_service) = 1;
+              break;
+            }
+            case 1: {
+              auto vec = ha_filter_presets(id(preset_modes_raw));
+              int n = (int) vec.size();
+              int idx = ((id(submenu_index) % n) + n) % n;
+              id(pending_mode_holder) = vec[idx];
+              id(apply_service) = 2;
+              break;
+            }
+            case 3:  id(apply_service) = id(submenu_index) ? 3 : 4; break;
+            case 4:  id(apply_service) = id(submenu_index) ? 9 : 8; break;
+            case 5:  id(apply_service) = id(submenu_index) ? 11 : 10; break;
+            case 6:  id(apply_service) = id(submenu_index) ? 13 : 12; break;
+            case 7:  id(apply_service) = id(submenu_index) ? 15 : 14; break;
+            case 8:  id(apply_service) = 16; break;
+            case 9:  id(apply_service) = 17; break;
+            case 10: id(apply_service) = 18; break;
+            case 11: id(apply_service) = id(submenu_index) ? 20 : 19; break;
+            case 12: id(apply_service) = id(submenu_index) ? 5 : 6; break;
+            case 15: if (id(submenu_index) == 1) id(apply_service) = 7; break;
+            default: break;
+          }
+          id(ui_context) = 2;
+      - if:
+          condition: {lambda: 'return id(apply_service) == 1;'}
+          then:
+            - homeassistant.service:
+                service: climate.set_hvac_mode
+                data:
+                  entity_id: !lambda 'return id(climate_entity).state;'
+                  hvac_mode: !lambda 'return id(pending_mode_holder);'
+      - if:
+          condition: {lambda: 'return id(apply_service) == 2;'}
+          then:
+            - homeassistant.service:
+                service: climate.set_preset_mode
+                data:
+                  entity_id: !lambda 'return id(climate_entity).state;'
+                  preset_mode: !lambda 'return id(pending_mode_holder);'
+      - if:
+          condition: {lambda: 'return id(apply_service) == 3;'}
+          then: [switch.turn_on: time_24h]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 4;'}
+          then: [switch.turn_off: time_24h]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 5;'}
+          then: [{select.set: {id: knob_hvac_modes, option: "All"}}]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 6;'}
+          then: [{select.set: {id: knob_hvac_modes, option: "Heat/Off"}}]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 7;'}
+          then: [button.press: factory_reset_btn]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 8;'}
+          then: [{select.set: {id: language_select, option: "English"}}]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 9;'}
+          then: [{select.set: {id: language_select, option: "Deutsch"}}]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 10;'}
+          then: [{select.set: {id: design_select, option: "Mono"}}]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 11;'}
+          then: [{select.set: {id: design_select, option: "Color"}}]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 12;'}
+          then: [switch.turn_off: icons_enabled]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 13;'}
+          then: [switch.turn_on: icons_enabled]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 14;'}
+          then: [{select.set: {id: unit_select, option: "Celsius"}}]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 15;'}
+          then: [{select.set: {id: unit_select, option: "Fahrenheit"}}]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 16;'}
+          then: [{number.set: {id: idle_home_num, value: !lambda 'return id(num_preview);'}}]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 17;'}
+          then: [{number.set: {id: dim_delay_num, value: !lambda 'return id(num_preview);'}}]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 18;'}
+          then: [{number.set: {id: dim_level_num, value: !lambda 'return id(num_preview);'}}]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 19;'}
+          then: [{select.set: {id: longpress3_select, option: "HVAC"}}]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 20;'}
+          then: [{select.set: {id: longpress3_select, option: "Preset"}}]
+      - script.execute: update_settings_labels
+
+  - id: update_settings_labels
+    then:
+      - lambda: |-
+          bool de = id(language_select).state == "Deutsch";
+          const int N = SETTINGS_MENU_COUNT;
+          char buf[64];
+          if (id(ui_context) == 2) {
+            int i = id(menu_index);
+            id(set_title) = de ? "Einstellungen" : "Settings";
+            id(set_prev) = settings_menu_name((i + N - 1) % N, de);
+            id(set_cur) = settings_menu_name(i, de);
+            id(set_next) = settings_menu_name((i + 1) % N, de);
+            std::string val;
+            switch (i) {
+              case 0: val = ha_hvac_mode_label(id(current_hvac_raw), de); break;
+              case 1: val = ha_preset_label(id(current_preset_raw), de); break;
+              case 2: snprintf(buf, sizeof(buf), "%d%%", id(brightness_pct)); val = buf; break;
+              case 3: val = id(time_24h).state ? "24h" : "12h"; break;
+              case 4: val = id(language_select).state; break;
+              case 5: val = id(design_select).state == "Color" ? (de?"Farbig":"Color") : (de?"Schwarz-WeiÃŸ":"Black/White"); break;
+              case 6: val = id(icons_enabled).state ? (de?"An":"On") : (de?"Aus":"Off"); break;
+              case 7: val = id(unit_select).state == "Fahrenheit" ? "Â°F" : "Â°C"; break;
+              case 8: snprintf(buf, sizeof(buf), "%ds", (int) id(idle_home_num).state); val = buf; break;
+              case 9: snprintf(buf, sizeof(buf), "%ds", (int) id(dim_delay_num).state); val = buf; break;
+              case 10: snprintf(buf, sizeof(buf), "%d%%", (int) id(dim_level_num).state); val = buf; break;
+              case 11: val = id(longpress3_select).state; break;
+              case 12: val = id(knob_hvac_modes).state == "All" ? (de?"Alle Modi":"All modes") : (de?"Heizen/Aus":"Heat/Off"); break;
+              case 13: val = id(wifi_ssid_txt).state; break;
+              case 14: val = id(fw_version).state; break;
+              case 15: val = ""; break;
+            }
+            id(set_value) = val;
+          } else {
+            int t = id(submenu_type);
+            id(set_title) = settings_menu_name(t, de);
+            id(set_prev) = "";
+            id(set_next) = "";
+            std::string cur, val;
+            std::string h_apply = de ? "DrÃ¼cken = Ã¼bernehmen" : "Press = apply";
+            std::string h_save = de ? "DrÃ¼cken = speichern" : "Press = save";
+            std::string h_turn = de ? "Drehen = Ã¤ndern" : "Turn = adjust";
+            switch (t) {
+              case 0:
+              case 1: {
+                std::vector<std::string> vec;
+                if (t == 0) {
+                  vec = ha_filter_modes(id(hvac_modes_raw), id(knob_hvac_modes).state != "All");
+                } else {
+                  vec = ha_filter_presets(id(preset_modes_raw));
+                }
+                id(submenu_count) = (int) vec.size();
+                int n = (int) vec.size();
+                int idx = ((id(submenu_index) % n) + n) % n;
+                cur = (t == 0) ? ha_hvac_mode_label(vec[idx], de) : ha_preset_label(vec[idx], de);
+                if (n > 1) {
+                  id(set_prev) = (t == 0) ? ha_hvac_mode_label(vec[(idx+n-1)%n], de) : ha_preset_label(vec[(idx+n-1)%n], de);
+                  id(set_next) = (t == 0) ? ha_hvac_mode_label(vec[(idx+1)%n], de) : ha_preset_label(vec[(idx+1)%n], de);
+                }
+                val = h_apply;
+                break;
+              }
+              case 2: snprintf(buf, sizeof(buf), "%d%%", id(brightness_pct)); cur = buf; val = h_turn; break;
+              case 3: cur = id(submenu_index) ? "24h" : "12h"; val = h_save; break;
+              case 4: cur = id(submenu_index) ? "Deutsch" : "English"; val = h_save; break;
+              case 5: cur = id(submenu_index) ? (de?"Farbig":"Color") : (de?"Schwarz-WeiÃŸ":"Black/White"); val = h_save; break;
+              case 6: cur = id(submenu_index) ? (de?"An":"On") : (de?"Aus":"Off"); val = h_save; break;
+              case 7: cur = id(submenu_index) ? "Â°F" : "Â°C"; val = h_save; break;
+              case 8:
+              case 9: snprintf(buf, sizeof(buf), "%ds", id(num_preview)); cur = buf; val = h_save; break;
+              case 10: snprintf(buf, sizeof(buf), "%d%%", id(num_preview)); cur = buf; val = h_save; break;
+              case 11: cur = id(submenu_index) ? "Preset" : "HVAC"; val = h_save; break;
+              case 12: cur = id(submenu_index) ? (de?"Alle Modi":"All modes") : (de?"Heizen/Aus":"Heat/Off"); val = h_save; break;
+              case 13:
+                cur = id(wifi_ssid_txt).state;
+                snprintf(buf, sizeof(buf), "%s  %.0f dBm", id(wifi_ip_txt).state.c_str(), id(wifi_rssi).state);
+                val = buf;
+                break;
+              case 14: cur = id(fw_version).state; val = ""; break;
+              case 15: cur = id(submenu_index) == 1 ? (de?"Ja, zurÃ¼cksetzen":"Yes, reset") : (de?"Nein":"No"); val = de?"DrÃ¼cken = bestÃ¤tigen":"Press = confirm"; break;
+            }
+            id(set_cur) = cur;
+            id(set_value) = val;
+          }
+      - lvgl.label.update:
+          id: label_settings_title
+          text: !lambda 'return id(set_title);'
+      - lvgl.label.update:
+          id: label_menu_icon
+          text: !lambda |-
+            int i = id(ui_context) == 2 ? id(menu_index) : id(submenu_type);
+            return std::string(MENU_ICONS[i]);
+      - if:
+          condition: {lambda: 'return id(icons_enabled).state;'}
+          then: [lvgl.widget.show: label_menu_icon]
+          else: [lvgl.widget.hide: label_menu_icon]
+      - lvgl.label.update: {id: label_menu_prev, text: !lambda 'return id(set_prev);'}
+      - lvgl.label.update: {id: label_menu_current, text: !lambda 'return id(set_cur);'}
+      - lvgl.label.update: {id: label_menu_next, text: !lambda 'return id(set_next);'}
+      - lvgl.label.update: {id: label_menu_value, text: !lambda 'return id(set_value);'}
+
+  - id: update_clock_labels
+    then:
+      - lambda: |-
+          auto now = id(ha_time).now();
+          if (!now.is_valid()) return;
+          bool de = id(language_select).state == "Deutsch";
+          static const char* const day_en[] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
+          static const char* const day_de[] = {"So.","Mo.","Di.","Mi.","Do.","Fr.","Sa."};
+          static const char* const mon_en[] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
+          static const char* const mon_de[] = {"Jan","Feb","MÃ¤r","Apr","Mai","Jun","Jul","Aug","Sep","Okt","Nov","Dez"};
+          const char* day = (de ? day_de : day_en)[(now.day_of_week - 1) % 7];
+          const char* month = (de ? mon_de : mon_en)[(now.month - 1) % 12];
+          char time_buf[12];
+          if (id(time_24h).state) {
+            snprintf(time_buf, sizeof(time_buf), "%02d:%02d", now.hour, now.minute);
+          } else {
+            int h12 = now.hour % 12; if (h12 == 0) h12 = 12;
+            snprintf(time_buf, sizeof(time_buf), "%d:%02d %s", h12, now.minute,
+                     now.hour < 12 ? "AM" : "PM");
+          }
+          char date_buf[24];
+          snprintf(date_buf, sizeof(date_buf), de ? "%02d. %s" : "%02d %s", now.day_of_month, month);
+          id(pending_clock_time) = time_buf;
+          id(pending_clock_day) = day;
+          id(pending_home_date) = date_buf;
+      - lvgl.label.update: {id: label_clock_time, text: !lambda 'return id(pending_clock_time);'}
+      - lvgl.label.update: {id: label_home_time, text: !lambda 'return id(pending_clock_time);'}
+      - lvgl.label.update: {id: label_thermo_weekday, text: !lambda 'return id(pending_clock_day);'}
+      - lvgl.label.update: {id: label_home_weekday, text: !lambda 'return id(pending_clock_day);'}
+      - lvgl.label.update: {id: label_thermo_date, text: !lambda 'return id(pending_home_date);'}
+      - lvgl.label.update: {id: label_home_date, text: !lambda 'return id(pending_home_date);'}
+
+# ------------------------------------------------------------------
+# Display / Touch (Elecrow-Referenz)
+# ------------------------------------------------------------------
+spi:
+  clk_pin: GPIO2
+  mosi_pin: GPIO1
+
+touchscreen:
+  platform: cst826
+  id: my_touchscreen
+  i2c_id: bus_a
+  skip_probe: true
+  update_interval: 25ms
+  address: 0x15
+  on_touch:
+    - script.execute: wake_display
+
+display:
+  - platform: st7701s
+    id: my_display
+    update_interval: 50ms
+    spi_mode: MODE3
+    color_order: RGB
+    invert_colors: false
+    dimensions:
+      width: 480
+      height: 480
+    cs_pin: GPIO16
+    de_pin: GPIO40
+    hsync_pin: GPIO15
+    vsync_pin: GPIO7
+    pclk_pin: GPIO41
+    data_pins:
+      red: [46, 3, 8, 18, 17]
+      green: [14, 13, 12, 11, 10, 9]
+      blue: [5, 45, 48, 47, 21]
+    hsync_front_porch: 20
+    hsync_pulse_width: 10
+    hsync_back_porch: 10
+    vsync_front_porch: 8
+    vsync_pulse_width: 10
+    vsync_back_porch: 10
+    show_test_card: false
+    pclk_frequency: 18MHz
+    pclk_inverted: true
+    init_sequence:
+      - [0x01]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x10]
+      - [0xCC, 0x10]
+      - [0xCD, 0x08]
+      - [0xB0, 0x02, 0x13, 0x1B, 0x0D, 0x10, 0x05, 0x08, 0x07, 0x07, 0x24, 0x04, 0x11, 0x0E, 0x2C, 0x33, 0x1D]
+      - [0xB1, 0x05, 0x13, 0x1B, 0x0D, 0x11, 0x05, 0x08, 0x07, 0x07, 0x24, 0x04, 0x11, 0x0E, 0x2C, 0x33, 0x1D]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x11]
+      - [0xB0, 0x5D]
+      - [0xB1, 0x43]
+      - [0xB2, 0x81]
+      - [0xB3, 0x80]
+      - [0xB5, 0x43]
+      - [0xB7, 0x85]
+      - [0xB8, 0x20]
+      - [0xC1, 0x78]
+      - [0xC2, 0x78]
+      - [0xD0, 0x88]
+      - [0xE0, 0x00, 0x00, 0x02]
+      - [0xE1, 0x03, 0xA0, 0x00, 0x00, 0x04, 0xA0, 0x00, 0x00, 0x00, 0x20, 0x20]
+      - [0xE2, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+      - [0xE3, 0x00, 0x00, 0x11, 0x00]
+      - [0xE4, 0x22, 0x00]
+      - [0xE5, 0x05, 0xEC, 0xA0, 0xA0, 0x07, 0xEE, 0xA0, 0xA0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+      - [0xE6, 0x00, 0x00, 0x11, 0x00]
+      - [0xE7, 0x22, 0x00]
+      - [0xE8, 0x06, 0xED, 0xA0, 0xA0, 0x08, 0xEF, 0xA0, 0xA0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+      - [0xEB, 0x00, 0x00, 0x40, 0x40, 0x00, 0x00, 0x00]
+      - [0xED, 0xFF, 0xFF, 0xFF, 0xBA, 0x0A, 0xBF, 0x45, 0xFF, 0xFF, 0x54, 0xFB, 0xA0, 0xAB, 0xFF, 0xFF, 0xFF]
+      - [0xEF, 0x10, 0x0D, 0x04, 0x08, 0x3F, 0x1F]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x13]
+      - [0xEF, 0x08]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x00]
+      - [0x36, 0x00]
+      - [0x3A, 0x60]
+      - [0x11]
+      - delay 100ms
+      - [0x29]
+      - delay 50ms
+
+# ------------------------------------------------------------------
+# Fonts (Rajdhani + Bootstrap Icons). Icon-Glyphen als \uXXXX-Escapes
+# (Codepoints aus bootstrap-icons.json, siehe thermostat_helpers.h).
+# ------------------------------------------------------------------
+font:
+  - file: "assets/fonts/Rajdhani-Bold.ttf"
+    id: rajdhani_bold_160
+    size: 160
+    bpp: 4
+    glyphs: ["0123456789", ".-"]
+  - file: "assets/fonts/Rajdhani-SemiBold.ttf"
+    id: rajdhani_semibold_56
+    size: 56
+    bpp: 4
+    glyphs: ["0123456789", ".-Â°CF%"]
+  - file: "assets/fonts/Rajdhani-SemiBold.ttf"
+    id: rajdhani_semibold_40
+    size: 40
+    bpp: 4
+    glyphs: &rajdhani_glyphs [
+        "0123456789",
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        "abcdefghijklmnopqrstuvwxyz",
+        "Ã¤Ã¶Ã¼Ã„Ã–ÃœÃŸ",
+        " .,:%Â°Â·-/=()",
+      ]
+  - file: "assets/fonts/Rajdhani-SemiBold.ttf"
+    id: rajdhani_semibold_44
+    size: 44
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+  - file: "assets/fonts/Rajdhani-SemiBold.ttf"
+    id: rajdhani_semibold_42
+    size: 42
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+  - file: "assets/fonts/Rajdhani-SemiBold.ttf"
+    id: rajdhani_semibold_38
+    size: 38
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+  - file: "assets/fonts/Rajdhani-SemiBold.ttf"
+    id: rajdhani_semibold_36
+    size: 36
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+  - file: "assets/fonts/Rajdhani-SemiBold.ttf"
+    id: rajdhani_semibold_34
+    size: 34
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+  - file: "assets/fonts/Rajdhani-Medium.ttf"
+    id: rajdhani_medium_26
+    size: 26
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+  - file: "assets/fonts/Rajdhani-Medium.ttf"
+    id: rajdhani_medium_24
+    size: 24
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+  - file: "assets/fonts/Rajdhani-Medium.ttf"
+    id: rajdhani_medium_22
+    size: 22
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+  - file: "assets/fonts/Rajdhani-Medium.ttf"
+    id: rajdhani_medium_20
+    size: 20
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+  - file: "assets/fonts/Rajdhani-Regular.ttf"
+    id: rajdhani_regular_22
+    size: 22
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+  - file: "assets/fonts/Rajdhani-Regular.ttf"
+    id: rajdhani_regular_20
+    size: 20
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+  - file: "assets/fonts/Rajdhani-Regular.ttf"
+    id: rajdhani_regular_18
+    size: 18
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+  - file: "assets/fonts/Rajdhani-Regular.ttf"
+    id: rajdhani_regular_16
+    size: 16
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+
+  # Modus-Icons groÃŸ: fire, snow, toggle-off
+  - file: "assets/fonts/bootstrap-icons.woff"
+    id: icons_36
+    size: 36
+    bpp: 4
+    glyphs: ["ïŸ¶", "ï•­", "ï—•"]
+
+  # On-Screen-Icons: thermometer-high, droplet-half (groÃŸ, passend zu
+  # rajdhani_semibold_40)
+  - file: "assets/fonts/bootstrap-icons.woff"
+    id: icons_24
+    size: 36
+    bpp: 4
+    glyphs: ["ï—Ž", "ïŒŒ"]
+
+  # -- On-Screen-Icons (thermometer-high \uF5CE, droplet-half \uF30C) --
+  # in mehreren GrÃ¶ÃŸen: pro Label einfach das passende text_font wÃ¤hlen.
+  # Weitere GrÃ¶ÃŸe nÃ¶tig? Block kopieren, id + size anpassen.
+  - file: "assets/fonts/bootstrap-icons.woff"
+    id: icons_screen_20
+    size: 20
+    bpp: 4
+    glyphs: ["\uF5CE", "\uF30C"]
+  - file: "assets/fonts/bootstrap-icons.woff"
+    id: icons_screen_24
+    size: 24
+    bpp: 4
+    glyphs: ["\uF5CE", "\uF30C"]
+  - file: "assets/fonts/bootstrap-icons.woff"
+    id: icons_screen_28
+    size: 28
+    bpp: 4
+    glyphs: ["\uF5CE", "\uF30C"]
+
+  # -- GroÃŸe Icon-Fonts (alle On-Screen-Glyphen: fire \uF7F6,
+  # snow \uF56D, toggle-off \uF5D5, thermometer-high \uF5CE,
+  # droplet-half \uF30C) -- fÃ¼r Modus- und Wert-Icons nutzbar
+  - file: "assets/fonts/bootstrap-icons.woff"
+    id: icons_40
+    size: 40
+    bpp: 4
+    glyphs: &icon_glyphs_all ["\uF7F6", "\uF56D", "\uF5D5", "\uF5CE", "\uF30C"]
+  - file: "assets/fonts/bootstrap-icons.woff"
+    id: icons_46
+    size: 46
+    bpp: 4
+    glyphs: *icon_glyphs_all
+  - file: "assets/fonts/bootstrap-icons.woff"
+    id: icons_50
+    size: 50
+    bpp: 4
+    glyphs: *icon_glyphs_all
+
+  # MenÃ¼-Icons (16 EintrÃ¤ge)
+  - file: "assets/fonts/bootstrap-icons.woff"
+    id: icons_32
+    size: 32
+    bpp: 4
+    glyphs: [
+        "ï—", "ï•«", "ï‡’", "ïŠ“", "ï™˜", "ï’±",
+        "ï", "ï”£", "ïŸ", "ï‡”", "ï“‘", "ï–—",
+        "ï—™", "ï˜œ", "ï±", "ï„—",
+      ]
+
+# ------------------------------------------------------------------
+# Uhrzeit
+# ------------------------------------------------------------------
+time:
+  - platform: homeassistant
+    id: ha_time
+    on_time_sync:
+      - script.execute: update_clock_labels
+    on_time:
+      - minutes: "*"
+        seconds: 0
+        then:
+          - script.execute: update_clock_labels
+
+# ------------------------------------------------------------------
+# LVGL â€“ 3 Screens
+# ------------------------------------------------------------------
+lvgl:
+  displays:
+    - my_display
+  touchscreens:
+    - my_touchscreen
+  bg_color: "0x000000"
+  default_font: rajdhani_medium_24
+
+  on_idle:
+    - timeout: !lambda 'return (uint32_t)(id(dim_delay_num).state * 1000.0f);'
+      then:
+        - lambda: 'id(display_dimmed) = true;'
+        - light.turn_on:
+            id: display_backlight
+            brightness: !lambda 'return id(dim_level_num).state / 100.0f;'
+    - timeout: !lambda 'return (uint32_t)(id(idle_home_num).state * 1000.0f);'
+      then:
+        - lambda: |-
+            id(ui_context) = 0;
+            // Aktiven Sollwert auf TRV (low) zuruecksetzen, damit die
+            // naechste Bedienung vorhersehbar startet
+            if (id(adjust_target) != 0 && !std::isnan(id(target_low_v))) {
+              id(adjust_target) = 0;
+              id(target_temperature) = id(target_low_v);
+            }
+        - script.execute: refresh_temps
+        - script.execute: refresh_status
+        - lvgl.page.show: screen_home
+
+  pages:
+    # ================= Home-Screen =================
+    - id: screen_home
+      bg_color: "0x000000"
+      widgets:
+        - button:
+            id: button_home_background
+            align: CENTER
+            width: 480
+            height: 480
+            radius: 0
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            on_click:
+              - script.execute: wake_display
+              - lambda: 'id(ui_context) = 1;'
+              - lvgl.page.show: screen_thermostat
+
+        - label:
+            id: label_home_hvac_mode
+            text: "Heat"
+            text_font: rajdhani_medium_24
+            text_color: 0xEDEDED
+            align: TOP_MID
+            y: 45
+        - label:
+            id: label_home_preset
+            text: ""
+            text_font: rajdhani_medium_24
+            text_color: 0x9A9A9A
+            align: TOP_MID
+            y: 80
+        - label:
+            id: label_conn_home
+            text: "Connection failed"
+            text_font: rajdhani_medium_24
+            text_color: 0x9A9A9A
+            align: CENTER
+            y: -110
+            hidden: true
+
+        - label:
+            id: label_home_current_temperature
+            text: "35"
+            text_font: rajdhani_bold_160
+            text_color: 0xFFFFFF
+            align: CENTER
+            x: -30
+            y: 10
+            width: 200
+            text_align: RIGHT
+        - label:
+            id: label_home_current_unit
+            text: "Â°C"
+            text_font: rajdhani_semibold_56
+            text_color: 0xB0B0B0
+            align: CENTER
+            x: 90
+            y: -25
+            width: 60
+            text_align: LEFT
+        - label:
+            id: label_home_current_decimal
+            text: ".0"
+            text_font: rajdhani_semibold_56
+            text_color: 0xB0B0B0
+            align: CENTER
+            x: 100
+            y: 42
+            width: 60
+            text_align: LEFT
+        - label:
+            id: icon_mode_home
+            text: ""
+            text_font: icons_50
+            text_color: 0xFFFFFF
+            align: CENTER
+            x: -140
+
+        - label:
+            id: label_home_humidity
+            text: "43%"
+            text_font: rajdhani_semibold_40
+            text_color: 0x9A9A9A
+            align: CENTER
+            y: 100
+            width: 80
+            text_align: LEFT
+            hidden: true
+
+        - label:
+            id: label_home_time
+            text: "21:05"
+            text_font: rajdhani_semibold_42
+            text_color: 0xE0E0E0
+            align: BOTTOM_MID
+            x: -34
+            y: -50
+            width: 90
+            text_align: RIGHT
+        - label:
+            id: label_home_weekday
+            text: "Tue"
+            text_font: rajdhani_medium_22
+            text_color: 0xB0B0B0
+            align: BOTTOM_MID
+            x: 65
+            y: -76
+            width: 90
+            text_align: LEFT
+        - label:
+            id: label_home_date
+            text: "07 Jul"
+            text_font: rajdhani_medium_22
+            text_color: 0x8A8A8A
+            align: BOTTOM_MID
+            x: 65
+            y: -54
+            width: 90
+            text_align: LEFT
+
+    # ================= Thermostat-Screen =================
+    - id: screen_thermostat
+      bg_color: "0x000000"
+      widgets:
+        - button:
+            id: button_thermostat_background
+            align: CENTER
+            width: 480
+            height: 480
+            radius: 0
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            on_click:
+              - script.execute: wake_display
+              - lambda: 'id(ui_context) = 0;'
+              - lvgl.page.show: screen_home
+
+        - arc:
+            id: arc_temperature
+            align: CENTER
+            width: 460
+            height: 460
+            min_value: 0
+            max_value: 100
+            value: 55
+            start_angle: 0
+            end_angle: 360
+            rotation: 270
+            arc_color: 0x2A2A2A
+            arc_width: 14
+            adjustable: false
+            clickable: false
+            indicator:
+              arc_color: 0xFF5A2D
+              arc_width: 14
+
+        - label:
+            id: label_hvac_mode
+            text: "Heat"
+            text_font: rajdhani_medium_24
+            text_color: 0xEDEDED
+            align: TOP_MID
+            y: 45
+        - label:
+            id: label_preset
+            text: ""
+            text_font: rajdhani_medium_24
+            text_color: 0x9A9A9A
+            align: TOP_MID
+            y: 80
+        - label:
+            id: label_conn_thermo
+            text: "Connection failed"
+            text_font: rajdhani_medium_24
+            text_color: 0x9A9A9A
+            align: CENTER
+            y: -110
+            hidden: true
+
+        - label:
+            id: icon_mode_thermo
+            text: ""
+            text_font: icons_50
+            text_color: 0xFFFFFF
+            align: CENTER
+            x: -90
+            y: -40
+        - label:
+            id: icon_thermo_current
+            text: ""
+            text_font: icons_24
+            text_color: 0xFF5A2D
+            align: CENTER
+            x: -170
+            y: 15
+            hidden: true
+        - label:
+            id: label_current_temperature
+            text: "20.5Â°"
+            text_font: rajdhani_semibold_40
+            text_color: 0xDADADA
+            align: CENTER
+            x: -100
+            y: 15
+            width: 90
+            text_align: RIGHT
+        - label:
+            id: icon_hum_thermo
+            text: ""
+            text_font: icons_24
+            text_color: 0x6EC6FF
+            align: CENTER
+            x: -170
+            y: 65
+            hidden: true
+        - label:
+            id: label_humidity_thermo
+            text: "48%"
+            text_font: rajdhani_semibold_40
+            text_color: 0x9A9A9A
+            align: CENTER
+            x: -100
+            y: 63
+            width: 90
+            text_align: RIGHT
+            hidden: true
+
+        - obj:
+            id: divider_thermostat
+            align: CENTER
+            x: -45
+            y: 12
+            width: 3
+            height: 160
+            bg_color: 0x3A3A3A
+            border_width: 0
+            radius: 0
+
+        - label:
+            id: label_target_temperature
+            text: "35"
+            text_font: rajdhani_bold_160
+            text_color: 0xFFFFFF
+            align: CENTER
+            x: 30
+            y: 10
+            width: 200
+            text_align: RIGHT
+        - label:
+            id: label_target_unit
+            text: "Â°C"
+            text_font: rajdhani_semibold_56
+            text_color: 0xFFFFFF
+            align: CENTER
+            x: 150
+            y: -25
+            width: 60
+            text_align: LEFT
+        - label:
+            id: label_target_decimal
+            text: ".0"
+            text_font: rajdhani_semibold_56
+            text_color: 0xFFFFFF
+            align: CENTER
+            x: 160
+            y: 42
+            width: 60
+            text_align: LEFT
+        # Zeigt bei Dual-Setpoint-EntitÃ¤ten (heat_cool), welcher Sollwert
+        # gerade per Encoder verstellt wird: TRV (low) oder AC (high).
+        - label:
+            id: label_setpoint_mode
+            text: ""
+            text_font: rajdhani_medium_24
+            text_color: 0x9A9A9A
+            align: CENTER
+            x: 75
+            y: -78
+            hidden: true
+
+        - label:
+            id: label_clock_time
+            text: "21:05"
+            text_font: rajdhani_semibold_42
+            text_color: 0xE0E0E0
+            align: BOTTOM_MID
+            x: -34
+            y: -50
+            width: 90
+            text_align: RIGHT
+        - label:
+            id: label_thermo_weekday
+            text: "Tue"
+            text_font: rajdhani_medium_22
+            text_color: 0xB0B0B0
+            align: BOTTOM_MID
+            x: 65
+            y: -76
+            width: 90
+            text_align: LEFT
+        - label:
+            id: label_thermo_date
+            text: "07 Jul"
+            text_font: rajdhani_medium_22
+            text_color: 0x8A8A8A
+            align: BOTTOM_MID
+            x: 65
+            y: -54
+            width: 90
+            text_align: LEFT
+
+    # ================= Settings-MenÃ¼ =================
+    - id: screen_settings
+      bg_color: "0x000000"
+      widgets:
+        - label:
+            id: label_settings_title
+            text: "Settings"
+            text_font: rajdhani_medium_24
+            text_color: 0x9A9A9A
+            align: TOP_MID
+            y: 48
+        - label:
+            id: label_menu_icon
+            text: ""
+            text_font: icons_32
+            text_color: 0xFFFFFF
+            align: TOP_MID
+            y: 92
+        - label:
+            id: label_menu_prev
+            text: ""
+            text_font: rajdhani_medium_24
+            text_color: 0x555555
+            align: CENTER
+            y: -80
+        - label:
+            id: label_menu_current
+            text: ""
+            text_font: rajdhani_semibold_40
+            text_color: 0xFFFFFF
+            align: CENTER
+        - label:
+            id: label_menu_next
+            text: ""
+            text_font: rajdhani_medium_24
+            text_color: 0x555555
+            align: CENTER
+            y: 80
+        - label:
+            id: label_menu_value
+            text: ""
+            text_font: rajdhani_medium_24
+            text_color: 0x9A9A9A
+            align: BOTTOM_MID
+            y: -68
