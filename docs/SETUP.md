@@ -6,19 +6,19 @@ This guide documents the toolchain used for this project on Windows.
 
 The current local setup uses:
 
-- Python 3.14.6
+- Python 3.13.14
 - pip 26.1.2
 - ESPHome 2026.6.5
 
-ESPHome 2026.6.5 requires Python `>=3.11,<3.15`, so Python 3.14.6 is a valid
+ESPHome 2026.6.5 requires Python `>=3.11,<3.15`, so Python 3.13.14 is a valid
 runtime for this project.
 
 ## Install Python
 
-Install Python 3.14 for the current Windows user:
+Install Python 3.13 for the current Windows user:
 
 ```powershell
-winget install --id Python.Python.3.14 --exact --scope user --accept-package-agreements --accept-source-agreements
+winget install --id Python.Python.3.13 --exact --scope user --accept-package-agreements --accept-source-agreements
 ```
 
 Open a new PowerShell terminal after the installer finishes.
@@ -32,13 +32,13 @@ python --version
 Expected result:
 
 ```text
-Python 3.14.6
+Python 3.13.14
 ```
 
 If `python` is not found in the current terminal, use the full path:
 
 ```powershell
-& "$env:USERPROFILE\AppData\Local\Programs\Python\Python314\python.exe" --version
+& "$env:USERPROFILE\AppData\Local\Programs\Python\Python313\python.exe" --version
 ```
 
 ## Verify pip
@@ -63,7 +63,7 @@ python -m pip --version
 
 ## Install ESPHome
 
-Install or upgrade ESPHome globally in the Python 3.14 user installation:
+Install or upgrade ESPHome globally in the Python 3.13 user installation:
 
 ```powershell
 python -m pip install --upgrade esphome
@@ -84,7 +84,7 @@ Version: 2026.6.5
 If `esphome` is not found, open a new terminal or call the executable directly:
 
 ```powershell
-& "$env:USERPROFILE\AppData\Local\Programs\Python\Python314\Scripts\esphome.exe" version
+& "$env:USERPROFILE\AppData\Local\Programs\Python\Python313\Scripts\esphome.exe" version
 ```
 
 ## PATH Entries
@@ -92,8 +92,8 @@ If `esphome` is not found, open a new terminal or call the executable directly:
 The user PATH should include these directories:
 
 ```text
-%USERPROFILE%\AppData\Local\Programs\Python\Python314
-%USERPROFILE%\AppData\Local\Programs\Python\Python314\Scripts
+%USERPROFILE%\AppData\Local\Programs\Python\Python313
+%USERPROFILE%\AppData\Local\Programs\Python\Python313\Scripts
 ```
 
 New terminals pick up PATH changes automatically. Already-open terminals may
