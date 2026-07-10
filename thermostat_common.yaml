@@ -1,61 +1,56 @@
 ﻿########################################################################
 # thermostat_common.yaml
 #
-# Gemeinsames Package für CrowPanel ESP32-S3 Rotary Display (2.1"/480x480
-# UND 1.28"/240x240) – Home-Assistant Thermostat-Controller (Nest-artiges
-# dunkles Design). Board-spezifische Hardware (i2c/spi/output/display/
-# touchscreen/encoder-pins) UND das jeweilige `lvgl:`-Layout liegen in
-# thermostat_480.yaml bzw. thermostat_240.yaml, die dieses Package per
-# `packages:` einbinden. Kein automatisches Scaling mehr – jedes Board
-# hat sein eigenes, für die native Auflösung gebautes LVGL-Layout.
+# Shared package for CrowPanel ESP32-S3 rotary displays (2.1"/480x480 and
+# 1.28"/240x240). Board-specific hardware and each native LVGL layout live in
+# thermostat_480.yaml and thermostat_240.yaml, which include this file through
+# `packages:`. There is no automatic scaling; every board has its own layout.
 #
-# EINE Home-Assistant-climate-Entität steuert alles: reine Heizung (TRV),
-# reine Klimaanlage ODER beides gleichzeitig (z.B. Split-Klima oder
-# better_thermostat mit cooler). Die verfügbaren hvac_modes/preset_modes
-# werden zur Laufzeit aus der Entität gelesen; Modus-Icon/Ringfarbe
-# richten sich nach dem aktuellen HVAC-Modus (Heizen = rot-orange,
-# Kühlen = hellblau, Aus = grau; im Mono-Design alles weiß).
+# A single Home Assistant climate entity drives the UI. It can represent a
+# thermostat-only setup, an AC-only setup, or a combined heat/cool entity. The
+# available hvac_modes and preset_modes are read at runtime. Mode icons and ring
+# colors follow the current HVAC mode.
 #
-# Screens: screen_home (Standard) -> screen_thermostat -> screen_settings
+# Screens: screen_home (default) -> screen_thermostat -> screen_settings
 #
-# Bedienung (Knob):
-#   Home:        drehen ODER kurz drücken -> Thermostat-Screen
-#   Thermostat:  drehen        -> Zieltemperatur +/- 0.5 °C (entprellt)
-#                kurz drücken  -> Settings-Menü
-#   Settings:    drehen = scrollen/Wert ändern, kurz = auswählen/OK
-#   Überall:     1 s drücken   -> zurück; 3 s -> HVAC/Preset-Untermenü
-#                Idle          -> nach einstellbarer Zeit dimmen + Home
+# Knob controls:
+#   Home:        rotate or short-press -> thermostat screen
+#   Thermostat:  rotate -> target temperature +/- configured step
+#                short-press -> settings menu
+#   Settings:    rotate = scroll/change value, short-press = select/OK
+#   Everywhere:  1 s press -> back, 3 s press -> HVAC/preset submenu
+#                Idle -> dim display and return home after configured delays
 #
-# WICHTIG für HA: Damit climate.set_temperature & Co. wirken, muss in
-# Home Assistant unter Geräte -> ESPHome -> (Gerät) -> Konfigurieren die
-# Option "Erlaube dem Gerät, Home-Assistant-Aktionen auszuführen" AN sein.
+# Home Assistant must allow this ESPHome device to perform Home Assistant
+# actions, otherwise climate.set_temperature and related service calls will not
+# run.
 #
-# ESPHome-Limitierung: homeassistant-Sensoren binden zur COMPILE-Zeit.
-# LIVE-States kommen von climate_default_entity (Substitution); das in
-# HA editierbare Entitäts-Textfeld steuert alle AUSGEHENDEN Calls.
+# ESPHome limitation: homeassistant sensors are bound at compile time. Live
+# state comes from climate_default_entity. The editable Climate Entity text
+# field controls outgoing service calls.
 #
 # Hardware-Details siehe jeweilige Board-Datei:
 #   thermostat_480.yaml: ST7701S RGB-Panel, CST826-Touch (extern gepatcht),
 #                         PCF8574-Expander, Encoder GPIO4/42.
 #   thermostat_240.yaml: GC9A01A SPI-Panel, CST816-Touch, Encoder GPIO45/42.
-# encoder_button/temperature_encoder unten definieren die 480-Pins als
-# Default; thermostat_240.yaml überschreibt sie per `!extend`.
+# encoder_button and temperature_encoder define 480x480 defaults below.
+# thermostat_240.yaml overrides them with `!extend`.
 ########################################################################
 
 substitutions:
   device_name: thermostat
   friendly_name: "Thermostat Knob"
 
-  # ---- Die EINE Climate-Entität (Live-State-Quelle, Compile-Zeit).
-  # Kann TRV und/oder AC steuern (z.B. Split-Klima, better_thermostat). ----
+  # ---- Single climate entity used as live-state source at compile time.
+  # It can control a TRV, an AC unit, or a combined heat/cool setup. ----
   climate_default_entity: "climate.wohnzimmer_better_thermostat"
 
-  # ---- Verhalten ----
-  temperature_step: "0.5"       # °C pro Encoder-Detent (intern immer °C)
+  # ---- Behavior ----
+  temperature_step: "0.5"       # Celsius per encoder detent; internal values stay Celsius
   temperature_min: "5.0"
   temperature_max: "30.0"
-  setpoint_min_gap: "0.5"       # Mindestabstand TRV(low) <-> AC(high) in °C
-  debounce_ms: "500ms"          # Ruhezeit vor climate.set_temperature
+  setpoint_min_gap: "0.5"       # Minimum TRV(low) <-> AC(high) gap in Celsius
+  debounce_ms: "500ms"          # Quiet time before climate.set_temperature
 
 esphome:
   name: ${device_name}
@@ -72,10 +67,10 @@ esphome:
     - priority: -100
       then:
         - lambda: |-
-            // Dual-Setpoint-Cache aus HA-Sensoren initialisieren
+            // Initialize the dual-setpoint cache from Home Assistant sensors.
             id(target_low_v) = id(target_low_ha).state;
             id(target_high_v) = id(target_high_ha).state;
-            // Anzeige: aktiver Sollwert (TRV = low) vor Single-Setpoint
+            // Prefer the active dual setpoint before the single setpoint.
             if (!std::isnan(id(target_low_v))) {
               id(target_temperature) = id(adjust_target) == 1 && !std::isnan(id(target_high_v))
                                            ? id(target_high_v) : id(target_low_v);
@@ -109,7 +104,7 @@ psram:
   speed: 80MHz
 
 # ------------------------------------------------------------------
-# Netzwerk
+# Network
 # ------------------------------------------------------------------
 wifi:
   ssid: !secret wifi_ssid
@@ -123,7 +118,7 @@ captive_portal:
 logger:
   level: INFO
 
-# API OHNE Verschlüsselung -> Gerät ohne Key in HA hinzufügbar.
+# API without encryption lets Home Assistant add the device without a key.
 api:
   on_client_connected:
     - lambda: 'id(ha_connected) = true;'
@@ -141,7 +136,7 @@ web_server:
   port: 80
 
 # ------------------------------------------------------------------
-# Globale Zustände
+# Global state
 # ------------------------------------------------------------------
 globals:
 
@@ -160,21 +155,17 @@ globals:
     restore_value: false
     initial_value: "false"
 
-  # Wird erst am Ende der on_boot(-100)-Sequenz true. Verhindert, dass
-  # select:-Komponenten (language_select/design_select) beim Restaurieren
-  # ihres gespeicherten Werts VOR dem Setup der WS2812-Hardware bereits
-  # refresh_status -> update_status_led ausloesen (Crash, RMT-Treiber
-  # noch nicht initialisiert).
+  # Becomes true only at the end of the on_boot(-100) sequence. This prevents
+  # select components from restoring values and triggering refresh_status ->
+  # update_status_led before WS2812/RMT hardware is initialized.
   - id: app_booted
     type: bool
     restore_value: false
     initial_value: "false"
 
-  # Roh-Koordinaten-Tracking fuer Swipe-Erkennung (touchscreen:
-  # on_touch/on_update/on_release, siehe toggle_adjust_target-Aufruf in
-  # der jeweiligen Board-Datei). LVGL-eigene on_swipe_*-Events waren auf
-  # dem vollflaechigen Button nicht zuverlaessig -> direkt ueber die
-  # rohen Touch-Koordinaten (Start- vs. Endposition beim Loslassen).
+  # Raw coordinate tracking for swipe detection. LVGL on_swipe_* events were
+  # unreliable on the full-screen button, so the board files feed raw touch
+  # start/end coordinates into handle_swipe_release.
   - id: swipe_start_x
     type: int
     restore_value: false
@@ -184,7 +175,7 @@ globals:
     restore_value: false
     initial_value: "0"
 
-  # UI-Navigation: 0 Home, 1 Thermostat, 2 Menü, 3 Untermenü
+  # UI navigation: 0 Home, 1 Thermostat, 2 menu, 3 submenu
   - id: ui_context
     type: int
     restore_value: false
@@ -235,7 +226,7 @@ globals:
     restore_value: false
     initial_value: "0"
 
-  # Rohdaten aus HA-Attributen
+  # Raw data from Home Assistant attributes
   - id: hvac_modes_raw
     type: std::string
     restore_value: false
@@ -260,7 +251,7 @@ globals:
     type: std::string
     restore_value: false
 
-  # Uhr/Datum
+  # Clock and date
   - id: pending_clock_time
     type: std::string
     restore_value: false
@@ -271,8 +262,8 @@ globals:
     type: std::string
     restore_value: false
 
-  # Dual-Setpoint (heat_cool): 0 = TRV/Heizen (target_temp_low),
-  # 1 = AC/Kühlen (target_temp_high). Doppelklick wechselt.
+  # Dual setpoint (heat_cool): 0 = TRV/heat (target_temp_low),
+  # 1 = AC/cool (target_temp_high). Double click switches target.
   - id: adjust_target
     type: int
     restore_value: false
@@ -295,7 +286,7 @@ globals:
     restore_value: false
     initial_value: "NAN"
 
-  # Settings-Rendertexte
+  # Settings render text
   - id: set_title
     type: std::string
     restore_value: false
@@ -318,14 +309,11 @@ light:
     output: bl_pwm
     id: display_backlight
     default_transition_length: 0s
-    # Nicht die eigene (separat persistierte) Helligkeit restaurieren --
-    # sonst Race beim Boot: die Licht-eigene alte Erinnerung ueberschreibt
-    # brightness_num via on_state zurueck. brightness_num ist die einzige
-    # Quelle, wird explizit im on_boot(-100)-Block gesetzt (siehe unten).
+    # Do not restore the light's own brightness. brightness_num is the single
+    # persisted source and is applied explicitly in on_boot(-100).
     restore_mode: ALWAYS_ON
-    # Helligkeitsänderungen (HA-Lichtslider ODER Knob-Settings) in
-    # brightness_pct und die Number-Entität übernehmen. Während des
-    # Dimmens (display_dimmed) nicht synchronisieren.
+    # Mirror brightness changes from Home Assistant or knob settings into
+    # brightness_pct and the number entity. Do not synchronize while dimmed.
     on_state:
       - lambda: |-
           if (!id(display_dimmed)) {
@@ -341,11 +329,11 @@ light:
           }
 
 # ------------------------------------------------------------------
-# Persistierte Einstellungen – ALLE auch in Home Assistant steuerbar
+# Persisted settings; all are also controllable from Home Assistant.
 # ------------------------------------------------------------------
 text:
   - platform: template
-    name: "Climate Entität"
+    name: "Climate Entity"
     id: climate_entity
     mode: text
     optimistic: true
@@ -354,7 +342,7 @@ text:
 
 switch:
   - platform: template
-    name: "Uhrzeit 24h-Format"
+    name: "24h Clock"
     id: time_24h
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
@@ -364,7 +352,7 @@ switch:
       - script.execute: update_clock_labels
 
   - platform: template
-    name: "Icons anzeigen"
+    name: "Show Icons"
     id: icons_enabled
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
@@ -375,10 +363,9 @@ switch:
       - script.execute: refresh_status
       - script.execute: refresh_temps
 
-  # Status-LED (240er, siehe update_status_led-Script) komplett aus,
-  # unabhaengig von Helligkeit/HVAC-Farbe.
+  # Disable the 240x240 status LED regardless of brightness or HVAC color.
   - platform: template
-    name: "LED aktiviert"
+    name: "LED Enabled"
     id: led_enabled
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
@@ -389,11 +376,11 @@ switch:
 
 select:
   - platform: template
-    name: "Sprache / Language"
+    name: "Language"
     id: language_select
     optimistic: true
     restore_value: true
-    options: ["English", "Deutsch"]
+    options: ["English"]
     initial_option: "English"
     on_value:
       then:
@@ -415,7 +402,7 @@ select:
         - script.execute: refresh_temps
 
   - platform: template
-    name: "Temperatur-Einheit"
+    name: "Temperature Unit"
     id: unit_select
     optimistic: true
     restore_value: true
@@ -426,7 +413,7 @@ select:
         - script.execute: refresh_temps
 
   - platform: template
-    name: "3s-Taste öffnet"
+    name: "3s Button Opens"
     id: longpress3_select
     optimistic: true
     restore_value: true
@@ -434,16 +421,16 @@ select:
     initial_option: "HVAC"
 
   - platform: template
-    name: "Knob HVAC-Modi"
+    name: "Knob HVAC Modes"
     id: knob_hvac_modes
     optimistic: true
     restore_value: true
     options: ["Heat/Off", "All"]
     initial_option: "Heat/Off"
 
-  # Empfindlichkeit des Drehreglers: °C pro Raststufe
+  # Rotary encoder sensitivity in Celsius per detent.
   - platform: template
-    name: "Knob-Schrittweite (°C)"
+    name: "Knob Step (°C)"
     id: knob_step_select
     optimistic: true
     restore_value: true
@@ -453,7 +440,7 @@ select:
 
 number:
   - platform: template
-    name: "Idle bis Home (s)"
+    name: "Idle To Home (s)"
     id: idle_home_num
     optimistic: true
     restore_value: true
@@ -465,7 +452,7 @@ number:
     mode: box
 
   - platform: template
-    name: "Dimmen nach (s)"
+    name: "Dim After (s)"
     id: dim_delay_num
     optimistic: true
     restore_value: true
@@ -477,7 +464,7 @@ number:
     mode: box
 
   - platform: template
-    name: "Dimm-Stufe (%)"
+    name: "Dim Level (%)"
     id: dim_level_num
     optimistic: true
     restore_value: true
@@ -488,10 +475,10 @@ number:
     unit_of_measurement: "%"
     mode: slider
 
-  # Display-Helligkeit als eigene HA-Entität; bidirektional gekoppelt
-  # mit dem Settings-Screen (Menüpunkt "Helligkeit") und dem Backlight.
+  # Display brightness as a Home Assistant entity, synchronized with the
+  # settings screen and the backlight.
   - platform: template
-    name: "Helligkeit (%)"
+    name: "Brightness (%)"
     id: brightness_num
     optimistic: true
     restore_value: true
@@ -512,17 +499,17 @@ number:
               - light.turn_on:
                   id: display_backlight
                   brightness: !lambda 'return id(brightness_pct) / 100.0f;'
-        # Settings-Screen live aktualisieren (falls gerade offen)
+        # Update the settings screen live when it is open.
         - if:
             condition:
               lambda: 'return id(ui_context) == 2 || id(ui_context) == 3;'
             then:
               - script.execute: update_settings_labels
 
-  # Status-LED-Helligkeit (240er). Getrennt von der Display-Helligkeit,
-  # persistiert + über HA einstellbar.
+  # Status LED brightness for the 240x240 board. This is separate from display
+  # brightness and can be changed from Home Assistant.
   - platform: template
-    name: "LED Helligkeit (%)"
+    name: "LED Brightness (%)"
     id: led_brightness_num
     optimistic: true
     restore_value: true
@@ -544,11 +531,11 @@ number:
 
 button:
   - platform: factory_reset
-    name: "${friendly_name} Werksreset"
+    name: "${friendly_name} Factory Reset"
     id: factory_reset_btn
 
 # ------------------------------------------------------------------
-# Encoder-Taster (on_multi_click für saubere Einzel-/Doppel-Trennung)
+# Encoder button. on_multi_click keeps single and double clicks separated.
 # ------------------------------------------------------------------
 binary_sensor:
   - platform: status
@@ -567,9 +554,8 @@ binary_sensor:
     on_press:
       - script.execute: wake_display
     on_multi_click:
-      # Doppelklick: von Home/Settings schnell zum Thermostat; AUF dem
-      # Thermostat-Screen: zwischen TRV- (Heizen) und AC- (Kühlen)
-      # Sollwert wechseln (nur bei Dual-Setpoint-Entitäten).
+      # Double click: from home/settings, jump to thermostat. On the thermostat
+      # screen, switch between TRV/heat and AC/cool target in dual-setpoint mode.
       - timing:
           - ON for at most 350ms
           - OFF for 40ms to 350ms
@@ -584,7 +570,7 @@ binary_sensor:
                 - lvgl.page.show: screen_thermostat
               else:
                 - script.execute: toggle_adjust_target
-      # Einzelklick
+      # Single click
       - timing:
           - ON for at most 350ms
           - OFF for at least 400ms
@@ -609,7 +595,7 @@ binary_sensor:
                             - script.execute: menu_enter
                           else:
                             - script.execute: submenu_apply
-      # 1 s: eine Ebene zurück
+      # 1 s: go back one level
       - timing:
           - ON for 800ms to 2500ms
           - OFF for at least 50ms
@@ -630,7 +616,7 @@ binary_sensor:
                     else:
                       - lambda: 'id(ui_context) = 0;'
                       - lvgl.page.show: screen_home
-      # 3 s: direkt ins HVAC- oder Preset-Untermenü
+      # 3 s: open the HVAC or preset submenu directly
       - timing:
           - ON for at least 2800ms
           - OFF for at least 50ms
@@ -641,7 +627,7 @@ binary_sensor:
           - script.execute: menu_enter
 
 # ------------------------------------------------------------------
-# Drehencoder (Pins getauscht = Drehrichtungs-Fix)
+# Rotary encoder. Pins are swapped to fix rotation direction.
 # ------------------------------------------------------------------
 sensor:
   - platform: rotary_encoder
@@ -694,8 +680,8 @@ sensor:
                   float new_temp = id(target_temperature) + (step * id(encoder_delta));
                   if (new_temp < ${temperature_min}) new_temp = ${temperature_min};
                   if (new_temp > ${temperature_max}) new_temp = ${temperature_max};
-                  // Dual-Setpoint: Sollwerte duerfen sich nicht kreuzen,
-                  // sonst arbeiten TRV und AC gegeneinander (BT-Crash).
+                  // Dual setpoints must not cross; otherwise TRV and AC fight
+                  // each other and better_thermostat may reject the range.
                   if (!std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v))) {
                     if (id(adjust_target) == 0 && new_temp > id(target_high_v) - ${setpoint_min_gap})
                       new_temp = id(target_high_v) - ${setpoint_min_gap};
@@ -759,7 +745,7 @@ sensor:
                     - script.execute: preview_led_brightness
               - script.execute: update_settings_labels
 
-  # ---- Ist-Temperatur ----
+  # ---- Current temperature ----
   - platform: homeassistant
     id: current_temperature_ha
     entity_id: ${climate_default_entity}
@@ -773,8 +759,8 @@ sensor:
               - lambda: 'id(pending_current_temperature) = x;'
               - script.execute: refresh_temps
 
-  # ---- Soll-Temperatur (nur Single-Setpoint; bei Dual-Setpoint
-  # übernehmen target_temp_low/high die Anzeige) ----
+  # ---- Target temperature for single-setpoint entities. Dual-setpoint
+  # entities use target_temp_low/high for display. ----
   - platform: homeassistant
     id: target_temperature_ha
     entity_id: ${climate_default_entity}
@@ -790,7 +776,7 @@ sensor:
               - lambda: 'id(target_temperature) = x;'
               - script.execute: refresh_temps
 
-  # ---- Dual-Setpoint (TRV = heizen / AC = kühlen) ----
+  # ---- Dual setpoint (TRV = heat / AC = cool) ----
   - platform: homeassistant
     id: target_low_ha
     entity_id: ${climate_default_entity}
@@ -818,7 +804,7 @@ sensor:
               - lambda: 'id(target_temperature) = x;'
               - script.execute: refresh_temps
 
-  # ---- Luftfeuchte: better_thermostat "humidity" ODER Standard
+  # ---- Humidity: better_thermostat "humidity" or standard
   # "current_humidity". ----
   - platform: homeassistant
     id: humidity_ha
@@ -847,11 +833,11 @@ sensor:
 
   - platform: wifi_signal
     id: wifi_rssi
-    name: "${friendly_name} WLAN Signal"
+    name: "${friendly_name} WiFi Signal"
     update_interval: 60s
 
 # ------------------------------------------------------------------
-# HVAC-Zustände, Modi-/Preset-Listen, aktives Preset
+# HVAC state, mode/preset lists, and active preset.
 # ------------------------------------------------------------------
 text_sensor:
   - platform: homeassistant
@@ -862,7 +848,7 @@ text_sensor:
         - lambda: 'id(current_hvac_raw) = x;'
         - script.execute: refresh_status
 
-  # Läuft gerade eine Heiz-/Kühlphase? (heating / cooling / idle / off)
+  # Current action phase: heating, cooling, idle, or off.
   - platform: homeassistant
     id: hvac_action_ha
     entity_id: ${climate_default_entity}
@@ -910,12 +896,11 @@ text_sensor:
       name: "${friendly_name} SSID"
 
 # ------------------------------------------------------------------
-# Skripte
+# Scripts
 # ------------------------------------------------------------------
 script:
-  # Nach dem API-Connect alle HA-Zustände zwangsweise in die Globals
-  # übernehmen (Preset, HVAC, Action, Sollwerte). Fängt Fälle ab, in
-  # denen einzelne on_value-Automationen beim Init nicht feuern.
+  # After API connect, force-copy Home Assistant states into globals. This
+  # covers cases where individual on_value automations do not fire during init.
   - id: sync_ha_states
     mode: restart
     then:
@@ -950,15 +935,15 @@ script:
             lambda: 'return id(pending_temperature_change);'
           then:
             - lambda: |-
-                // Cache ggf. direkt aus den HA-Sensoren auffrischen
+                // Refresh the cache directly from Home Assistant sensors.
                 if (std::isnan(id(target_low_v)))  id(target_low_v)  = id(target_low_ha).state;
                 if (std::isnan(id(target_high_v))) id(target_high_v) = id(target_high_ha).state;
             - if:
                 condition:
                   lambda: 'return !std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v));'
                 then:
-                  # Dual-Setpoint: nur den AKTIVEN Sollwert übernehmen und
-                  # am anderen begrenzen (nie kreuzen -> BT-Crash-Schutz).
+                  # Dual setpoint: update only the active target and clamp it
+                  # against the other target so the range never crosses.
                   - lambda: |-
                       if (id(adjust_target) == 1) {
                         id(target_high_v) = id(target_temperature);
@@ -997,9 +982,8 @@ script:
 
   - id: wake_display
     then:
-      # LVGL-Idle-Timer zuruecksetzen: Encoder/Taster sind keine LVGL-
-      # Eingabegeraete, ohne das hier wuerden "Dimmen nach" und "Idle
-      # bis Home" die Knob-Bedienung nicht mitbekommen.
+      # Reset LVGL idle timers. Encoder/button input is not an LVGL input
+      # device, so dim and idle timers would otherwise ignore knob activity.
       - lambda: 'lv_disp_trig_activity(nullptr);'
       - if:
           condition:
@@ -1011,12 +995,9 @@ script:
                 brightness: !lambda 'return id(brightness_pct) / 100.0f;'
             - script.execute: update_status_led
 
-  # Zwischen TRV- (Heizen) und AC- (Kühlen) Sollwert wechseln (nur bei
-  # Dual-Setpoint-Entitäten) bzw. HVAC-Modus togglen (better_thermostat-
-  # Stil). Von Doppelklick UND Swipe auf dem Thermostat-Screen genutzt.
-  # Wird von touchscreen: on_release (Board-Datei) aufgerufen. Prueft, ob
-  # die Wischbewegung (Start- vs. Endposition) breit genug war und
-  # loest dann denselben Wechsel wie der Knob-Doppelklick aus.
+  # Switch between TRV/heat and AC/cool targets in dual-setpoint mode, or toggle
+  # HVAC mode for better_thermostat-style entities. Used by double click and by
+  # swipe release from the board files.
   - id: handle_swipe_release
     then:
       - if:
@@ -1029,23 +1010,23 @@ script:
   - id: toggle_adjust_target
     then:
       - lambda: |-
-          // Cache ggf. direkt aus den HA-Sensoren auffrischen
+          // Refresh the cache directly from Home Assistant sensors.
           if (std::isnan(id(target_low_v)))  id(target_low_v)  = id(target_low_ha).state;
           if (std::isnan(id(target_high_v))) id(target_high_v) = id(target_high_ha).state;
       - if:
           condition:
             lambda: 'return !std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v));'
           then:
-            # Echte Dual-Setpoint-Entität (heat_cool): zwischen
-            # low (TRV) und high (AC) wechseln
+            # Real dual-setpoint entity (heat_cool): switch between low (TRV)
+            # and high (AC).
             - lambda: |-
                 id(adjust_target) = 1 - id(adjust_target);
                 id(target_temperature) = id(adjust_target) == 1 ? id(target_high_v) : id(target_low_v);
             - script.execute: refresh_temps
             - script.execute: refresh_status
           else:
-            # better_thermostat-Stil: EIN temperature-Attribut,
-            # TRV = heat-Modus, AC = cool-Modus -> Modus togglen
+            # better_thermostat style: one temperature attribute; TRV = heat
+            # mode, AC = cool mode, so toggle the mode.
             - if:
                 condition:
                   lambda: |-
@@ -1061,23 +1042,20 @@ script:
                         hvac_mode: !lambda |-
                           return id(current_hvac_raw) == "cool" ? std::string("heat") : std::string("cool");
 
-  # Status-LED (falls vorhanden, siehe Board-Datei): leuchtet, wenn nicht
-  # im Idle-Modus. Leer als Default -> Boards ohne LED-Strip (z.B. 480er)
-  # ueberschreiben das nicht, `!extend` in der Board-Datei ergaenzt die
-  # tatsaechliche Ansteuerung.
+  # Status LED hook. Boards with an LED strip extend this placeholder; boards
+  # without one keep it empty.
   - id: update_status_led
     then: []
 
-  # Live-Vorschau der LED-Helligkeit waehrend im Settings-Untermenü
-  # gedreht wird (vor dem Bestaetigen/Speichern). Platzhalter wie oben,
-  # 240er ueberschreibt per !extend.
+  # Live preview for LED brightness while rotating in the settings submenu.
+  # The 240x240 board overrides this placeholder with `!extend`.
   - id: preview_led_brightness
     then: []
 
-  # Alle Temperatur-/Feuchte-Anzeigen + Ringfüllstand
+  # All temperature/humidity labels and ring fill level.
   - id: refresh_temps
     then:
-      # Icon-Glyphen (aus thermostat_helpers.h, keine PUA-Zeichen im YAML)
+      # Icon glyphs from thermostat_helpers.h; keep PUA characters out of YAML.
       - lvgl.label.update:
           id: icon_thermo_current
           text: !lambda 'return std::string(ICON_THERMO_HIGH);'
@@ -1094,7 +1072,7 @@ script:
           text_color: !lambda |-
             if (id(design_select).current_option() != "Color") return lv_color_hex(0xFFFFFF);
             return lv_color_hex(0x6EC6FF);
-      # TRV/AC-Indikator (nur bei Dual-Setpoint sichtbar)
+      # TRV/AC indicator, visible only in dual-setpoint mode.
       - if:
           condition:
             lambda: 'return !std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v));'
@@ -1151,7 +1129,7 @@ script:
           value: !lambda |-
             return (int) roundf((id(target_temperature) - ${temperature_min}) /
                                 (${temperature_max} - ${temperature_min}) * 100.0f);
-      # Luftfeuchte (nur wenn Wert vorhanden)
+      # Humidity, only visible when a value exists.
       - if:
           condition:
             lambda: 'return !std::isnan(id(pending_humidity));'
@@ -1189,21 +1167,21 @@ script:
           else:
             - lvgl.widget.hide: icon_thermo_current
 
-  # Statuszeilen + Modus-Icons + Ringfarbe
+  # Status lines, mode icons, and ring color.
   - id: refresh_status
     then:
       - lvgl.label.update:
           id: label_hvac_mode
-          text: !lambda 'return ha_hvac_mode_label(id(current_hvac_raw), id(language_select).current_option() == "Deutsch");'
+          text: !lambda 'return ha_hvac_mode_label(id(current_hvac_raw), false);'
       - lvgl.label.update:
           id: label_home_hvac_mode
-          text: !lambda 'return ha_hvac_mode_label(id(current_hvac_raw), id(language_select).current_option() == "Deutsch");'
+          text: !lambda 'return ha_hvac_mode_label(id(current_hvac_raw), false);'
       - lvgl.label.update:
           id: label_preset
-          text: !lambda 'return ha_preset_label(id(current_preset_raw), id(language_select).current_option() == "Deutsch");'
+          text: !lambda 'return ha_preset_label(id(current_preset_raw), false);'
       - lvgl.label.update:
           id: label_home_preset
-          text: !lambda 'return ha_preset_label(id(current_preset_raw), id(language_select).current_option() == "Deutsch");'
+          text: !lambda 'return ha_preset_label(id(current_preset_raw), false);'
       - lvgl.label.update:
           id: icon_mode_thermo
           text: !lambda |-
@@ -1225,10 +1203,10 @@ script:
       - lvgl.widget.update:
           id: icon_mode_thermo
           text_color: !lambda |-
-            // Keine aktive Heiz-/Kühlphase (idle/off) -> dunkelgrau
+            // No active heating/cooling phase (idle/off): use dark gray.
             if (id(current_action_raw) != "heating" && id(current_action_raw) != "cooling")
               return lv_color_hex(0x9A9A9A);
-            // AC-Sollwert aktiv -> Schneeflocke immer blau
+            // Active AC target: snow icon is always blue.
             if (!std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v)) && id(adjust_target) == 1)
               return lv_color_hex(0x6EC6FF);
             if (id(design_select).current_option() != "Color") return lv_color_hex(0xFFFFFF);
@@ -1238,18 +1216,18 @@ script:
       - lvgl.widget.update:
           id: icon_mode_home
           text_color: !lambda |-
-            // Keine aktive Heiz-/Kühlphase (idle/off) -> dunkelgrau
+            // No active heating/cooling phase (idle/off): use dark gray.
             if (id(current_action_raw) != "heating" && id(current_action_raw) != "cooling")
               return lv_color_hex(0x9A9A9A);
-            // AC-Sollwert aktiv -> Schneeflocke immer blau
+            // Active AC target: snow icon is always blue.
             if (!std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v)) && id(adjust_target) == 1)
               return lv_color_hex(0x6EC6FF);
             if (id(design_select).current_option() != "Color") return lv_color_hex(0xFFFFFF);
             if (id(current_hvac_raw) == "cool" || id(current_hvac_raw) == "dry"
                 || id(current_hvac_raw) == "fan_only") return lv_color_hex(0x6EC6FF);
             return lv_color_hex(0xFF8A3D);
-      # Ring-Indikatorfarbe: Mono -> weiß, sonst nach Modus; bei Dual-
-      # Setpoint zeigt sie den aktiven Sollwert (TRV = orange, AC = blau).
+      # Ring indicator color: Mono -> white, otherwise by mode. In dual-setpoint
+      # mode the color follows the active target.
       - lvgl.arc.update:
           id: arc_temperature
           indicator:
@@ -1272,8 +1250,8 @@ script:
             - lvgl.widget.hide: icon_mode_home
       - script.execute: update_status_led
 
-  # Verbindungszustand: bei Verlust HVAC/Preset/Icon aus, "Connection
-  # failed" an; bei Verbindung umgekehrt.
+  # Connection state: hide HVAC/preset/icon on disconnect and show the
+  # connection error labels.
   - id: refresh_connection
     then:
       - if:
@@ -1290,10 +1268,10 @@ script:
           else:
             - lvgl.label.update:
                 id: label_conn_thermo
-                text: !lambda 'return id(language_select).current_option() == "Deutsch" ? std::string("Verbindung fehlt") : std::string("Connection failed");'
+                text: "Connection failed"
             - lvgl.label.update:
                 id: label_conn_home
-                text: !lambda 'return id(language_select).current_option() == "Deutsch" ? std::string("Verbindung fehlt") : std::string("Connection failed");'
+                text: "Connection failed"
             - lvgl.widget.show: label_conn_thermo
             - lvgl.widget.show: label_conn_home
             - lvgl.widget.hide: label_hvac_mode
@@ -1333,7 +1311,7 @@ script:
             }
             case 2: break;
             case 3:  id(submenu_index) = id(time_24h).state ? 1 : 0; break;
-            case 4:  id(submenu_index) = id(language_select).current_option() == "Deutsch" ? 1 : 0; break;
+            case 4:  id(submenu_index) = 0; id(submenu_count) = 1; break;
             case 5:  id(submenu_index) = id(design_select).current_option() == "Color" ? 1 : 0; break;
             case 6:  id(submenu_index) = id(icons_enabled).state ? 1 : 0; break;
             case 7:  id(submenu_index) = id(unit_select).current_option() == "Fahrenheit" ? 1 : 0; break;
@@ -1378,7 +1356,7 @@ script:
               break;
             }
             case 3:  id(apply_service) = id(submenu_index) ? 3 : 4; break;
-            case 4:  id(apply_service) = id(submenu_index) ? 9 : 8; break;
+            case 4:  id(apply_service) = 8; break;
             case 5:  id(apply_service) = id(submenu_index) ? 11 : 10; break;
             case 6:  id(apply_service) = id(submenu_index) ? 13 : 12; break;
             case 7:  id(apply_service) = id(submenu_index) ? 15 : 14; break;
@@ -1436,7 +1414,7 @@ script:
           then: [{select.set: {id: language_select, option: "English"}}]
       - if:
           condition: {lambda: 'return id(apply_service) == 9;'}
-          then: [{select.set: {id: language_select, option: "Deutsch"}}]
+          then: [{select.set: {id: language_select, option: "English"}}]
       - if:
           condition: {lambda: 'return id(apply_service) == 10;'}
           then: [{select.set: {id: design_select, option: "Mono"}}]
@@ -1490,12 +1468,12 @@ script:
   - id: update_settings_labels
     then:
       - lambda: |-
-          bool de = id(language_select).current_option() == "Deutsch";
+          bool de = false;
           const int N = SETTINGS_MENU_COUNT;
           char buf[64];
           if (id(ui_context) == 2) {
             int i = id(menu_index);
-            id(set_title) = de ? "Einstellungen" : "Settings";
+            id(set_title) = "Settings";
             id(set_prev) = settings_menu_name((i + N - 1) % N, de);
             id(set_cur) = settings_menu_name(i, de);
             id(set_next) = settings_menu_name((i + 1) % N, de);
@@ -1506,19 +1484,19 @@ script:
               case 2: snprintf(buf, sizeof(buf), "%d%%", id(brightness_pct)); val = buf; break;
               case 3: val = id(time_24h).state ? "24h" : "12h"; break;
               case 4: val = id(language_select).current_option(); break;
-              case 5: val = id(design_select).current_option() == "Color" ? (de?"Farbig":"Color") : (de?"Schwarz-Weiß":"Black/White"); break;
-              case 6: val = id(icons_enabled).state ? (de?"An":"On") : (de?"Aus":"Off"); break;
+              case 5: val = id(design_select).current_option() == "Color" ? "Color" : "Black/White"; break;
+              case 6: val = id(icons_enabled).state ? "On" : "Off"; break;
               case 7: val = id(unit_select).current_option() == "Fahrenheit" ? "°F" : "°C"; break;
               case 8: snprintf(buf, sizeof(buf), "%ds", (int) id(idle_home_num).state); val = buf; break;
               case 9: snprintf(buf, sizeof(buf), "%ds", (int) id(dim_delay_num).state); val = buf; break;
               case 10: snprintf(buf, sizeof(buf), "%d%%", (int) id(dim_level_num).state); val = buf; break;
               case 11: val = id(longpress3_select).current_option(); break;
-              case 12: val = id(knob_hvac_modes).current_option() == "All" ? (de?"Alle Modi":"All modes") : (de?"Heizen/Aus":"Heat/Off"); break;
+              case 12: val = id(knob_hvac_modes).current_option() == "All" ? "All modes" : "Heat/Off"; break;
               case 13: val = id(knob_step_select).current_option().str() + "°C"; break;
               case 14: val = id(wifi_ssid_txt).state; break;
               case 15: val = id(fw_version).state; break;
               case 16: val = ""; break;
-              case 17: val = id(led_enabled).state ? (de?"An":"On") : (de?"Aus":"Off"); break;
+              case 17: val = id(led_enabled).state ? "On" : "Off"; break;
               case 18: snprintf(buf, sizeof(buf), "%d%%", (int) id(led_brightness_num).state); val = buf; break;
             }
             id(set_value) = val;
@@ -1528,9 +1506,9 @@ script:
             id(set_prev) = "";
             id(set_next) = "";
             std::string cur, val;
-            std::string h_apply = de ? "Drücken = übernehmen" : "Press = apply";
-            std::string h_save = de ? "Drücken = speichern" : "Press = save";
-            std::string h_turn = de ? "Drehen = ändern" : "Turn = adjust";
+            std::string h_apply = "Press = apply";
+            std::string h_save = "Press = save";
+            std::string h_turn = "Turn = adjust";
             switch (t) {
               case 0:
               case 1: {
@@ -1553,15 +1531,15 @@ script:
               }
               case 2: snprintf(buf, sizeof(buf), "%d%%", id(brightness_pct)); cur = buf; val = h_turn; break;
               case 3: cur = id(submenu_index) ? "24h" : "12h"; val = h_save; break;
-              case 4: cur = id(submenu_index) ? "Deutsch" : "English"; val = h_save; break;
-              case 5: cur = id(submenu_index) ? (de?"Farbig":"Color") : (de?"Schwarz-Weiß":"Black/White"); val = h_save; break;
-              case 6: cur = id(submenu_index) ? (de?"An":"On") : (de?"Aus":"Off"); val = h_save; break;
+              case 4: cur = "English"; val = h_save; break;
+              case 5: cur = id(submenu_index) ? "Color" : "Black/White"; val = h_save; break;
+              case 6: cur = id(submenu_index) ? "On" : "Off"; val = h_save; break;
               case 7: cur = id(submenu_index) ? "°F" : "°C"; val = h_save; break;
               case 8:
               case 9: snprintf(buf, sizeof(buf), "%ds", id(num_preview)); cur = buf; val = h_save; break;
               case 10: snprintf(buf, sizeof(buf), "%d%%", id(num_preview)); cur = buf; val = h_save; break;
               case 11: cur = id(submenu_index) ? "Preset" : "HVAC"; val = h_save; break;
-              case 12: cur = id(submenu_index) ? (de?"Alle Modi":"All modes") : (de?"Heizen/Aus":"Heat/Off"); val = h_save; break;
+              case 12: cur = id(submenu_index) ? "All modes" : "Heat/Off"; val = h_save; break;
               case 13: {
                 static const char *const opts[] = {"0.1", "0.2", "0.5", "1.0"};
                 id(submenu_count) = 4;
@@ -1578,8 +1556,8 @@ script:
                 val = buf;
                 break;
               case 15: cur = id(fw_version).state; val = ""; break;
-              case 16: cur = id(submenu_index) == 1 ? (de?"Ja, zurücksetzen":"Yes, reset") : (de?"Nein":"No"); val = de?"Drücken = bestätigen":"Press = confirm"; break;
-              case 17: cur = id(submenu_index) ? (de?"An":"On") : (de?"Aus":"Off"); val = h_save; break;
+              case 16: cur = id(submenu_index) == 1 ? "Yes, reset" : "No"; val = "Press = confirm"; break;
+              case 17: cur = id(submenu_index) ? "On" : "Off"; val = h_save; break;
               case 18: snprintf(buf, sizeof(buf), "%d%%", id(num_preview)); cur = buf; val = h_save; break;
             }
             id(set_cur) = cur;
@@ -1607,13 +1585,11 @@ script:
       - lambda: |-
           auto now = id(ha_time).now();
           if (!now.is_valid()) return;
-          bool de = id(language_select).current_option() == "Deutsch";
+          bool de = false;
           static const char* const day_en[] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
-          static const char* const day_de[] = {"So.","Mo.","Di.","Mi.","Do.","Fr.","Sa."};
           static const char* const mon_en[] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
-          static const char* const mon_de[] = {"Jan","Feb","Mär","Apr","Mai","Jun","Jul","Aug","Sep","Okt","Nov","Dez"};
-          const char* day = (de ? day_de : day_en)[(now.day_of_week - 1) % 7];
-          const char* month = (de ? mon_de : mon_en)[(now.month - 1) % 12];
+          const char* day = day_en[(now.day_of_week - 1) % 7];
+          const char* month = mon_en[(now.month - 1) % 12];
           char time_buf[12];
           if (id(time_24h).state) {
             snprintf(time_buf, sizeof(time_buf), "%02d:%02d", now.hour, now.minute);
@@ -1623,7 +1599,7 @@ script:
                      now.hour < 12 ? "AM" : "PM");
           }
           char date_buf[24];
-          snprintf(date_buf, sizeof(date_buf), de ? "%02d. %s" : "%02d %s", now.day_of_month, month);
+          snprintf(date_buf, sizeof(date_buf), "%02d %s", now.day_of_month, month);
           id(pending_clock_time) = time_buf;
           id(pending_clock_day) = day;
           id(pending_home_date) = date_buf;
@@ -1648,4 +1624,3 @@ time:
         seconds: 0
         then:
           - script.execute: update_clock_labels
-

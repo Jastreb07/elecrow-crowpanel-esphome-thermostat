@@ -3,3 +3,5 @@ secrets.yaml
 *.bin
 .venv
 .idea
+.claude
+.agents

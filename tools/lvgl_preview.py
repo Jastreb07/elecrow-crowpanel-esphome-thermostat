@@ -1,19 +1,17 @@
 # lvgl_preview.py
 #
-# Parst thermostat_480.yaml + thermostat_240.yaml (inkl. gemeinsamem
-# Package thermostat_common.yaml per `packages: !include`) und rendert
-# die LVGL-Screens beider Boards als HTML-Vorschau: 480er-Board in einer
-# Kachel-Reihe, darunter in eigener Reihe das 240er-Board. Kein Ersatz
-# fuer das echte Rendering, aber gut genug, um Positionen/Groessen zu
-# pruefen.
+# Parses thermostat_480.yaml and thermostat_240.yaml, including the shared
+# thermostat_common.yaml package, and renders both LVGL layouts as an HTML
+# preview. This is not a replacement for real LVGL rendering, but it is useful
+# for checking positions, sizes, labels, and spacing.
 #
-# Nutzung:
-#   python tools\lvgl_preview.py          -> Watcher: Server auf
-#       http://localhost:8123/preview.html, Browser laedt bei jeder
-#       YAML-Aenderung (480/240/common) automatisch neu (Strg+C beendet)
-#   python tools\lvgl_preview.py --once   -> nur einmal generieren
+# Usage:
+#   python tools\lvgl_preview.py          -> watch mode with a local server at
+#       http://localhost:8123/tools/preview.html. The browser reloads whenever
+#       the 480/240/common YAML files change. Stop with Ctrl+C.
+#   python tools\lvgl_preview.py --once   -> generate once
 #
-# Ergebnis: tools\preview.html
+# Output: tools\preview.html
 
 import re
 import sys
@@ -33,7 +31,7 @@ OUT_FILE = HERE / "preview.html"
 VERSION_FILE = HERE / "preview_version.txt"
 PORT = 8123
 
-# Board-Varianten: Name -> (YAML-Datei, natives Panel-Format)
+# Board variants: name -> (YAML file, native panel size)
 BOARDS = [
     ("480x480", PROJECT / "thermostat_480.yaml", 480),
     ("240x240", PROJECT / "thermostat_240.yaml", 240),
@@ -41,8 +39,8 @@ BOARDS = [
 WATCH_FILES = [COMMON_FILE] + [p for _, p, _ in BOARDS]
 
 
-# ---- ESPHome-YAML laden (unbekannte Tags wie !lambda/!secret ignorieren,
-# !include tatsaechlich aufloesen fuer packages:) ----
+# ---- Load ESPHome YAML. Unknown tags like !lambda/!secret are ignored,
+# while !include is resolved for packages. ----
 class EsphomeLoader(yaml.SafeLoader):
     pass
 
@@ -71,7 +69,7 @@ def load_yaml(path):
 
 
 def merge_config(old, new):
-    """Vereinfachtes packages-Merge: dicts rekursiv, Listen aneinandergehaengt."""
+    """Simplified packages merge: dicts recurse, lists append."""
     if isinstance(new, dict):
         if not isinstance(old, dict):
             return new
@@ -89,7 +87,7 @@ def merge_config(old, new):
 
 
 def load_board_config(path):
-    """Laedt ein Board-YAML und mergt seine packages: (thermostat_common.yaml) rein."""
+    """Load a board YAML file and merge in its packages."""
     config = load_yaml(path)
     packages = config.pop("packages", {}) or {}
     merged = {}
@@ -118,8 +116,8 @@ def font_map(config):
     return fonts
 
 
-# Echte Bootstrap-Icon-Glyphen je Widget-ID (Codepoints wie in
-# thermostat_helpers.h; werden dort erst zur Laufzeit gesetzt)
+# Real Bootstrap Icon glyphs by widget ID. Runtime code sets them through
+# thermostat_helpers.h, so the preview needs hints.
 ICON_HINTS = [
     (re.compile(r"hum"), ""),            # droplet-half
     (re.compile(r"thermo_current"), ""),  # thermometer-high
@@ -138,7 +136,7 @@ def label_text(widget):
             if rx.search(wid):
                 return repl
         return ""  # bi-question-circle
-    return txt if txt else "(leer)"
+    return txt if txt else "(empty)"
 
 
 def color_css(value, default="#FFFFFF"):
@@ -155,12 +153,12 @@ def color_css(value, default="#FFFFFF"):
 
 
 def pos_css(widget, size):
-    """align + x/y -> CSS-Position im size x size-Container."""
+    """align + x/y -> CSS position in the square preview container."""
     align = str(widget.get("align", "TOP_LEFT")).upper()
     x = int(widget.get("x", 0) or 0)
     y = int(widget.get("y", 0) or 0)
     css, tx, ty = [], "0", "0"
-    # horizontal
+    # Horizontal position.
     if "MID" in align or align == "CENTER":
         css.append(f"left:{size // 2 + x}px")
         tx = "-50%"
@@ -168,7 +166,7 @@ def pos_css(widget, size):
         css.append(f"right:{-x}px")
     else:
         css.append(f"left:{x}px")
-    # vertikal
+    # Vertical position.
     if align.startswith("TOP"):
         css.append(f"top:{y}px")
     elif align.startswith("BOTTOM"):
@@ -217,7 +215,7 @@ def render_widget(widget_entry, fonts, size):
             f'<div class="w" title="{title}" style="{pos_css(w, size)};width:{wd}px;'
             f'height:{ht}px;background:{bg};{hid_css}"></div>'
         )
-    return ""  # button (transparent) etc. ueberspringen
+    return ""  # Skip transparent buttons and unsupported widgets.
 
 
 def render_board(name, path, size):
@@ -292,16 +290,16 @@ poll();
 </script></body></html>""",
         encoding="utf-8",
     )
-    print(f"[{time.strftime('%H:%M:%S')}] preview.html aktualisiert")
+    print(f"[{time.strftime('%H:%M:%S')}] preview.html updated")
 
 
 class QuietHandler(SimpleHTTPRequestHandler):
     def log_message(self, *args):
-        pass  # keine Request-Logs in der Konsole
+        pass  # Keep request logs out of the console.
 
 
 def serve():
-    # Projektordner serven, damit ../assets/fonts/* erreichbar ist
+    # Serve the project directory so ../assets/fonts/* is reachable.
     handler = partial(QuietHandler, directory=str(PROJECT))
     httpd = ThreadingHTTPServer(("127.0.0.1", PORT), handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
@@ -312,7 +310,7 @@ def watch():
     generate()
     serve()
     url = f"http://localhost:{PORT}/tools/preview.html"
-    print(f"Watcher laeuft: {url}  (Strg+C beendet)")
+    print(f"Watcher running: {url}  (Ctrl+C stops it)")
     webbrowser.open(url)
     last = {p: p.stat().st_mtime_ns for p in WATCH_FILES}
     try:
@@ -325,13 +323,13 @@ def watch():
                     last[p] = mtime
                     changed = True
             if changed:
-                time.sleep(0.2)  # Editor evtl. noch am Schreiben
+                time.sleep(0.2)  # The editor may still be writing.
                 try:
                     generate()
                 except yaml.YAMLError as e:
-                    print(f"[{time.strftime('%H:%M:%S')}] YAML-Fehler: {e}")
+                    print(f"[{time.strftime('%H:%M:%S')}] YAML error: {e}")
     except KeyboardInterrupt:
-        print("\nWatcher beendet.")
+        print("\nWatcher stopped.")
 
 
 if __name__ == "__main__":

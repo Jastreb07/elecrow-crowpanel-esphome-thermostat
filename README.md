@@ -1,139 +1,186 @@
-# Thermostat Knob – CrowPanel 2.1" HMI ESP32-S3 Rotary Display
+# Thermostat Knob - CrowPanel ESP32-S3 Rotary Displays
 
-Ein Home-Assistant-Controller für Heizungsthermostate und eine Klimaanlage,
-gebaut für das **Elecrow CrowPanel 2.1" HMI ESP32-S3 Rotary Display**
-(rundes 480×480 Touch-Display mit Dreh-/Druckencoder).
+ESPHome firmware for a Home Assistant thermostat controller built for
+Elecrow CrowPanel ESP32-S3 rotary displays.
 
-Optisch angelehnt an ein Apple-Home-artiges Dashboard: schwarz/weiß,
-große Zieltemperatur, runder Temperatur-Ring, klare Buttons.
+The project currently supports two board layouts:
 
-..\.venv\Scripts\esphome.exe run thermostat.yaml --device COM30
+- `thermostat_480.yaml` for the CrowPanel 2.1" 480x480 rotary display
+- `thermostat_240.yaml` for the CrowPanel 1.28" 240x240 rotary display
 
-C:\Users\vdell\PhpstormProjects\esp\ESPHome\.venv\Scripts\python.exe C:\Users\vdell\PhpstormProjects\esp\ESPHome\thermostat\tools\lvgl_preview.py
+The UI is a compact, dark, Nest-like thermostat dashboard with a large
+temperature readout, a circular setpoint ring, Home Assistant climate
+integration, touch input, and rotary encoder control.
 
-## Was das Projekt macht
+## Features
 
-- Zeigt Ziel- und Ist-Temperatur eines Raums an (Wohnzimmer/Büro)
-- Zieltemperatur per Drehknopf ändern (entprellt, siehe unten)
-- HVAC-Modus wechseln (Heizen/Kühlen/Auto/Aus)
-- Zwischen Räumen wechseln
-- Optional eine separate Klimaanlage steuern
-- Eco-/Komfort-Presets umschalten
-- Zeigt den Verbindungsstatus zu Home Assistant an
+- Shows current and target temperature from Home Assistant.
+- Changes the target temperature with the rotary encoder.
+- Supports HVAC mode and preset changes through Home Assistant services.
+- Supports single-setpoint and dual-setpoint climate entities.
+- Can control a thermostat-only setup, an AC-only setup, or a combined
+  heat/cool climate entity.
+- Shows Home Assistant connection state on the display.
+- Provides a local HTML preview for the LVGL screens.
 
-Die komplette Steuerungslogik läuft direkt im ESPHome-Gerät und ruft
-Home-Assistant-Services (`climate.set_temperature`,
-`climate.set_hvac_mode`, `climate.set_preset_mode`) über die native
-ESPHome-API auf – kein zusätzlicher Automatisierungs-Code in Home
-Assistant nötig.
-
-**Abgestimmt auf [KartoffelToby/better_thermostat](https://github.com/KartoffelToby/better_thermostat) Release 1.8.2**
-(für `climate.wohnzimmer_better_thermostat` / `climate.buro_better_thermostat`):
-
-- HVAC-Modi: better_thermostat kennt auf diesen Entitäten nur `heat`
-  und `off` (kein eigenständiges `cool`/`auto`) – der Modus-Zyklus in
-  `thermostat.yaml` und die Buttons auf `screen_modes` sind entsprechend
-  angepasst (`button_mode_cool`/`button_mode_auto` sind bewusst
-  deaktiviert, siehe [UI_CONCEPT.md](UI_CONCEPT.md)).
-- Presets: `eco`/`comfort` sind reale, standardmäßig aktivierte
-  better_thermostat-Presets (neben `none`/`home`/`sleep`/`away`/`boost`/
-  `activity`, die aktuell nicht in der UI verdrahtet sind).
-- `climate.klimaanlage_wohnzimmer` ist **keine** better_thermostat-
-  Entität, sondern ein separates Klimagerät – dort gelten die
-  üblichen Klimaanlagen-Modi (`cool`/`dry`/`fan_only`/`off`) unverändert.
+The firmware calls Home Assistant services such as `climate.set_temperature`,
+`climate.set_hvac_mode`, and `climate.set_preset_mode` through the native
+ESPHome API. No extra Home Assistant automation YAML is required for the
+basic thermostat control flow.
 
 ## Hardware
 
-- Elecrow CrowPanel 2.1" HMI, ESP32-S3, rundes 480×480 IPS-Touch-Display
-- Eingebauter Dreh-/Druck-Encoder
+- Elecrow CrowPanel 2.1" HMI ESP32-S3 rotary display, 480x480
+- Elecrow CrowPanel 1.28" HMI ESP32-S3 rotary display, 240x240
+- Built-in rotary encoder with push button
+- Touch display
 
-**Wichtig:** Die genauen Pinbelegungen für Display, Touch-Controller und
-Encoder sind in [`thermostat.yaml`](thermostat.yaml) mit
-`# TODO: Pin prüfen` markiert. Sie wurden nicht gegen ein reales Board
-verifiziert – bitte vor dem Flashen gegen das offizielle Elecrow-Wiki
-für das "2.1 HMI ESP32 Round Rotary Display" prüfen und anpassen.
+Board-specific display, touch, output, and encoder pins live in
+`thermostat_480.yaml` and `thermostat_240.yaml`. Check the pins against the
+official Elecrow documentation before flashing a physical board.
 
-## Voraussetzungen
+## Requirements
 
-- [ESPHome](https://esphome.io/) (CLI oder Home Assistant Add-on),
-  Version mit LVGL-Unterstützung (LVGL-Komponente wurde mit ESPHome
-  2024.x+ eingeführt/erweitert – aktuelle Version empfohlen)
-- Home Assistant mit den Ziel-Climate-Entitäten:
-  - `climate.wohnzimmer_better_thermostat`
-  - `climate.buro_better_thermostat`
-  - optional: `climate.klimaanlage_wohnzimmer`
-- USB-Kabel zum Flashen des CrowPanel
+- Windows with Python 3.14.6, pip 26.1.2, and ESPHome 2026.6.5
+- Home Assistant with the target climate entity
+- USB cable for first-time flashing
+- Wi-Fi credentials and ESPHome secrets in `secrets.yaml`
 
-## Installation
+Full installation instructions are in [docs/SETUP.md](docs/SETUP.md).
 
-1. Repository/Ordner öffnen:
-   `C:\Users\vdell\PhpstormProjects\esp\ESPHome\thermostat`
-2. `secrets.yaml.example` nach `secrets.yaml` kopieren und WLAN-Zugangsdaten,
-   API-Key und OTA-Passwort eintragen (siehe [SETUP.md](SETUP.md)).
-3. Pins in `thermostat.yaml` gegen das reale Board prüfen (alle
-   `TODO: Pin prüfen`-Stellen).
-4. Mit ESPHome kompilieren und flashen (siehe [SETUP.md](SETUP.md)).
+## Quick Start
 
-## Home-Assistant-Konfiguration
+Open a new PowerShell terminal after installing Python or changing PATH, then
+run commands from the project directory:
 
-Keine zusätzliche YAML-Konfiguration in Home Assistant nötig. Das Gerät
-meldet sich über die ESPHome-API bei Home Assistant an (Integration
-"ESPHome" erkennt es automatisch im Netzwerk oder wird manuell über die
-IP-Adresse hinzugefügt). Home Assistant fragt beim ersten Verbinden nach
-dem in `secrets.yaml` hinterlegten API-Verschlüsselungscode.
+```powershell
+cd $env:USERPROFILE\PhpstormProjects\esp\thermostat
+```
 
-Die drei Climate-Entitäten müssen in Home Assistant bereits existieren
-(z.B. über `better_thermostat` bzw. die jeweilige Klimaanlagen-Integration).
+Copy the example secrets file and edit the values:
 
-## Bedienung
+```powershell
+Copy-Item secrets.yaml.example secrets.yaml
+notepad secrets.yaml
+```
 
-| Aktion | Wirkung |
+Validate the configuration without flashing:
+
+```powershell
+esphome config thermostat_480.yaml
+esphome config thermostat_240.yaml
+```
+
+List available serial ports from PowerShell:
+
+```powershell
+[System.IO.Ports.SerialPort]::GetPortNames()
+Get-CimInstance Win32_SerialPort | Select-Object DeviceID,Name,Description
+```
+
+Compile and flash over USB. Replace `COM30` with the actual serial port:
+
+```powershell
+esphome run thermostat_480.yaml --device COM30
+esphome run thermostat_240.yaml --device COM30
+```
+
+After the first USB flash, ESPHome can usually flash over OTA when the device
+is reachable on the network.
+
+If an old terminal does not find `esphome`, open a new terminal or call the
+installed executable directly:
+
+```powershell
+& "$env:USERPROFILE\AppData\Local\Programs\Python\Python314\Scripts\esphome.exe" version
+```
+
+## LVGL Preview
+
+`tools\lvgl_preview.py` generates a local HTML preview of the LVGL screens.
+It loads `thermostat_480.yaml`, `thermostat_240.yaml`, and
+`thermostat_common.yaml`, then renders a fast approximation of both board
+layouts. It is useful for checking positions, sizes, labels, and spacing
+before compiling firmware.
+
+Start the live watcher:
+
+```powershell
+python tools\lvgl_preview.py
+```
+
+The preview opens at `http://localhost:8123/tools/preview.html`. YAML changes
+are detected automatically and the browser reloads. Stop the watcher with
+`Ctrl+C`.
+
+Generate the HTML file once:
+
+```powershell
+python tools\lvgl_preview.py --once
+```
+
+## Home Assistant Setup
+
+The ESPHome integration in Home Assistant should discover the device after it
+joins Wi-Fi. Home Assistant asks for the API encryption key if one is defined
+in `secrets.yaml`.
+
+The default climate entity is configured in `thermostat_common.yaml`:
+
+```yaml
+climate_default_entity: "climate.wohnzimmer_better_thermostat"
+```
+
+You can change the entity in Home Assistant through the exposed `Climate
+Entity` text field after the device is connected. For outgoing service calls
+to work, enable the Home Assistant device option that allows the ESPHome
+device to perform Home Assistant actions.
+
+## Controls
+
+| Action | Result |
 |---|---|
-| Encoder drehen (rechts) | Zieltemperatur +0,5 °C |
-| Encoder drehen (links) | Zieltemperatur -0,5 °C |
-| Encoder kurz drücken | HVAC-Modus wechseln (Heizen → Kühlen → Auto → Aus) |
-| Encoder lang drücken | Raum wechseln (Wohnzimmer ↔ Büro) |
-| Encoder Doppelklick | Umschalten Thermostat ↔ Klimaanlage |
-| Touch: Modus-Button | Öffnet Modus-Auswahl |
-| Touch: Klima-Button | Wechselt zum Klima-Screen |
-| Touch: Eco/Komfort-Button | Schaltet Preset um |
+| Rotate encoder right | Increase target temperature |
+| Rotate encoder left | Decrease target temperature |
+| Short press | Open the thermostat screen or settings menu |
+| Double click | Switch the active target in dual-setpoint mode |
+| 1 second press | Go back one level |
+| 3 second press | Open HVAC or preset submenu |
+| Touch the display | Wake the display and navigate screens |
 
-Temperaturänderungen werden **entprellt**: die UI reagiert sofort, an
-Home Assistant wird aber erst 800 ms nach der letzten Drehung ein
-`climate.set_temperature`-Call gesendet (siehe `send_temperature_update`
-Skript in `thermostat.yaml`).
+Temperature changes are debounced. The UI updates immediately, but
+`climate.set_temperature` is sent only after the configured quiet period.
 
-## Projektstruktur
+## Project Layout
 
 ```text
 thermostat/
-├── thermostat.yaml          # Vollständige ESPHome-Konfiguration (Startpunkt)
-├── thermostat_helpers.h     # Kleine C++-Hilfsfunktion für HVAC-Modus-Labels
-├── secrets.yaml.example     # Vorlage für WLAN/API-Zugangsdaten
-├── README.md                # Diese Datei
-├── SETUP.md                 # Schritt-für-Schritt-Anleitung (Flashen, SquareLine)
-├── UI_CONCEPT.md            # Design-/Screen-/Bedienkonzept
-├── squareline/
-│   ├── crowpanel_thermostat_ui/   # SquareLine-Studio-Projekt (siehe SETUP.md)
-│   └── export/                     # Zielordner für spätere LVGL-Exports
-├── assets/
-│   ├── icons/
-│   └── fonts/
-└── docs/
+|-- thermostat_480.yaml      # ESPHome entry point for the 2.1" 480x480 board
+|-- thermostat_240.yaml      # ESPHome entry point for the 1.28" 240x240 board
+|-- thermostat_common.yaml   # Shared logic, Home Assistant integration, scripts
+|-- thermostat_helpers.h     # C++ helper functions for labels and icons
+|-- secrets.yaml.example     # Template for Wi-Fi/API/OTA secrets
+|-- README.md                # Project overview
+|-- docs/
+|   |-- README.md            # Documentation index
+|   |-- UI_CONCEPT.md        # Current UI model and interaction notes
+|   |-- SETUP.md             # Python, pip, ESPHome, and firmware setup
+|   `-- vorstelleng.md       # Original project brief in English
+|-- tools/
+|   |-- lvgl_preview.py      # Local HTML preview generator
+|   |-- preview.html         # Generated preview
+|   `-- preview_version.txt  # Reload marker for the preview watcher
+|-- assets/
+|   |-- icons/
+|   `-- fonts/
+`-- components/
+    `-- cst826/              # Local CST826 touch component
 ```
 
-## Weiterentwicklung
+## Development Notes
 
-- Die UI ist aktuell direkt als ESPHome-`lvgl:`-Konfiguration in
-  `thermostat.yaml` abgebildet (kein SquareLine-Export nötig, siehe
-  [SETUP.md](SETUP.md) für den Hintergrund). Wer die Oberfläche visuell
-  in SquareLine Studio weiterentwickeln möchte, kann das Projekt in
-  `squareline/crowpanel_thermostat_ui` öffnen und die Widget-Namen aus
-  [UI_CONCEPT.md](UI_CONCEPT.md) 1:1 übernehmen.
-- Für komplexere Firmware-Logik (z.B. mehr als 2 Räume, weitere
-  Klimageräte) empfiehlt sich mittelfristig die Auslagerung der
-  Hilfslogik aus `thermostat_helpers.h` in einen eigenen
-  ESPHome-`external_components`- oder PlatformIO/ESP-IDF-Baustein.
-- Weitere Räume: `substitutions:` erweitern (`climate_bedroom` etc.),
-  `current_room_index`-Logik von 0/1 auf 0..N erweitern, zusätzlichen
-  Button auf `screen_rooms` ergänzen.
+- The LVGL UI is defined directly in `thermostat_480.yaml` and
+  `thermostat_240.yaml`.
+- Shared behavior lives in `thermostat_common.yaml`.
+- Board-specific hardware configuration stays in the board YAML files.
+- Keep new user-facing text and comments in English.

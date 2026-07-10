@@ -1,22 +1,17 @@
 ########################################################################
 # thermostat_480.yaml
 #
-# Board-Variante: CrowPanel 2.1" HMI ESP32-S3 Rotary Display 480x480,
-# ST7701S RGB-Panel, CST826-Touch (extern, lokal gepatcht), PCF8574-
-# Expander, Encoder GPIO4/42 (Pins getauscht = Drehrichtungs-Fix).
-# Alle Software-Logik (Climate, LVGL-Screens, Scripts) kommt aus dem
-# gemeinsamen Package thermostat_common.yaml.
+# Board variant: CrowPanel 2.1" HMI ESP32-S3 rotary display, 480x480.
+# ST7701S RGB panel, local patched CST826 touch component, PCF8574 expander,
+# and encoder on GPIO4/GPIO42. Shared behavior comes from thermostat_common.yaml.
 ########################################################################
 
 packages:
   common: !include thermostat_common.yaml
 
-# Eigener Basisname pro Board-Typ, sonst teilen sich 480er/240er denselben
-# PlatformIO-Build-Ordner (.esphome/build/thermostat) -> jeder Wechsel
-# zwischen den Varianten erzwingt einen fast kompletten Rebuild, weil sich
-# Display-/Touch-Komponenten grundlegend unterscheiden. MAC-Suffix bleibt
-# aktiv (name_add_mac_suffix in thermostat_common.yaml), mehrere 480er
-# Boards bekommen also weiterhin automatisch eindeutige Namen.
+# Use a board-specific base name so 480x480 and 240x240 builds do not share the
+# same PlatformIO build directory. MAC suffixes still keep multiple boards
+# unique on the network.
 substitutions:
   device_name: thermostat480
 
@@ -92,7 +87,7 @@ output:
         output: true
 
 # ------------------------------------------------------------------
-# Display / Touch (Elecrow-Referenz)
+# Display / touch, based on the Elecrow reference.
 # ------------------------------------------------------------------
 spi:
   clk_pin: GPIO2
@@ -485,8 +480,8 @@ lvgl:
             y: 47
             width: 60
             text_align: LEFT
-        # Zeigt bei Dual-Setpoint-Entitäten (heat_cool), welcher Sollwert
-        # gerade per Encoder verstellt wird: TRV (low) oder AC (high).
+        # Shows which target the encoder changes in dual-setpoint mode:
+        # TRV/low or AC/high.
         - label:
             id: label_setpoint_mode
             text: ""
@@ -528,7 +523,7 @@ lvgl:
             width: 90
             text_align: LEFT
 
-    # ================= Settings-Menü =================
+    # ================= Settings menu =================
     - id: screen_settings
       bg_color: "0x000000"
       widgets:
@@ -575,7 +570,7 @@ lvgl:
             y: -68
 
 # ------------------------------------------------------------------
-# Fonts (nur was dieses Board wirklich braucht -> spart Flash/RAM)
+# Fonts used by this board only, to save flash and RAM.
 # ------------------------------------------------------------------
 font:
   - file: "assets/fonts/Rajdhani-Bold.ttf"
@@ -596,7 +591,6 @@ font:
         "0123456789",
         "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
         "abcdefghijklmnopqrstuvwxyz",
-        "äöüÄÖÜß",
         " .,:%°·-/=()",
       ]
   - file: "assets/fonts/Rajdhani-SemiBold.ttf"
@@ -646,9 +640,8 @@ font:
     bpp: 4
     glyphs: *icon_glyphs_all
 
-  # Menü-Icons (16 unique Glyphen für 17 Menüpunkte, Index 13 nutzt
-  # bewusst denselben Glyph wie Index 1 wieder -> eigener Glyphen-Satz,
-  # NICHT icon_glyphs_all, sonst fehlen fast alle Menü-Piktogramme)
+  # Settings menu icons. This is a dedicated glyph set; icon_glyphs_all does not
+  # contain all menu pictograms.
   - file: "assets/fonts/bootstrap-icons.woff"
     id: icons_32
     size: 32

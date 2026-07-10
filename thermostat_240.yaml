@@ -1,21 +1,17 @@
 ########################################################################
 # thermostat_240.yaml
 #
-# Board-Variante: CrowPanel 1.28" HMI ESP32-S3 Rotary Display 240x240,
-# GC9A01A SPI-Panel (mipi_spi-Treiber), CST816-Touch, direkte GPIOs (kein
-# PCF8574-Expander nötig). Pins/Werte aus dem offiziellen Elecrow-Beispiel
-# (example/esphome/esphome1.28.yaml im GitHub-Repo Elecrow-RD/CrowPanel-
-# 1.28inch-HMI-ESP32-Rotary-Display-240-240-IPS-Round-Touch-Knob-Screen).
-# Alle Software-Logik (Climate, LVGL-Screens, Scripts) kommt aus dem
-# gemeinsamen Package thermostat_common.yaml.
+# Board variant: CrowPanel 1.28" HMI ESP32-S3 rotary display, 240x240.
+# GC9A01A SPI panel with the mipi_spi driver, CST816 touch, and direct GPIOs
+# without a PCF8574 expander. Pin values are based on the official Elecrow
+# example. Shared behavior comes from thermostat_common.yaml.
 ########################################################################
 
 packages:
   common: !include thermostat_common.yaml
 
-# Eigener Basisname pro Board-Typ, sonst teilen sich 480er/240er denselben
-# PlatformIO-Build-Ordner -> Wechsel zwischen Varianten erzwingt Rebuild.
-# MAC-Suffix bleibt aktiv (name_add_mac_suffix in thermostat_common.yaml).
+# Use a board-specific base name so switching variants does not reuse the same
+# PlatformIO build directory. MAC suffixes remain enabled in thermostat_common.
 substitutions:
   device_name: thermostat240
 
@@ -53,7 +49,7 @@ output:
     pin: GPIO2
 
 # ------------------------------------------------------------------
-# Display / Touch (Elecrow-Referenz 1.28")
+# Display / touch, based on the Elecrow 1.28" reference.
 # ------------------------------------------------------------------
 spi:
   id: spi_bus
@@ -94,16 +90,12 @@ display:
     invert_colors: true
 
 # ------------------------------------------------------------------
-# Encoder-Pins + Knopf-Taster: kein PCF8574 auf diesem Board, direkte
-# GPIOs -> Basisdefinitionen aus thermostat_common.yaml (480-Pins)
-# per !extend überschreiben.
+# Encoder pins and button: this board uses direct GPIOs instead of the PCF8574.
+# Override the defaults from thermostat_common.yaml with !extend.
 # ------------------------------------------------------------------
 binary_sensor:
-  # Direkter GPIO-Taster ohne PCF8574-Hardware-Entprellung (anders als
-  # 480er) -> zusaetzlicher Debounce-Filter (kommt zum 10ms aus
-  # thermostat_common.yaml dazu, ESPHome verkettet filters:-Listen),
-  # sonst zerschiesst Taster-Prellen das on_multi_click-Timing-Fenster
-  # fuer den Doppelklick (TRV/AC-Wechsel).
+  # Direct GPIO button without PCF8574 hardware debounce. Add an extra debounce
+  # filter so button bounce does not break the on_multi_click timing window.
   - id: !extend encoder_button
     pin:
       pcf8574: !remove
@@ -421,8 +413,8 @@ lvgl:
             y: 24
             width: 30
             text_align: LEFT
-        # Zeigt bei Dual-Setpoint-Entitäten (heat_cool), welcher Sollwert
-        # gerade per Encoder verstellt wird: TRV (low) oder AC (high).
+        # Shows which target the encoder changes in dual-setpoint mode:
+        # TRV/low or AC/high.
         - label:
             id: label_setpoint_mode
             text: ""
@@ -464,7 +456,7 @@ lvgl:
             width: 45
             text_align: LEFT
 
-    # ================= Settings-Menü =================
+    # ================= Settings menu =================
     - id: screen_settings
       bg_color: "0x000000"
       widgets:
@@ -531,8 +523,7 @@ lvgl:
             radius: 0
 
 # ------------------------------------------------------------------
-# Zusaetzliche Fontgroessen fuers 240er-Layout (native Aufloesung,
-# nicht per Zoom skaliert -> eigene, kleinere Varianten noetig)
+# Extra font sizes for the native 240x240 layout.
 # ------------------------------------------------------------------
 font:
   - file: "assets/fonts/Rajdhani-Bold.ttf"
@@ -571,7 +562,6 @@ font:
         "0123456789",
         "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
         "abcdefghijklmnopqrstuvwxyz",
-        "äöüÄÖÜß",
         " .,:%°·-/=()",
       ]
   - file: "assets/fonts/Rajdhani-SemiBold.ttf"
@@ -606,8 +596,8 @@ font:
     glyphs: ["","","","","",""]
 
 # ------------------------------------------------------------------
-# Status-LED (WS2812-Strip, laut Elecrow-Doku: LED_PIN=48, LED_NUM=5).
-# Leuchtet blau-weiss ausserhalb des Idle-Modus, aus wenn gedimmt.
+# Status LED, WS2812 strip according to Elecrow docs: LED_PIN=48, LED_NUM=5.
+# It glows blue-white outside idle mode and turns off while dimmed.
 # ------------------------------------------------------------------
 light:
   - platform: esp32_rmt_led_strip
@@ -623,11 +613,8 @@ script:
   - id: !extend update_status_led
     then:
       - if:
-          # Vor Ende der on_boot(-100)-Sequenz NICHTS anfassen: select:-
-          # Komponenten (language_select/design_select) koennen ihren
-          # gespeicherten Wert schon waehrend ihres eigenen setup() (also
-          # VOR on_boot) restaurieren und dabei refresh_status ausloesen,
-          # das noch vor dem RMT/WS2812-Setup abstuerzen wuerde.
+          # Do not touch the LED before on_boot(-100) is complete. Restored
+          # select values can trigger refresh_status before RMT/WS2812 setup.
           condition:
             lambda: 'return !id(app_booted);'
           then: []

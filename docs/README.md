@@ -1,10 +1,11 @@
-# docs/
+# Documentation
 
-Reserviert für weiterführende Dokumentation (z.B. Schaltpläne,
-Foto-Referenzen des CrowPanel-Pinouts, sobald verifiziert). Die
-Kerndokumentation liegt im Projekt-Root:
-[`../README.md`](../README.md), [`../SETUP.md`](../SETUP.md),
-[`../UI_CONCEPT.md`](../UI_CONCEPT.md).
+This directory contains project documentation for the ESPHome thermostat
+firmware.
 
-`vorstelleng.md` ist der ursprüngliche Auftrags-/Planungsentwurf
-(Auftrag 1) und liegt hier als historische Referenz.
+- [SETUP.md](SETUP.md) explains how to install Python, pip, ESPHome, validate
+  the YAML files, flash the boards, and run the LVGL preview.
+- [UI_CONCEPT.md](UI_CONCEPT.md) describes the current screen model,
+  interaction model, colors, and component naming.
+- [vorstelleng.md](vorstelleng.md) keeps the original project brief as an
+  English historical reference.

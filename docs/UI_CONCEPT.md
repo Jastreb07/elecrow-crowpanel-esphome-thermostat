@@ -1,182 +1,107 @@
-# UI-Konzept – Thermostat/Klima-Knob
+# UI Concept
 
-Design-Ziel: modern, ruhig, Apple-Home-App-ähnlich. Kein "Bastel-UI".
-Großzügige Touch-Ziele, wenig Text, hoher Kontrast, passend für ein
-rundes 480×480-Display.
+The current UI is a compact round thermostat interface for the Elecrow
+CrowPanel rotary displays. The layout is implemented directly in ESPHome LVGL
+YAML, with separate native layouts for 480x480 and 240x240 panels.
 
-## Farben
+## Design Goals
 
-| Rolle | Wert |
-|---|---|
-| Hintergrund | `#F5F5F7` |
-| Karte/Button | `#FFFFFF` |
-| Primärtext | `#111111` |
-| Sekundärtext | `#777777` |
-| Linien | `#E5E5EA` |
-| Aktiver Zustand | `#111111` |
-| Inaktiver Zustand | `#B0B0B0` |
-
-Keine bunten Akzentfarben, keine Verläufe, keine unruhigen Animationen.
-Schatten (falls von LVGL-Version unterstützt) nur sehr dezent auf
-Buttons/Karten, nie auf Text.
+- Dark background with high-contrast white text.
+- Large temperature readout optimized for quick reading.
+- Circular target temperature ring.
+- Minimal text on the device.
+- Rotary encoder first, touch input second.
+- No decorative animations or complex navigation.
 
 ## Screens
 
-### `screen_thermostat` (Hauptscreen)
+### Home
 
-```text
-        Wohnzimmer
-  Home Assistant verbunden
+The home screen shows the current temperature, HVAC mode, optional preset,
+humidity when available, time, date, and connection state.
 
-          22.5°
-       Ist: 21.8°
-   [runder Temperatur-Ring]
+Primary widgets:
 
-  [Heizen] [Klima] [Eco]
-```
+- `label_home_current_temperature`
+- `label_home_current_unit`
+- `label_home_current_decimal`
+- `label_home_hvac_mode`
+- `label_home_preset`
+- `label_home_time`
+- `label_home_weekday`
+- `label_home_date`
 
-Widgets:
+### Thermostat
 
-| ID | Typ | Zweck |
-|---|---|---|
-| `label_room_name` | Label | Aktueller Raum, z.B. "Wohnzimmer" |
-| `label_connection_state` | Label | "Home Assistant verbunden"/"getrennt" |
-| `arc_temperature` | Arc | Visualisiert Zieltemperatur als Ring (0–100 % zwischen Min/Max) |
-| `label_target_temperature` | Label | Große Zieltemperatur, z.B. "22.5°" |
-| `label_current_temperature` | Label | Ist-Temperatur, z.B. "Ist: 21.8°" |
-| `button_hvac_mode` / `label_hvac_mode` | Button/Label | Zeigt & wechselt HVAC-Modus |
-| `button_climate` / `label_climate` | Button/Label | Wechselt zu `screen_climate` |
-| `button_preset` / `label_preset` | Button/Label | Schaltet Eco/Komfort um |
+The thermostat screen shows the target temperature, current temperature, HVAC
+mode, preset, ring indicator, and optional dual-setpoint mode label.
 
-Bedienung auf diesem Screen:
+Primary widgets:
 
-- Encoder drehen → `arc_temperature` + `label_target_temperature` sofort
-  aktualisiert, `climate.set_temperature` folgt entprellt (siehe README).
-- Encoder kurz drücken → `button_hvac_mode`-Funktion (Modus-Zyklus).
-- Encoder lang drücken → Raumwechsel (Wohnzimmer ↔ Büro).
-- Encoder Doppelklick → wechselt zu `screen_climate` (Klimaanlage).
-- Touch auf `button_hvac_mode` → öffnet effektiv denselben Zyklus wie
-  Kurzdruck (für Screens mit mehr Auswahl: `screen_modes`, siehe unten).
+- `arc_temperature`
+- `label_target_temperature`
+- `label_target_unit`
+- `label_target_decimal`
+- `label_current_temperature`
+- `label_hvac_mode`
+- `label_preset`
+- `label_setpoint_mode`
 
-### `screen_rooms` (Raumauswahl)
+### Settings
 
-```text
-       Raum wählen
+The settings screen is a rotary menu. The encoder scrolls through settings and
+a short press opens or applies the selected setting.
 
-     [ Wohnzimmer ]
-     [    Büro    ]
-```
+Menu entries:
 
-Widgets: `button_room_living`/`label_room_living`,
-`button_room_office`/`label_room_office`. Tippen wechselt sofort den
-aktiven Raum und springt zurück zu `screen_thermostat`.
+- HVAC Mode
+- Preset
+- Brightness
+- Clock
+- Language
+- Design
+- Icons
+- Unit
+- Idle Time
+- Dim After
+- Dim Level
+- 3s Button
+- Knob Modes
+- Knob Step
+- WiFi
+- Firmware
+- Reset
+- LED
+- LED Brightness
 
-### `screen_modes` (Modusauswahl)
+## Controls
 
-```text
-       Modus wählen
+| Action | Result |
+|---|---|
+| Rotate on home | Open thermostat screen |
+| Short press on home | Open thermostat screen |
+| Rotate on thermostat | Change target temperature |
+| Short press on thermostat | Open settings |
+| Double click on thermostat | Switch active dual-setpoint target |
+| 1 second press | Go back one level |
+| 3 second press | Open HVAC or preset submenu |
+| Swipe on thermostat | Switch active dual-setpoint target |
 
-  [Heizen]      [Kühlen]
-  [ Auto ]      [  Aus  ]
+## Color Behavior
 
-  [ Eco ]       [Komfort]
-```
+Mono mode keeps the UI mostly white and gray. Color mode uses orange for heat
+and blue for cooling. In dual-setpoint mode, the ring and mode icon follow the
+currently active target.
 
-Widgets: `button_mode_heat`, `button_mode_cool`, `button_mode_auto`,
-`button_mode_off`, `button_preset_eco`, `button_preset_comfort`.
-`button_mode_heat`/`button_mode_off`/`button_preset_eco`/
-`button_preset_comfort` rufen direkt den passenden
-`climate.set_hvac_mode`/`climate.set_preset_mode`-Call für den aktuell
-aktiven Raum auf und kehren zu `screen_thermostat` zurück.
+## Component Naming
 
-**Abgestimmt auf better_thermostat 1.8.2:** `button_mode_cool` und
-`button_mode_auto` sind bewusst **deaktiviert** (grau, kein `on_click`).
-better_thermostat-Entitäten (`climate.wohnzimmer_better_thermostat`,
-`climate.buro_better_thermostat`) melden als `hvac_modes` ausschließlich
-`heat` und `off` (bzw. `heat_cool` statt `heat`, falls am BT-Gerät ein
-`cooler_entity_id` konfiguriert ist – hier nicht der Fall). Ein
-`climate.set_hvac_mode`-Call mit `cool`/`auto` würde von der Entität
-abgelehnt. Die Buttons bleiben laut Auftrag sichtbar (Layout-Vorgabe),
-sind aber inert. Quelle: `custom_components/better_thermostat/climate.py`,
-Zeile ~439 (`self._hvac_list = [HVACMode.HEAT, HVACMode.OFF]`).
+Widget IDs are intentionally stable across board variants where possible.
+Board-specific YAML files provide the native positions, sizes, and fonts.
+Shared behavior lives in `thermostat_common.yaml`.
 
-Preset-Modi bei better_thermostat 1.8.2 (siehe
-`custom_components/better_thermostat/utils/preset_manager.py`): `none`,
-`home`, `eco`, `comfort`, `sleep`, `away`, `boost`, `activity`. Dieses
-Projekt nutzt nur `eco`/`comfort` (laut UI-Vorgabe) – beide sind gültige,
-in better_thermostat standardmäßig aktivierte Presets. Die übrigen
-Presets (`home`/`away`/`boost`/`sleep`/`activity`) könnten bei Bedarf als
-weitere Buttons ergänzt werden (siehe "Spätere Erweiterungen").
+## Future Work
 
-### `screen_climate` (Klimaanlage)
-
-```text
-        Klimaanlage
-
-          21.0°
-   [runder Temperatur-Ring]
-
- [Ein/Aus] [Kühlen] [Entf.] [Lüften]
-```
-
-Widgets: `label_climate_target_temperature`, `arc_climate_temperature`,
-`button_climate_power`, `button_climate_cool`, `button_climate_dry`,
-`button_climate_fan`. Encoder-Drehung wirkt hier auf dieselbe
-`target_temperature`-Globalvariable wie auf dem Hauptscreen, gesendet an
-`climate.klimaanlage_wohnzimmer` statt an die Thermostat-Entität
-(gesteuert über `control_mode`).
-
-## Bedienlogik – Zusammenfassung
-
-```text
-Encoder rechts drehen  -> Zieltemperatur +0.5 °C (lokal sofort, HA entprellt)
-Encoder links drehen   -> Zieltemperatur -0.5 °C
-Encoder kurz drücken   -> HVAC-Modus durchschalten (heat <-> off; nur im Thermostat-Modus)
-Encoder lang drücken   -> Raum wechseln (Wohnzimmer <-> Büro)
-Encoder Doppelklick    -> Steuerungsmodus wechseln (Thermostat <-> Klima)
-```
-
-Der Kurzdruck-Zyklus ist bewusst nur 2-stufig (heat/off), da
-better_thermostat 1.8.2 keine weiteren Modi auf den Thermostat-Entitäten
-anbietet (siehe Abschnitt `screen_modes` oben). Im Klima-Steuerungsmodus
-(nach Doppelklick) hat der Kurzdruck keine Funktion – die Klimaanlage
-wird über die eigenen Buttons auf `screen_climate` bedient.
-
-Entprellung: jede Encoder-Drehung aktualisiert sofort UI + interne
-Zielvariable. Erst wenn 800 ms lang keine weitere Drehung erfolgt, wird
-ein einzelner `climate.set_temperature`-Call an Home Assistant gesendet
-(Skript `send_temperature_update`, `mode: restart`).
-
-## Komponenten-Namensschema (1:1 zwischen ESPHome-LVGL und SquareLine)
-
-Alle IDs sind bewusst so gewählt, dass ein SquareLine-Studio-Redesign
-(siehe SETUP.md, Abschnitt 5) exakt dieselben Namen verwenden kann:
-
-```text
-screen_thermostat, screen_rooms, screen_modes, screen_climate
-
-label_room_name, label_connection_state
-arc_temperature, label_target_temperature, label_current_temperature
-button_hvac_mode, label_hvac_mode
-button_climate, label_climate
-button_preset, label_preset
-
-button_room_living, label_room_living
-button_room_office, label_room_office
-
-button_mode_heat, button_mode_cool, button_mode_auto, button_mode_off
-button_preset_eco, button_preset_comfort
-
-label_climate_target_temperature, arc_climate_temperature
-button_climate_power, button_climate_cool, button_climate_dry, button_climate_fan
-```
-
-## Spätere Erweiterungen
-
-- Weitere Räume (Schlafzimmer, Kinderzimmer): siehe SETUP.md Abschnitt 6.
-- Lüftermodus-Stufen für Klimaanlage (fan_mode) als weiterer Button/Slider.
-- Anzeige nicht unterstützter HVAC-Modi als ausgegraut statt versteckt.
-- Dunkles Theme (Farben bereits im Auftrag vorbereitet: Hintergrund
-  `#000000`, Karte `#111111`, Text `#FFFFFF`, Sekundärtext `#A0A0A0`) –
-  könnte als zweite `lvgl: pages:`-Variante oder per Theme-Umschalt-Button
-  ergänzt werden.
+- Add more board variants if needed.
+- Add optional per-room climate selection.
+- Add richer diagnostics screens for Wi-Fi, API state, and sensor data.
+- Add automated screenshot checks for the generated HTML preview.

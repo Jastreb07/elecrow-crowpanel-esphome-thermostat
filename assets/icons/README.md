@@ -1,5 +1,7 @@
 # icons/
 
-Platzhalter für UI-Icons (z.B. Heizen/Kühlen/Eco-Symbole), falls das
-Design später über reine Text-Buttons hinaus erweitert wird. Aktuell
-verwendet `thermostat.yaml` ausschließlich Text-Labels, keine Icon-Dateien.
+Optional directory for UI icon assets.
+
+The current layouts use the Bootstrap Icons webfont from `assets/fonts/`.
+Place bitmap or vector icon assets here if a future layout needs separate
+image files.
