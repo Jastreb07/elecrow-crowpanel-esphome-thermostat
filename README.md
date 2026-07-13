@@ -78,11 +78,18 @@ List available serial ports from PowerShell:
 Get-CimInstance Win32_SerialPort | Select-Object DeviceID,Name,Description
 ```
 
-Compile and flash over USB. Replace `COM30` with the actual serial port:
+Compile and flash over USB. Replace `COM5` and `COM6` with the actual serial ports:
 
 ```powershell
-esphome run thermostat_480.yaml --device COM30
-esphome run thermostat_240.yaml --device COM30
+esphome run thermostat_240.yaml --device COM5
+esphome run thermostat_480.yaml --device COM6
+```
+
+OR Compile and flash over IP/Network. Replace `192.168.178.138` and `192.168.178.137` with the actual IP addresses:
+
+```powershell
+esphome run thermostat_240.yaml --device 192.168.178.138
+esphome run thermostat_480.yaml --device 192.168.178.137
 ```
 
 After the first USB flash, ESPHome can usually flash over OTA when the device

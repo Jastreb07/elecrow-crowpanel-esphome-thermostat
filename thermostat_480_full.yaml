@@ -1,56 +1,19 @@
-﻿########################################################################
-# thermostat_common.yaml
+########################################################################
+# thermostat_480_full.yaml
 #
-# Shared package for CrowPanel ESP32-S3 rotary displays (2.1"/480x480 and
-# 1.28"/240x240). Board-specific hardware and each native LVGL layout live in
-# thermostat_480.yaml and thermostat_240.yaml, which include this file through
-# `packages:`. There is no automatic scaling; every board has its own layout.
-#
-# A single Home Assistant climate entity drives the UI. It can represent a
-# thermostat-only setup, an AC-only setup, or a combined heat/cool entity. The
-# available hvac_modes and preset_modes are read at runtime. Mode icons and ring
-# colors follow the current HVAC mode.
-#
-# Screens: screen_home (default) -> screen_thermostat -> screen_settings
-#
-# Knob controls:
-#   Home:        rotate or short-press -> thermostat screen
-#   Thermostat:  rotate -> target temperature +/- configured step
-#                short-press -> settings menu
-#   Settings:    rotate = scroll/change value, short-press = select/OK
-#   Everywhere:  1 s press -> back, 3 s press -> HVAC/preset submenu
-#                Idle -> dim display and return home after configured delays
-#
-# Home Assistant must allow this ESPHome device to perform Home Assistant
-# actions, otherwise climate.set_temperature and related service calls will not
-# run.
-#
-# ESPHome limitation: homeassistant sensors are bound at compile time. Live
-# state comes from climate_default_entity. The editable Climate Entity text
-# field controls outgoing service calls.
-#
-# Hardware-Details siehe jeweilige Board-Datei:
-#   thermostat_480.yaml: ST7701S RGB-Panel, CST826-Touch (extern gepatcht),
-#                         PCF8574-Expander, Encoder GPIO4/42.
-#   thermostat_240.yaml: GC9A01A SPI-Panel, CST816-Touch, Encoder GPIO45/42.
-# encoder_button and temperature_encoder define 480x480 defaults below.
-# thermostat_240.yaml overrides them with `!extend`.
+# Vollständige Einzeldatei: thermostat_480.yaml + thermostat_common.yaml
+# zusammengeführt – kein packages:/include mehr.
 ########################################################################
 
 substitutions:
-  device_name: thermostat
+  device_name: thermostat480
   friendly_name: "Thermostat Knob"
-
-  # ---- Single climate entity used as live-state source at compile time.
-  # It can control a TRV, an AC unit, or a combined heat/cool setup. ----
   climate_default_entity: "climate.wohnzimmer_better_thermostat"
-
-  # ---- Behavior ----
-  temperature_step: "0.5"       # Celsius per encoder detent; internal values stay Celsius
+  temperature_step: "0.5"
   temperature_min: "5.0"
   temperature_max: "30.0"
-  setpoint_min_gap: "0.5"       # Minimum TRV(low) <-> AC(high) gap in Celsius
-  debounce_ms: "500ms"          # Quiet time before climate.set_temperature
+  setpoint_min_gap: "0.5"
+  debounce_ms: "500ms"
 
 esphome:
   name: ${device_name}
@@ -64,13 +27,25 @@ esphome:
     board_build.esp-idf.memory_type: qio_opi
     board_build.flash_mode: dio
   on_boot:
+    - priority: 800
+      then:
+        - output.turn_on: lcd_power
+        - output.turn_on: display_reset
+        - delay: 100ms
+        - output.turn_off: display_reset
+        - delay: 100ms
+        - output.turn_on: tp_reset
+        - delay: 100ms
+        - output.turn_off: tp_reset
+        - delay: 120ms
+        - output.turn_on: tp_reset
+        - delay: 120ms
+        - output.turn_on: tp_intr
     - priority: -100
       then:
         - lambda: |-
-            // Initialize the dual-setpoint cache from Home Assistant sensors.
             id(target_low_v) = id(target_low_ha).state;
             id(target_high_v) = id(target_high_ha).state;
-            // Prefer the active dual setpoint before the single setpoint.
             if (!std::isnan(id(target_low_v))) {
               id(target_temperature) = id(adjust_target) == 1 && !std::isnan(id(target_high_v))
                                            ? id(target_high_v) : id(target_low_v);
@@ -104,6 +79,12 @@ psram:
   mode: octal
   speed: 80MHz
 
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [cst826]
+
 # ------------------------------------------------------------------
 # Network
 # ------------------------------------------------------------------
@@ -117,9 +98,8 @@ wifi:
 captive_portal:
 
 logger:
-  level: INFO
+  level: DEBUG
 
-# API without encryption lets Home Assistant add the device without a key.
 api:
   on_client_connected:
     - lambda: 'id(ha_connected) = true;'
@@ -140,33 +120,22 @@ web_server:
 # Global state
 # ------------------------------------------------------------------
 globals:
-
   - id: target_temperature
     type: float
     restore_value: false
     initial_value: "21.0"
-
   - id: pending_temperature_change
     type: bool
     restore_value: false
     initial_value: "false"
-
   - id: ha_connected
     type: bool
     restore_value: false
     initial_value: "false"
-
-  # Becomes true only at the end of the on_boot(-100) sequence. This prevents
-  # select components from restoring values and triggering refresh_status ->
-  # update_status_led before WS2812/RMT hardware is initialized.
   - id: app_booted
     type: bool
     restore_value: false
     initial_value: "false"
-
-  # Raw coordinate tracking for swipe detection. LVGL on_swipe_* events were
-  # unreliable on the full-screen button, so the board files feed raw touch
-  # start/end coordinates into handle_swipe_release.
   - id: swipe_start_x
     type: int
     restore_value: false
@@ -175,59 +144,46 @@ globals:
     type: int
     restore_value: false
     initial_value: "0"
-
-  # UI navigation: 0 Home, 1 Thermostat, 2 menu, 3 submenu
   - id: ui_context
     type: int
     restore_value: false
     initial_value: "0"
-
   - id: menu_index
     type: int
     restore_value: false
     initial_value: "0"
-
   - id: submenu_type
     type: int
     restore_value: false
     initial_value: "0"
-
   - id: submenu_index
     type: int
     restore_value: false
     initial_value: "0"
-
   - id: submenu_count
     type: int
     restore_value: false
     initial_value: "1"
-
   - id: num_preview
     type: int
     restore_value: false
     initial_value: "0"
-
   - id: encoder_delta
     type: int
     restore_value: false
     initial_value: "0"
-
   - id: brightness_pct
     type: int
     restore_value: false
     initial_value: "50"
-
   - id: display_dimmed
     type: bool
     restore_value: false
     initial_value: "false"
-
   - id: apply_service
     type: int
     restore_value: false
     initial_value: "0"
-
-  # Raw data from Home Assistant attributes
   - id: hvac_modes_raw
     type: std::string
     restore_value: false
@@ -243,16 +199,12 @@ globals:
   - id: current_preset_raw
     type: std::string
     restore_value: false
-
-  # Service-Call-Parameter
   - id: pending_entity_id_holder
     type: std::string
     restore_value: false
   - id: pending_mode_holder
     type: std::string
     restore_value: false
-
-  # Clock and date
   - id: pending_clock_time
     type: std::string
     restore_value: false
@@ -262,9 +214,6 @@ globals:
   - id: pending_home_date
     type: std::string
     restore_value: false
-
-  # Dual setpoint (heat_cool): 0 = TRV/heat (target_temp_low),
-  # 1 = AC/cool (target_temp_high). Double click switches target.
   - id: adjust_target
     type: int
     restore_value: false
@@ -277,7 +226,6 @@ globals:
     type: float
     restore_value: false
     initial_value: "NAN"
-
   - id: pending_current_temperature
     type: float
     restore_value: false
@@ -286,8 +234,6 @@ globals:
     type: float
     restore_value: false
     initial_value: "NAN"
-
-  # Settings render text
   - id: set_title
     type: std::string
     restore_value: false
@@ -304,17 +250,61 @@ globals:
     type: std::string
     restore_value: false
 
+# ------------------------------------------------------------------
+# I2C + PCF8574
+# ------------------------------------------------------------------
+i2c:
+  sda: GPIO38
+  scl: GPIO39
+  id: bus_a
+  scan: true
+
+pcf8574:
+  - id: pcf
+    address: 0x21
+
+output:
+  - platform: ledc
+    pin: GPIO6
+    id: bl_pwm
+    frequency: 19531Hz
+  - platform: gpio
+    id: lcd_power
+    pin:
+      pcf8574: pcf
+      number: 3
+      mode:
+        output: true
+  - platform: gpio
+    id: tp_reset
+    pin:
+      pcf8574: pcf
+      number: 0
+      mode:
+        output: true
+  - platform: gpio
+    id: display_reset
+    pin:
+      pcf8574: pcf
+      number: 4
+      mode:
+        output: true
+      inverted: true
+  - platform: gpio
+    id: tp_intr
+    pin:
+      pcf8574: pcf
+      number: 2
+      mode:
+        output: true
+
 light:
   - platform: monochromatic
     name: "${friendly_name} Backlight"
     output: bl_pwm
     id: display_backlight
     default_transition_length: 0s
-    # Do not restore the light's own brightness. brightness_num is the single
-    # persisted source and is applied explicitly in on_boot(-100).
     restore_mode: ALWAYS_ON
-    # Mirror brightness changes from Home Assistant or knob settings into
-    # brightness_pct and the number entity. Do not synchronize while dimmed.
     on_state:
       - lambda: |-
           if (!id(display_dimmed)) {
@@ -330,7 +320,7 @@ light:
           }
 
 # ------------------------------------------------------------------
-# Persisted settings; all are also controllable from Home Assistant.
+# Persisted settings
 # ------------------------------------------------------------------
 text:
   - platform: template
@@ -351,7 +341,6 @@ switch:
       - script.execute: update_clock_labels
     on_turn_off:
       - script.execute: update_clock_labels
-
   - platform: template
     name: "Show Icons"
     id: icons_enabled
@@ -363,8 +352,6 @@ switch:
     on_turn_off:
       - script.execute: refresh_status
       - script.execute: refresh_temps
-
-  # Disable the 240x240 status LED regardless of brightness or HVAC color.
   - platform: template
     name: "LED Enabled"
     id: led_enabled
@@ -389,7 +376,6 @@ select:
         - script.execute: refresh_connection
         - script.execute: update_clock_labels
         - script.execute: update_settings_labels
-
   - platform: template
     name: "Design"
     id: design_select
@@ -401,7 +387,6 @@ select:
       then:
         - script.execute: refresh_status
         - script.execute: refresh_temps
-
   - platform: template
     name: "Temperature Unit"
     id: unit_select
@@ -412,7 +397,6 @@ select:
     on_value:
       then:
         - script.execute: refresh_temps
-
   - platform: template
     name: "3s Button Opens"
     id: longpress3_select
@@ -420,7 +404,6 @@ select:
     restore_value: true
     options: ["HVAC", "Preset"]
     initial_option: "HVAC"
-
   - platform: template
     name: "Knob HVAC Modes"
     id: knob_hvac_modes
@@ -428,8 +411,6 @@ select:
     restore_value: true
     options: ["Heat/Off", "All"]
     initial_option: "Heat/Off"
-
-  # Rotary encoder sensitivity in Celsius per detent.
   - platform: template
     name: "Knob Step (°C)"
     id: knob_step_select
@@ -451,7 +432,6 @@ number:
     step: 5
     unit_of_measurement: "s"
     mode: box
-
   - platform: template
     name: "Dim After (s)"
     id: dim_delay_num
@@ -463,7 +443,6 @@ number:
     step: 5
     unit_of_measurement: "s"
     mode: box
-
   - platform: template
     name: "Dim Level (%)"
     id: dim_level_num
@@ -475,9 +454,6 @@ number:
     step: 5
     unit_of_measurement: "%"
     mode: slider
-
-  # Display brightness as a Home Assistant entity, synchronized with the
-  # settings screen and the backlight.
   - platform: template
     name: "Brightness (%)"
     id: brightness_num
@@ -500,15 +476,11 @@ number:
               - light.turn_on:
                   id: display_backlight
                   brightness: !lambda 'return id(brightness_pct) / 100.0f;'
-        # Update the settings screen live when it is open.
         - if:
             condition:
               lambda: 'return id(ui_context) == 2 || id(ui_context) == 3;'
             then:
               - script.execute: update_settings_labels
-
-  # Status LED brightness for the 240x240 board. This is separate from display
-  # brightness and can be changed from Home Assistant.
   - platform: template
     name: "LED Brightness (%)"
     id: led_brightness_num
@@ -536,12 +508,11 @@ button:
     id: factory_reset_btn
 
 # ------------------------------------------------------------------
-# Encoder button. on_multi_click keeps single and double clicks separated.
+# Encoder button
 # ------------------------------------------------------------------
 binary_sensor:
   - platform: status
     name: "${friendly_name} Status"
-
   - platform: gpio
     id: encoder_button
     pin:
@@ -555,8 +526,6 @@ binary_sensor:
     on_press:
       - script.execute: wake_display
     on_multi_click:
-      # Double click: from home/settings, jump to thermostat. On the thermostat
-      # screen, switch between TRV/heat and AC/cool target in dual-setpoint mode.
       - timing:
           - ON for at most 350ms
           - OFF for 40ms to 350ms
@@ -571,7 +540,6 @@ binary_sensor:
                 - lvgl.page.show: screen_thermostat
               else:
                 - script.execute: toggle_adjust_target
-      # Single click
       - timing:
           - ON for at most 350ms
           - OFF for at least 400ms
@@ -596,7 +564,6 @@ binary_sensor:
                             - script.execute: menu_enter
                           else:
                             - script.execute: submenu_apply
-      # 1 s: go back one level
       - timing:
           - ON for 800ms to 2500ms
           - OFF for at least 50ms
@@ -617,7 +584,6 @@ binary_sensor:
                     else:
                       - lambda: 'id(ui_context) = 0;'
                       - lvgl.page.show: screen_home
-      # 3 s: open the HVAC or preset submenu directly
       - timing:
           - ON for at least 2800ms
           - OFF for at least 50ms
@@ -628,7 +594,7 @@ binary_sensor:
           - script.execute: menu_enter
 
 # ------------------------------------------------------------------
-# Rotary encoder. Pins are swapped to fix rotation direction.
+# Rotary encoder
 # ------------------------------------------------------------------
 sensor:
   - platform: rotary_encoder
@@ -650,9 +616,6 @@ sensor:
       then:
         - script.execute: wake_display
         - lambda: |-
-            // Erstes Event nur als Referenz nehmen: der Encoder kann nach
-            // einem Neustart einen alten Zaehlerstand liefern -> sonst
-            // entsteht ein Riesen-Delta (Symptom: Sprung auf Max-Temp).
             static bool first_event = true;
             static int32_t last_raw = 0;
             int32_t raw = (int32_t) x;
@@ -681,8 +644,6 @@ sensor:
                   float new_temp = id(target_temperature) + (step * id(encoder_delta));
                   if (new_temp < ${temperature_min}) new_temp = ${temperature_min};
                   if (new_temp > ${temperature_max}) new_temp = ${temperature_max};
-                  // Dual setpoints must not cross; otherwise TRV and AC fight
-                  // each other and better_thermostat may reject the range.
                   if (!std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v))) {
                     if (id(adjust_target) == 0 && new_temp > id(target_high_v) - ${setpoint_min_gap})
                       new_temp = id(target_high_v) - ${setpoint_min_gap};
@@ -708,9 +669,7 @@ sensor:
               - lambda: |-
                   int d = id(encoder_delta) > 0 ? 1 : -1;
                   switch (id(submenu_type)) {
-                    case 0:
-                    case 1:
-                    case 13:
+                    case 0: case 1: case 13:
                       if (id(submenu_count) > 0)
                         id(submenu_index) = (id(submenu_index) + d + id(submenu_count)) % id(submenu_count);
                       break;
@@ -721,16 +680,13 @@ sensor:
                     case 11: case 12: case 16: case 17:
                       id(submenu_index) = 1 - id(submenu_index);
                       break;
-                    case 8:
-                    case 9:
+                    case 8: case 9:
                       id(num_preview) = clamp(id(num_preview) + d * 5, 5, 300);
                       break;
-                    case 10:
-                    case 18:
+                    case 10: case 18:
                       id(num_preview) = clamp(id(num_preview) + d * 5, 0, 100);
                       break;
-                    default:
-                      break;
+                    default: break;
                   }
               - if:
                   condition:
@@ -746,7 +702,6 @@ sensor:
                     - script.execute: preview_led_brightness
               - script.execute: update_settings_labels
 
-  # ---- Current temperature ----
   - platform: homeassistant
     id: current_temperature_ha
     entity_id: ${climate_default_entity}
@@ -759,9 +714,6 @@ sensor:
             then:
               - lambda: 'id(pending_current_temperature) = x;'
               - script.execute: refresh_temps
-
-  # ---- Target temperature for single-setpoint entities. Dual-setpoint
-  # entities use target_temp_low/high for display. ----
   - platform: homeassistant
     id: target_temperature_ha
     entity_id: ${climate_default_entity}
@@ -776,8 +728,6 @@ sensor:
             then:
               - lambda: 'id(target_temperature) = x;'
               - script.execute: refresh_temps
-
-  # ---- Dual setpoint (TRV = heat / AC = cool) ----
   - platform: homeassistant
     id: target_low_ha
     entity_id: ${climate_default_entity}
@@ -804,9 +754,6 @@ sensor:
             then:
               - lambda: 'id(target_temperature) = x;'
               - script.execute: refresh_temps
-
-  # ---- Humidity: better_thermostat "humidity" or standard
-  # "current_humidity". ----
   - platform: homeassistant
     id: humidity_ha
     entity_id: ${climate_default_entity}
@@ -831,14 +778,13 @@ sensor:
             then:
               - lambda: 'id(pending_humidity) = x;'
               - script.execute: refresh_temps
-
   - platform: wifi_signal
     id: wifi_rssi
     name: "${friendly_name} WiFi Signal"
     update_interval: 60s
 
 # ------------------------------------------------------------------
-# HVAC state, mode/preset lists, and active preset.
+# HVAC state / text sensors
 # ------------------------------------------------------------------
 text_sensor:
   - platform: homeassistant
@@ -848,8 +794,6 @@ text_sensor:
       then:
         - lambda: 'id(current_hvac_raw) = x;'
         - script.execute: refresh_status
-
-  # Current action phase: heating, cooling, idle, or off.
   - platform: homeassistant
     id: hvac_action_ha
     entity_id: ${climate_default_entity}
@@ -858,7 +802,6 @@ text_sensor:
       then:
         - lambda: 'id(current_action_raw) = x;'
         - script.execute: refresh_status
-
   - platform: homeassistant
     id: hvac_modes_ha
     entity_id: ${climate_default_entity}
@@ -866,7 +809,6 @@ text_sensor:
     on_value:
       then:
         - lambda: 'id(hvac_modes_raw) = x;'
-
   - platform: homeassistant
     id: preset_modes_ha
     entity_id: ${climate_default_entity}
@@ -874,7 +816,6 @@ text_sensor:
     on_value:
       then:
         - lambda: 'id(preset_modes_raw) = x;'
-
   - platform: homeassistant
     id: preset_ha
     entity_id: ${climate_default_entity}
@@ -883,11 +824,9 @@ text_sensor:
       then:
         - lambda: 'id(current_preset_raw) = x;'
         - script.execute: refresh_status
-
   - platform: version
     id: fw_version
     name: "${friendly_name} Firmware"
-
   - platform: wifi_info
     ip_address:
       id: wifi_ip_txt
@@ -897,11 +836,596 @@ text_sensor:
       name: "${friendly_name} SSID"
 
 # ------------------------------------------------------------------
+# SPI + Touchscreen + Display
+# ------------------------------------------------------------------
+spi:
+  clk_pin: GPIO2
+  mosi_pin: GPIO1
+
+touchscreen:
+  platform: cst826
+  id: my_touchscreen
+  i2c_id: bus_a
+  skip_probe: true
+  update_interval: 25ms
+  address: 0x15
+  on_touch:
+    - script.execute: wake_display
+    - lambda: |-
+        id(swipe_start_x) = touch.x;
+        id(swipe_last_x) = touch.x;
+  on_update:
+    - lambda: |-
+        for (auto t : touches)
+          if (t.state <= 2) id(swipe_last_x) = t.x;
+  on_release:
+    - script.execute: handle_swipe_release
+
+display:
+  - platform: st7701s
+    id: my_display
+    update_interval: 50ms
+    spi_mode: MODE3
+    color_order: RGB
+    invert_colors: false
+    dimensions:
+      width: 480
+      height: 480
+    cs_pin: GPIO16
+    de_pin: GPIO40
+    hsync_pin: GPIO15
+    vsync_pin: GPIO7
+    pclk_pin: GPIO41
+    data_pins:
+      red: [46, 3, 8, 18, 17]
+      green: [14, 13, 12, 11, 10, 9]
+      blue: [5, 45, 48, 47, 21]
+    hsync_front_porch: 20
+    hsync_pulse_width: 10
+    hsync_back_porch: 10
+    vsync_front_porch: 8
+    vsync_pulse_width: 10
+    vsync_back_porch: 10
+    pclk_frequency: 18MHz
+    pclk_inverted: true
+    init_sequence:
+      - [0x01]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x10]
+      - [0xCC, 0x10]
+      - [0xCD, 0x08]
+      - [0xB0, 0x02, 0x13, 0x1B, 0x0D, 0x10, 0x05, 0x08, 0x07, 0x07, 0x24, 0x04, 0x11, 0x0E, 0x2C, 0x33, 0x1D]
+      - [0xB1, 0x05, 0x13, 0x1B, 0x0D, 0x11, 0x05, 0x08, 0x07, 0x07, 0x24, 0x04, 0x11, 0x0E, 0x2C, 0x33, 0x1D]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x11]
+      - [0xB0, 0x5D]
+      - [0xB1, 0x43]
+      - [0xB2, 0x81]
+      - [0xB3, 0x80]
+      - [0xB5, 0x43]
+      - [0xB7, 0x85]
+      - [0xB8, 0x20]
+      - [0xC1, 0x78]
+      - [0xC2, 0x78]
+      - [0xD0, 0x88]
+      - [0xE0, 0x00, 0x00, 0x02]
+      - [0xE1, 0x03, 0xA0, 0x00, 0x00, 0x04, 0xA0, 0x00, 0x00, 0x00, 0x20, 0x20]
+      - [0xE2, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+      - [0xE3, 0x00, 0x00, 0x11, 0x00]
+      - [0xE4, 0x22, 0x00]
+      - [0xE5, 0x05, 0xEC, 0xA0, 0xA0, 0x07, 0xEE, 0xA0, 0xA0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+      - [0xE6, 0x00, 0x00, 0x11, 0x00]
+      - [0xE7, 0x22, 0x00]
+      - [0xE8, 0x06, 0xED, 0xA0, 0xA0, 0x08, 0xEF, 0xA0, 0xA0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+      - [0xEB, 0x00, 0x00, 0x40, 0x40, 0x00, 0x00, 0x00]
+      - [0xED, 0xFF, 0xFF, 0xFF, 0xBA, 0x0A, 0xBF, 0x45, 0xFF, 0xFF, 0x54, 0xFB, 0xA0, 0xAB, 0xFF, 0xFF, 0xFF]
+      - [0xEF, 0x10, 0x0D, 0x04, 0x08, 0x3F, 0x1F]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x13]
+      - [0xEF, 0x08]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x00]
+      - [0x36, 0x00]
+      - [0x3A, 0x60]
+      - [0x11]
+      - delay 100ms
+      - [0x29]
+      - delay 50ms
+
+# ------------------------------------------------------------------
+# LVGL – 3 Screens
+# ------------------------------------------------------------------
+lvgl:
+  displays:
+    - my_display
+  touchscreens:
+    - my_touchscreen
+  bg_color: "0x000000"
+  default_font: rajdhani_medium_24
+
+  on_idle:
+    - timeout: !lambda 'return (uint32_t)(id(dim_delay_num).state * 1000.0f);'
+      then:
+        - lambda: 'id(display_dimmed) = true;'
+        - light.turn_on:
+            id: display_backlight
+            brightness: !lambda 'return id(dim_level_num).state / 100.0f;'
+        - script.execute: update_status_led
+    - timeout: !lambda 'return (uint32_t)(id(idle_home_num).state * 1000.0f);'
+      then:
+        - lambda: 'id(ui_context) = 0;'
+        - script.execute: refresh_temps
+        - script.execute: refresh_status
+        - lvgl.page.show: screen_home
+
+  pages:
+    # ================= Home-Screen =================
+    - id: screen_home
+      bg_color: "0x000000"
+      widgets:
+        - button:
+            id: button_home_background
+            align: CENTER
+            width: 480
+            height: 480
+            radius: 0
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            on_click:
+              - script.execute: wake_display
+              - lambda: 'id(ui_context) = 1;'
+              - lvgl.page.show: screen_thermostat
+        - label:
+            id: label_home_hvac_mode
+            text: "Heat"
+            text_font: rajdhani_medium_24
+            text_color: 0xEDEDED
+            align: TOP_MID
+            y: 45
+        - label:
+            id: label_home_preset
+            text: ""
+            text_font: rajdhani_medium_24
+            text_color: 0x9A9A9A
+            align: TOP_MID
+            y: 80
+        - label:
+            id: label_conn_home
+            text: "Connection failed"
+            text_font: rajdhani_medium_24
+            text_color: 0x9A9A9A
+            align: CENTER
+            y: -110
+            hidden: true
+        - label:
+            id: label_home_current_temperature
+            text: "38"
+            text_font: rajdhani_bold_220
+            text_color: 0xFFFFFF
+            align: CENTER
+            x: -15
+            y: 10
+            width: 260
+            text_align: RIGHT
+            long_mode: CLIP
+        - label:
+            id: label_home_current_unit
+            text: "°C"
+            text_font: rajdhani_semibold_74
+            text_color: 0xB0B0B0
+            align: CENTER
+            x: 150
+            y: -35
+            width: 80
+            text_align: LEFT
+            long_mode: CLIP
+        - label:
+            id: label_home_current_decimal
+            text: ".0"
+            text_font: rajdhani_semibold_74
+            text_color: 0xFFFFFF
+            align: CENTER
+            x: 160
+            y: 50
+            width: 80
+            text_align: LEFT
+            long_mode: CLIP
+        - label:
+            id: icon_mode_home
+            text: ""
+            text_font: icons_90
+            text_color: 0x9A9A9A
+            align: CENTER
+            x: -160
+            y: 10
+            width: 100
+            height: 100
+            long_mode: CLIP
+        - label:
+            id: label_home_humidity
+            text: "43%"
+            text_font: rajdhani_semibold_44
+            text_color: 0x9A9A9A
+            align: CENTER
+            y: 115
+            width: 100
+            text_align: CENTER
+            hidden: true
+        - label:
+            id: label_home_time
+            text: "21:05"
+            text_font: rajdhani_semibold_42
+            text_color: 0xE0E0E0
+            align: BOTTOM_MID
+            x: -44
+            y: -50
+            width: 110
+            text_align: RIGHT
+            long_mode: CLIP
+        - label:
+            id: label_home_weekday
+            text: "Tue"
+            text_font: rajdhani_medium_22
+            text_color: 0xB0B0B0
+            align: BOTTOM_MID
+            x: 65
+            y: -76
+            width: 90
+            text_align: LEFT
+        - label:
+            id: label_home_date
+            text: "07 Jul"
+            text_font: rajdhani_medium_22
+            text_color: 0x8A8A8A
+            align: BOTTOM_MID
+            x: 65
+            y: -54
+            width: 90
+            text_align: LEFT
+
+    # ================= Thermostat-Screen =================
+    - id: screen_thermostat
+      bg_color: "0x000000"
+      widgets:
+        - button:
+            id: button_thermostat_background
+            align: CENTER
+            width: 480
+            height: 480
+            radius: 0
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            on_click:
+              - script.execute: wake_display
+              - lambda: 'id(ui_context) = 0;'
+              - lvgl.page.show: screen_home
+        - arc:
+            id: arc_temperature
+            align: CENTER
+            width: 460
+            height: 460
+            min_value: 0
+            max_value: 100
+            value: 55
+            start_angle: 0
+            end_angle: 360
+            rotation: 270
+            arc_color: 0x2A2A2A
+            arc_width: 14
+            adjustable: false
+            clickable: false
+            x: 1
+            y: 5
+            indicator:
+              arc_color: 0xFF5A2D
+              arc_width: 14
+        - label:
+            id: label_hvac_mode
+            text: "Heat"
+            text_font: rajdhani_medium_24
+            text_color: 0xEDEDED
+            align: TOP_MID
+            y: 45
+        - label:
+            id: label_preset
+            text: ""
+            text_font: rajdhani_medium_24
+            text_color: 0x9A9A9A
+            align: TOP_MID
+            y: 80
+        - label:
+            id: label_conn_thermo
+            text: "Connection failed"
+            text_font: rajdhani_medium_24
+            text_color: 0x9A9A9A
+            align: CENTER
+            y: -110
+            hidden: true
+        - label:
+            id: icon_mode_thermo
+            text: ""
+            text_font: icons_62
+            text_color: 0x9A9A9A
+            align: CENTER
+            x: -110
+            y: -50
+            width: 70
+            height: 70
+            long_mode: CLIP
+        - label:
+            id: icon_thermo_current
+            text: ""
+            text_font: icons_24
+            text_color: 0xFF5A2D
+            align: CENTER
+            x: -170
+            y: 15
+            width: 30
+            height: 30
+            long_mode: CLIP
+            hidden: true
+        - label:
+            id: label_current_temperature
+            text: "20.5°"
+            text_font: rajdhani_semibold_40
+            text_color: 0xDADADA
+            align: CENTER
+            x: -110
+            y: 15
+            width: 90
+            text_align: RIGHT
+        - label:
+            id: icon_hum_thermo
+            text: ""
+            text_font: icons_24
+            text_color: 0x6EC6FF
+            align: CENTER
+            x: -170
+            y: 65
+            width: 30
+            height: 30
+            long_mode: CLIP
+            hidden: true
+        - label:
+            id: label_humidity_thermo
+            text: "48%"
+            text_font: rajdhani_semibold_40
+            text_color: 0x9A9A9A
+            align: CENTER
+            x: -110
+            y: 63
+            width: 90
+            text_align: RIGHT
+            hidden: true
+        - obj:
+            id: divider_thermostat
+            align: CENTER
+            x: -55
+            y: 12
+            width: 3
+            height: 160
+            bg_color: 0x3A3A3A
+            border_width: 0
+            radius: 0
+        - label:
+            id: label_target_temperature
+            text: "38"
+            text_font: rajdhani_bold_186
+            text_color: 0xFFFFFF
+            align: CENTER
+            x: 38
+            y: 10
+            width: 220
+            text_align: RIGHT
+            long_mode: CLIP
+        - label:
+            id: label_target_unit
+            text: "°C"
+            text_font: rajdhani_semibold_60
+            text_color: 0xB0B0B0
+            align: CENTER
+            x: 170
+            y: -30
+            width: 60
+            text_align: LEFT
+            long_mode: CLIP
+        - label:
+            id: label_target_decimal
+            text: ".0"
+            text_font: rajdhani_semibold_60
+            text_color: 0xFFFFFF
+            align: CENTER
+            x: 180
+            y: 47
+            width: 60
+            text_align: LEFT
+            long_mode: CLIP
+        - label:
+            id: label_setpoint_mode
+            text: ""
+            text_font: rajdhani_medium_24
+            text_color: 0x9A9A9A
+            align: CENTER
+            x: 65
+            y: 95
+            hidden: true
+        - label:
+            id: label_clock_time
+            text: "21:05"
+            text_font: rajdhani_semibold_42
+            text_color: 0xE0E0E0
+            align: BOTTOM_MID
+            x: -44
+            y: -50
+            width: 110
+            text_align: RIGHT
+            long_mode: CLIP
+        - label:
+            id: label_thermo_weekday
+            text: "Tue"
+            text_font: rajdhani_medium_22
+            text_color: 0xB0B0B0
+            align: BOTTOM_MID
+            x: 65
+            y: -76
+            width: 90
+            text_align: LEFT
+        - label:
+            id: label_thermo_date
+            text: "07 Jul"
+            text_font: rajdhani_medium_22
+            text_color: 0x8A8A8A
+            align: BOTTOM_MID
+            x: 65
+            y: -54
+            width: 90
+            text_align: LEFT
+
+    # ================= Settings menu =================
+    - id: screen_settings
+      bg_color: "0x000000"
+      widgets:
+        - label:
+            id: label_settings_title
+            text: "Settings"
+            text_font: rajdhani_medium_24
+            text_color: 0x9A9A9A
+            align: TOP_MID
+            y: 48
+        - label:
+            id: label_menu_icon
+            text: ""
+            text_font: icons_32
+            text_color: 0xFFFFFF
+            align: TOP_MID
+            y: 92
+            width: 40
+            height: 40
+            long_mode: CLIP
+        - label:
+            id: label_menu_prev
+            text: ""
+            text_font: rajdhani_medium_24
+            text_color: 0x555555
+            align: CENTER
+            y: -80
+            width: 400
+            long_mode: SCROLL_CIRCULAR
+        - label:
+            id: label_menu_current
+            text: ""
+            text_font: rajdhani_semibold_40
+            text_color: 0xFFFFFF
+            align: CENTER
+            width: 420
+            long_mode: SCROLL_CIRCULAR
+        - label:
+            id: label_menu_next
+            text: ""
+            text_font: rajdhani_medium_24
+            text_color: 0x555555
+            align: CENTER
+            y: 80
+            width: 400
+            long_mode: SCROLL_CIRCULAR
+        - label:
+            id: label_menu_value
+            text: ""
+            text_font: rajdhani_medium_24
+            text_color: 0x9A9A9A
+            align: BOTTOM_MID
+            y: -68
+            width: 440
+            long_mode: SCROLL_CIRCULAR
+
+# ------------------------------------------------------------------
+# Fonts
+# ------------------------------------------------------------------
+font:
+  - file: "assets/fonts/Rajdhani-Bold.ttf"
+    id: rajdhani_bold_186
+    size: 186
+    bpp: 4
+    glyphs: ["0123456789", ".-"]
+  - file: "assets/fonts/Rajdhani-Bold.ttf"
+    id: rajdhani_bold_220
+    size: 220
+    bpp: 4
+    glyphs: ["0123456789", ".-"]
+  - file: "assets/fonts/Rajdhani-SemiBold.ttf"
+    id: rajdhani_semibold_40
+    size: 40
+    bpp: 4
+    glyphs: &rajdhani_glyphs [
+        "0123456789",
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        "abcdefghijklmnopqrstuvwxyz",
+        " .,:%°·-/=()",
+      ]
+  - file: "assets/fonts/Rajdhani-SemiBold.ttf"
+    id: rajdhani_semibold_42
+    size: 42
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+  - file: "assets/fonts/Rajdhani-SemiBold.ttf"
+    id: rajdhani_semibold_44
+    size: 44
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+  - file: "assets/fonts/Rajdhani-SemiBold.ttf"
+    id: rajdhani_semibold_60
+    size: 60
+    bpp: 4
+    glyphs: ["0123456789", ".-°CF%"]
+  - file: "assets/fonts/Rajdhani-SemiBold.ttf"
+    id: rajdhani_semibold_74
+    size: 74
+    bpp: 4
+    glyphs: ["0123456789", ".-°CF%"]
+  - file: "assets/fonts/Rajdhani-Medium.ttf"
+    id: rajdhani_medium_22
+    size: 22
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+  - file: "assets/fonts/Rajdhani-Medium.ttf"
+    id: rajdhani_medium_24
+    size: 24
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
+    id: icons_24
+    size: 24
+    bpp: 4
+    glyphs: &icon_glyphs_all [
+        "󰈸", "󰜗", "󰔢", "󰐥",
+        "󰔏", "󰖎",
+      ]
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
+    id: icons_62
+    size: 62
+    bpp: 4
+    glyphs: *icon_glyphs_all
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
+    id: icons_90
+    size: 90
+    bpp: 4
+    glyphs: *icon_glyphs_all
+
+  # Settings menu icons (MDI). Reihenfolge = MENU_ICONS in thermostat_helpers.h.
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
+    id: icons_32
+    size: 32
+    bpp: 4
+    glyphs: &menu_icons_all [
+        "󰎓", "󰘮", "󰃞", "󰅐",
+        "󰗊", "󰏘", "󰈈", "󰔄",
+        "󰔟", "󰃜", "󰏰", "󰇣",
+        "󰔡", "󰑧", "󰖩", "󰋽",
+        "󰜉", "󰌵", "󰃟",
+      ]
+
+# ------------------------------------------------------------------
 # Scripts
 # ------------------------------------------------------------------
 script:
-  # After API connect, force-copy Home Assistant states into globals. This
-  # covers cases where individual on_value automations do not fire during init.
   - id: sync_ha_states
     mode: restart
     then:
@@ -936,15 +1460,12 @@ script:
             lambda: 'return id(pending_temperature_change);'
           then:
             - lambda: |-
-                // Refresh the cache directly from Home Assistant sensors.
                 if (std::isnan(id(target_low_v)))  id(target_low_v)  = id(target_low_ha).state;
                 if (std::isnan(id(target_high_v))) id(target_high_v) = id(target_high_ha).state;
             - if:
                 condition:
                   lambda: 'return !std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v));'
                 then:
-                  # Dual setpoint: update only the active target and clamp it
-                  # against the other target so the range never crosses.
                   - lambda: |-
                       if (id(adjust_target) == 1) {
                         id(target_high_v) = id(target_temperature);
@@ -983,8 +1504,6 @@ script:
 
   - id: wake_display
     then:
-      # Reset LVGL idle timers. Encoder/button input is not an LVGL input
-      # device, so dim and idle timers would otherwise ignore knob activity.
       - lambda: 'lv_disp_trig_activity(nullptr);'
       - if:
           condition:
@@ -996,9 +1515,6 @@ script:
                 brightness: !lambda 'return id(brightness_pct) / 100.0f;'
             - script.execute: update_status_led
 
-  # Switch between TRV/heat and AC/cool targets in dual-setpoint mode, or toggle
-  # HVAC mode for better_thermostat-style entities. Used by double click and by
-  # swipe release from the board files.
   - id: handle_swipe_release
     then:
       - if:
@@ -1011,23 +1527,18 @@ script:
   - id: toggle_adjust_target
     then:
       - lambda: |-
-          // Refresh the cache directly from Home Assistant sensors.
           if (std::isnan(id(target_low_v)))  id(target_low_v)  = id(target_low_ha).state;
           if (std::isnan(id(target_high_v))) id(target_high_v) = id(target_high_ha).state;
       - if:
           condition:
             lambda: 'return !std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v));'
           then:
-            # Real dual-setpoint entity (heat_cool): switch between low (TRV)
-            # and high (AC).
             - lambda: |-
                 id(adjust_target) = 1 - id(adjust_target);
                 id(target_temperature) = id(adjust_target) == 1 ? id(target_high_v) : id(target_low_v);
             - script.execute: refresh_temps
             - script.execute: refresh_status
           else:
-            # better_thermostat style: one temperature attribute; TRV = heat
-            # mode, AC = cool mode, so toggle the mode.
             - if:
                 condition:
                   lambda: |-
@@ -1043,20 +1554,14 @@ script:
                         hvac_mode: !lambda |-
                           return id(current_hvac_raw) == "cool" ? std::string("heat") : std::string("cool");
 
-  # Status LED hook. Boards with an LED strip extend this placeholder; boards
-  # without one keep it empty.
   - id: update_status_led
     then: []
 
-  # Live preview for LED brightness while rotating in the settings submenu.
-  # The 240x240 board overrides this placeholder with `!extend`.
   - id: preview_led_brightness
     then: []
 
-  # All temperature/humidity labels and ring fill level.
   - id: refresh_temps
     then:
-      # Icon glyphs from thermostat_helpers.h; keep PUA characters out of YAML.
       - lvgl.label.update:
           id: icon_thermo_current
           text: !lambda 'return std::string(ICON_THERMO_HIGH);'
@@ -1073,7 +1578,6 @@ script:
           text_color: !lambda |-
             if (id(design_select).current_option() != "Color") return lv_color_hex(0xFFFFFF);
             return lv_color_hex(0x6EC6FF);
-      # TRV/AC indicator, visible only in dual-setpoint mode.
       - if:
           condition:
             lambda: 'return !std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v));'
@@ -1130,7 +1634,6 @@ script:
           value: !lambda |-
             return (int) roundf((id(target_temperature) - ${temperature_min}) /
                                 (${temperature_max} - ${temperature_min}) * 100.0f);
-      # Humidity, only visible when a value exists.
       - if:
           condition:
             lambda: 'return !std::isnan(id(pending_humidity));'
@@ -1168,7 +1671,6 @@ script:
           else:
             - lvgl.widget.hide: icon_thermo_current
 
-  # Status lines, mode icons, and ring color.
   - id: refresh_status
     then:
       - lvgl.label.update:
@@ -1204,10 +1706,8 @@ script:
       - lvgl.widget.update:
           id: icon_mode_thermo
           text_color: !lambda |-
-            // No active heating/cooling phase (idle/off): use dark gray.
             if (id(current_action_raw) != "heating" && id(current_action_raw) != "cooling")
               return lv_color_hex(0x9A9A9A);
-            // Active AC target: snow icon is always blue.
             if (!std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v)) && id(adjust_target) == 1)
               return lv_color_hex(0x6EC6FF);
             if (id(design_select).current_option() != "Color") return lv_color_hex(0xFFFFFF);
@@ -1217,18 +1717,14 @@ script:
       - lvgl.widget.update:
           id: icon_mode_home
           text_color: !lambda |-
-            // No active heating/cooling phase (idle/off): use dark gray.
             if (id(current_action_raw) != "heating" && id(current_action_raw) != "cooling")
               return lv_color_hex(0x9A9A9A);
-            // Active AC target: snow icon is always blue.
             if (!std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v)) && id(adjust_target) == 1)
               return lv_color_hex(0x6EC6FF);
             if (id(design_select).current_option() != "Color") return lv_color_hex(0xFFFFFF);
             if (id(current_hvac_raw) == "cool" || id(current_hvac_raw) == "dry"
                 || id(current_hvac_raw) == "fan_only") return lv_color_hex(0x6EC6FF);
             return lv_color_hex(0xFF8A3D);
-      # Ring indicator color: Mono -> white, otherwise by mode. In dual-setpoint
-      # mode the color follows the active target.
       - lvgl.arc.update:
           id: arc_temperature
           indicator:
@@ -1251,8 +1747,6 @@ script:
             - lvgl.widget.hide: icon_mode_home
       - script.execute: update_status_led
 
-  # Connection state: hide HVAC/preset/icon on disconnect and show the
-  # connection error labels.
   - id: refresh_connection
     then:
       - if:
@@ -1610,7 +2104,6 @@ script:
       - lvgl.label.update: {id: label_home_weekday, text: !lambda 'return id(pending_clock_day);'}
       - lvgl.label.update: {id: label_thermo_date, text: !lambda 'return id(pending_home_date);'}
       - lvgl.label.update: {id: label_home_date, text: !lambda 'return id(pending_home_date);'}
-
 
 # ------------------------------------------------------------------
 # Uhrzeit

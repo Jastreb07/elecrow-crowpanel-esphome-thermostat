@@ -137,7 +137,6 @@ display:
     vsync_front_porch: 8
     vsync_pulse_width: 10
     vsync_back_porch: 10
-    show_test_card: false
     pclk_frequency: 18MHz
     pclk_inverted: true
     init_sequence:
@@ -258,6 +257,7 @@ lvgl:
             y: 10
             width: 260
             text_align: RIGHT
+            long_mode: CLIP
         - label:
             id: label_home_current_unit
             text: "°C"
@@ -268,6 +268,7 @@ lvgl:
             y: -35
             width: 80
             text_align: LEFT
+            long_mode: CLIP
         - label:
             id: label_home_current_decimal
             text: ".0"
@@ -278,6 +279,7 @@ lvgl:
             y: 50
             width: 80
             text_align: LEFT
+            long_mode: CLIP
         - label:
             id: icon_mode_home
             text: ""
@@ -286,6 +288,9 @@ lvgl:
             align: CENTER
             x: -160
             y: 10
+            width: 100
+            height: 100
+            long_mode: CLIP
 
         - label:
             id: label_home_humidity
@@ -308,6 +313,7 @@ lvgl:
             y: -50
             width: 110
             text_align: RIGHT
+            long_mode: CLIP
         - label:
             id: label_home_weekday
             text: "Tue"
@@ -399,6 +405,9 @@ lvgl:
             align: CENTER
             x: -110
             y: -50
+            width: 70
+            height: 70
+            long_mode: CLIP
         - label:
             id: icon_thermo_current
             text: ""
@@ -407,6 +416,9 @@ lvgl:
             align: CENTER
             x: -170
             y: 15
+            width: 30
+            height: 30
+            long_mode: CLIP
             hidden: true
         - label:
             id: label_current_temperature
@@ -426,6 +438,9 @@ lvgl:
             align: CENTER
             x: -170
             y: 65
+            width: 30
+            height: 30
+            long_mode: CLIP
             hidden: true
         - label:
             id: label_humidity_thermo
@@ -460,6 +475,7 @@ lvgl:
             y: 10
             width: 220
             text_align: RIGHT
+            long_mode: CLIP
         - label:
             id: label_target_unit
             text: "°C"
@@ -470,6 +486,7 @@ lvgl:
             y: -30
             width: 60
             text_align: LEFT
+            long_mode: CLIP
         - label:
             id: label_target_decimal
             text: ".0"
@@ -480,6 +497,7 @@ lvgl:
             y: 47
             width: 60
             text_align: LEFT
+            long_mode: CLIP
         # Shows which target the encoder changes in dual-setpoint mode:
         # TRV/low or AC/high.
         - label:
@@ -502,6 +520,7 @@ lvgl:
             y: -50
             width: 110
             text_align: RIGHT
+            long_mode: CLIP
         - label:
             id: label_thermo_weekday
             text: "Tue"
@@ -541,6 +560,9 @@ lvgl:
             text_color: 0xFFFFFF
             align: TOP_MID
             y: 92
+            width: 40
+            height: 40
+            long_mode: CLIP
         - label:
             id: label_menu_prev
             text: ""
@@ -548,12 +570,16 @@ lvgl:
             text_color: 0x555555
             align: CENTER
             y: -80
+            width: 400
+            long_mode: SCROLL_CIRCULAR
         - label:
             id: label_menu_current
             text: ""
             text_font: rajdhani_semibold_40
             text_color: 0xFFFFFF
             align: CENTER
+            width: 420
+            long_mode: SCROLL_CIRCULAR
         - label:
             id: label_menu_next
             text: ""
@@ -561,6 +587,8 @@ lvgl:
             text_color: 0x555555
             align: CENTER
             y: 80
+            width: 400
+            long_mode: SCROLL_CIRCULAR
         - label:
             id: label_menu_value
             text: ""
@@ -568,6 +596,8 @@ lvgl:
             text_color: 0x9A9A9A
             align: BOTTOM_MID
             y: -68
+            width: 440
+            long_mode: SCROLL_CIRCULAR
 
 # ------------------------------------------------------------------
 # Fonts used by this board only, to save flash and RAM.
@@ -623,30 +653,34 @@ font:
     size: 24
     bpp: 4
     glyphs: *rajdhani_glyphs
-  - file: "assets/fonts/bootstrap-icons.woff"
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
     id: icons_24
     size: 24
     bpp: 4
     glyphs: &icon_glyphs_all [
-        "", "", "", "", "", ""      ]
-  - file: "assets/fonts/bootstrap-icons.woff"
+        "󰈸", "󰜗", "󰔢", "󰐥",
+        "󰔏", "󰖎",
+      ]
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
     id: icons_62
     size: 62
     bpp: 4
     glyphs: *icon_glyphs_all
-  - file: "assets/fonts/bootstrap-icons.woff"
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
     id: icons_90
     size: 90
     bpp: 4
     glyphs: *icon_glyphs_all
 
-  # Settings menu icons. This is a dedicated glyph set; icon_glyphs_all does not
-  # contain all menu pictograms.
-  - file: "assets/fonts/bootstrap-icons.woff"
+  # Settings menu icons (MDI). Reihenfolge = MENU_ICONS in thermostat_helpers.h.
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
     id: icons_32
     size: 32
     bpp: 4
     glyphs: &menu_icons_all [
-        "", "", "", "", "", "",
-        "", "", "", "", "", "",
-        "", "", "", "", "", ""      ]
+        "󰎓", "󰘮", "󰃞", "󰅐",
+        "󰗊", "󰏘", "󰈈", "󰔄",
+        "󰔟", "󰃜", "󰏰", "󰇣",
+        "󰔡", "󰑧", "󰖩", "󰋽",
+        "󰜉", "󰌵", "󰃟",
+      ]

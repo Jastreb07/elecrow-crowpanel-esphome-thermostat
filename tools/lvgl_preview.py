@@ -107,7 +107,7 @@ def font_map(config):
         fid = f.get("id", "")
         size = f.get("size", 24)
         file_ = str(f.get("file", "")).lower()
-        family = "bootstrap-icons" if "bootstrap" in file_ else "Rajdhani"
+        family = "Material Design Icons" if "materialdesignicons" in file_ else "Rajdhani"
         weight = 400
         for key, w in WEIGHTS.items():
             if key in fid.lower() or key in file_:
@@ -116,13 +116,13 @@ def font_map(config):
     return fonts
 
 
-# Real Bootstrap Icon glyphs by widget ID. Runtime code sets them through
+# Real MDI glyphs by widget ID. Runtime code sets them through
 # thermostat_helpers.h, so the preview needs hints.
 ICON_HINTS = [
-    (re.compile(r"hum"), ""),            # droplet-half
-    (re.compile(r"thermo_current"), ""),  # thermometer-high
-    (re.compile(r"mode"), ""),            # fire
-    (re.compile(r"menu_icon"), ""),       # thermometer-half
+    (re.compile(r"hum"), "\U000F058E"),            # mdi-water-percent
+    (re.compile(r"thermo_current"), "\U000F050F"),  # mdi-thermometer
+    (re.compile(r"mode"), "\U000F0238"),            # mdi-fire
+    (re.compile(r"menu_icon"), "\U000F0393"),       # mdi-thermostat
 ]
 
 
@@ -135,7 +135,7 @@ def label_text(widget):
         for rx, repl in ICON_HINTS:
             if rx.search(wid):
                 return repl
-        return ""  # bi-question-circle
+        return "\U000F02D6"  # mdi-help-circle
     return txt if txt else "(empty)"
 
 
@@ -257,8 +257,8 @@ def generate():
    src:url('../assets/fonts/Rajdhani-Medium.ttf') format('truetype')}}
  @font-face{{font-family:'Rajdhani';font-weight:400;
    src:url('../assets/fonts/Rajdhani-Regular.ttf') format('truetype')}}
- @font-face{{font-family:'bootstrap-icons';
-   src:url('../assets/fonts/bootstrap-icons.woff') format('woff')}}
+ @font-face{{font-family:'Material Design Icons';
+   src:url('https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/fonts/materialdesignicons-webfont.woff2') format('woff2')}}
  body{{background:#1b1b1b;color:#ddd;font-family:'Rajdhani','Segoe UI',sans-serif;
       padding:24px}}
  h1{{font-size:18px;font-weight:600;color:#ccc;margin:0 0 12px}}

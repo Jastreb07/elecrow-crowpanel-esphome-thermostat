@@ -10,50 +10,50 @@
 #include <cctype>
 
 // ------------------------------------------------------------------
-// Bootstrap Icons from assets/fonts/bootstrap-icons.woff. Codepoints were
-// extracted from bootstrap-icons.json.
+// Material Design Icons (materialdesignicons-webfont.ttf, per URL in den
+// YAML font:-Bloecken geladen). Codepoints: https://pictogrammers.com/library/mdi/
 // ------------------------------------------------------------------
-static const char *const ICON_FIRE = "";          // bi-fire
-static const char *const ICON_SNOW = "";          // bi-snow
-static const char *const ICON_TOGGLE_OFF = "";    // bi-toggle-off
-static const char *const ICON_POWER = "";   // bi-power
-static const char *const ICON_THERMO_HIGH = "";   // bi-thermometer-high
-static const char *const ICON_DROPLET_HALF = "";  // bi-droplet-half
+static const char *const ICON_FIRE = "󰈸";          // mdi-fire
+static const char *const ICON_SNOW = "󰜗";          // mdi-snowflake
+static const char *const ICON_TOGGLE_OFF = "󰔢";    // mdi-toggle-switch-off
+static const char *const ICON_POWER = "󰐥";         // mdi-power
+static const char *const ICON_THERMO_HIGH = "󰔏";   // mdi-thermometer
+static const char *const ICON_DROPLET_HALF = "󰖎";  // mdi-water-percent
 
 // Menu icons. Index matches the settings menu item.
 static const char *const MENU_ICONS[] = {
-    "",  //  0 HVAC mode      bi-thermometer-half
-    "",  //  1 Preset         bi-sliders
-    "",  //  2 Brightness     bi-brightness-high
-    "",  //  3 Clock          bi-clock
-    "",  //  4 Language       bi-translate
-    "",  //  5 Design         bi-palette
-    "",  //  6 Icons          bi-eye
-    "",  //  7 Unit           bi-rulers
-    "",  //  8 Idle time      bi-hourglass-split
-    "",  //  9 Dim after      bi-brightness-low
-    "",  // 10 Dim level      bi-percent
-    "",  // 11 3s button      bi-stopwatch
-    "",  // 12 Knob modes     bi-toggles
-    "\uf56b",  // 13 Knob step      bi-sliders
-    "",  // 14 WiFi           bi-wifi
-    "",  // 15 Firmware       bi-info-circle
-    "",  // 16 Reset          bi-arrow-counterclockwise
-    "",  // 17 LED             bi-lightbulb
-    "",  // 18 LED brightness bi-brightness-high
+    "󰎓",  //  0 HVAC mode      mdi-thermostat
+    "󰘮",  //  1 Preset         mdi-tune
+    "󰃞",  //  2 Brightness     mdi-brightness-6
+    "󰅐",  //  3 Clock          mdi-clock-outline
+    "󰗊",  //  4 Language       mdi-translate
+    "󰏘",  //  5 Design         mdi-palette
+    "󰈈",  //  6 Icons          mdi-eye
+    "󰔄",  //  7 Unit           mdi-temperature-celsius
+    "󰔟",  //  8 Idle time      mdi-timer-sand
+    "󰃜",  //  9 Dim after      mdi-brightness-4
+    "󰏰",  // 10 Dim level      mdi-percent
+    "󰇣",  // 11 3s button      mdi-av-timer
+    "󰔡",  // 12 Knob modes     mdi-toggle-switch
+    "󰑧",  // 13 Knob step      mdi-rotate-right
+    "󰖩",  // 14 WiFi           mdi-wifi
+    "󰋽",  // 15 Firmware       mdi-information-outline
+    "󰜉",  // 16 Reset          mdi-restart
+    "󰌵",  // 17 LED            mdi-lightbulb
+    "󰃟",  // 18 LED brightness mdi-brightness-7
 };
 constexpr int SETTINGS_MENU_COUNT = 19;
 
 // Icon per better_thermostat preset.
 inline const char *ha_preset_icon(const std::string &p) {
-  if (p == "eco") return "";       // bi-tree
-  if (p == "comfort") return "";   // bi-cup-hot
-  if (p == "home") return "";      // bi-house
-  if (p == "away") return "";      // bi-person-walking
-  if (p == "sleep") return "";     // bi-moon-stars
-  if (p == "boost") return "";     // bi-lightning-charge
-  if (p == "activity") return "";  // bi-activity
-  return "";                       // bi-dash-circle (none/unknown)
+  if (p == "eco") return "󰌪";       // mdi-leaf
+  if (p == "comfort") return "󰅶";   // mdi-coffee
+  if (p == "home") return "󰋜";      // mdi-home
+  if (p == "away") return "󰖃";      // mdi-walk
+  if (p == "sleep") return "󰖔";     // mdi-weather-night
+  if (p == "boost") return "󰉁";     // mdi-flash
+  if (p == "activity") return "󰐰";  // mdi-pulse
+  return "󰍶";                       // mdi-minus-circle (none/unknown)
 }
 
 // ------------------------------------------------------------------

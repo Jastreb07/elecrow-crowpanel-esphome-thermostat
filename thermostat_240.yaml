@@ -536,24 +536,24 @@ font:
     size: 130
     bpp: 4
     glyphs: ["0123456789", ".-"]
-  - file: "assets/fonts/bootstrap-icons.woff"
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
     id: icons_18
     size: 18
     bpp: 4
-    glyphs: [
-        "", "", "", "", "", "",
-        "", "", "", "", "", "",
-        "", "", "", "", "", "",
-        "", "", "", "", "", ""      ]
-  - file: "assets/fonts/bootstrap-icons.woff"
+    glyphs: &mdi_glyphs_all [
+        "󰈸", "󰜗", "󰔢", "󰐥",
+        "󰔏", "󰖎",
+        "󰎓", "󰘮", "󰃞", "󰅐",
+        "󰗊", "󰏘", "󰈈", "󰔄",
+        "󰔟", "󰃜", "󰏰", "󰇣",
+        "󰔡", "󰑧", "󰖩", "󰋽",
+        "󰜉", "󰌵", "󰃟",
+      ]
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
     id: icons_24
     size: 24
     bpp: 4
-    glyphs: [
-        "", "", "", "", "", "",
-        "", "", "", "", "", "",
-        "", "", "", "", "", "",
-        "","","","" ]
+    glyphs: *mdi_glyphs_all
   - file: "assets/fonts/Rajdhani-SemiBold.ttf"
     id: rajdhani_semibold_46
     size: 46
@@ -589,11 +589,11 @@ font:
     size: 16
     bpp: 4
     glyphs: *rajdhani_glyphs
-  - file: "assets/fonts/bootstrap-icons.woff"
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
     id: icons_34
     size: 34
     bpp: 4
-    glyphs: ["","","","","",""]
+    glyphs: *mdi_glyphs_all
 
 # ------------------------------------------------------------------
 # Status LED, WS2812 strip according to Elecrow docs: LED_PIN=48, LED_NUM=5.
