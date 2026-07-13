@@ -17,11 +17,12 @@ substitutions:
 
 esphome:
   on_boot:
-    - priority: 800
+    # Run after the PCF8574 I/O expander (900) but before the ST7701S display
+    # driver (800). The panel must already be powered and out of reset when the
+    # driver sends its initialization sequence.
+    - priority: 850
       then:
         - output.turn_on: lcd_power
-        - output.turn_on: display_reset
-        - delay: 100ms
         - output.turn_off: display_reset
         - delay: 100ms
         - output.turn_on: tp_reset

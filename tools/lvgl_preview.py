@@ -270,7 +270,12 @@ def generate():
  .w{{position:absolute;white-space:nowrap;line-height:1}}
  .w:hover{{outline:1px solid #0f0}}
  #status{{position:fixed;right:12px;top:8px;font-size:13px;color:#6a6}}
+ #icon-library{{position:fixed;left:12px;top:8px;font-size:14px;color:#9ac7ff;
+               text-decoration:none}}
+ #icon-library:hover{{text-decoration:underline}}
 </style></head><body>
+<a id="icon-library" href="https://pictogrammers.com/library/mdi/"
+   target="_blank" rel="noopener noreferrer">MDI Icon Library</a>
 <div id="status">live \N{BLACK CIRCLE}</div>
 {board_html}
 <script>
