@@ -143,17 +143,35 @@ Entity` text field after the device is connected. For outgoing service calls
 to work, enable the Home Assistant device option that allows the ESPHome
 device to perform Home Assistant actions.
 
+Light pages are configured as an array in `thermostat_common.yaml`. Every
+entry adds one logical page to the horizontal swipe order:
+
+```yaml
+ha_light_controller:
+  id: ha_lights
+  lights:
+    - entity_id: "light.lampe_hinter_der_couch"
+      name: "Light"
+    - entity_id: "light.stehlampe"
+      name: "Floor Light"
+```
+
+The controller reads each entity's `supported_color_modes` attribute. A short
+press therefore cycles only through controls supported by that light:
+brightness, color temperature, and color.
+
 ## Controls
 
 | Action | Result |
 |---|---|
-| Rotate encoder right | Increase target temperature |
-| Rotate encoder left | Decrease target temperature |
-| Short press | Open the thermostat screen or settings menu |
-| Double click | Switch the active target in dual-setpoint mode |
-| 1 second press | Go back one level |
-| 3 second press | Open HVAC or preset submenu |
-| Touch the display | Wake the display and navigate screens |
+| Rotate encoder | Change the current thermostat, light, or menu value |
+| Short press | Switch the TRV/AC target or the available light control mode |
+| Double click | Jump to thermostat or switch its active target |
+| Hold 800 ms on thermostat | Toggle HVAC off/on and restore its last mode |
+| Hold 800 ms on a light page | Toggle the selected light on/off |
+| Hold 800 ms on the settings page | Go back one menu level |
+| Horizontal swipe | Thermostat → light pages → settings, or back |
+| Touch the display | Wake the display |
 
 Temperature changes are debounced. The UI updates immediately, but
 `climate.set_temperature` is sent only after the configured quiet period.
@@ -181,7 +199,8 @@ thermostat/
 |   |-- icons/
 |   `-- fonts/
 `-- components/
-    `-- cst826/              # Local CST826 touch component
+    |-- cst826/              # Local CST826 touch component
+    `-- ha_light_controller/ # Variable-length Home Assistant light list
 ```
 
 ## Development Notes
