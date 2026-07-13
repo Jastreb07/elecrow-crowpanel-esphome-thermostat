@@ -341,7 +341,9 @@ lvgl:
       # The CST826 coordinates are not swapped, so physical horizontal
       # gestures arrive on LVGL's native horizontal axis.
       on_swipe_left:
-        - script.execute: open_first_light_or_settings
+        - script.execute: thermostat_next
+      on_swipe_right:
+        - script.execute: thermostat_previous
       widgets:
         - button:
             id: button_thermostat_background
@@ -609,36 +611,22 @@ lvgl:
             hidden: true
 
         - label:
-            id: label_clock_time
-            text: "21:05"
-            text_font: rajdhani_semibold_42
-            text_color: 0xE0E0E0
+            id: label_climate_name
+            text: ""
+            text_font: rajdhani_medium_24
+            text_color: 0x9A9A9A
             align: BOTTOM_MID
-            x: -44
-            y: -50
-            width: 110
-            text_align: RIGHT
-            long_mode: CLIP
+            y: -58
+            width: 200
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
         - label:
-            id: label_thermo_weekday
-            text: "Tue"
+            id: label_climate_page
+            text: "1 / 1"
             text_font: rajdhani_medium_22
-            text_color: 0xB0B0B0
+            text_color: 0x555555
             align: BOTTOM_MID
-            x: 65
-            y: -76
-            width: 90
-            text_align: LEFT
-        - label:
-            id: label_thermo_date
-            text: "07 Jul"
-            text_font: rajdhani_medium_22
-            text_color: 0x8A8A8A
-            align: BOTTOM_MID
-            x: 65
-            y: -54
-            width: 90
-            text_align: LEFT
+            y: -30
 
     # ================= Light control =================
     - id: screen_light
@@ -830,6 +818,7 @@ lvgl:
             text_color: 0x777777
             align: BOTTOM_MID
             y: -58
+            width: 250
         - label:
             id: label_light_page
             text: "1 / 1"

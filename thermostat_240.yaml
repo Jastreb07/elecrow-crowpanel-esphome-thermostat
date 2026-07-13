@@ -272,7 +272,9 @@ lvgl:
       # CST816 is mounted rotated: physical horizontal gestures are reported
       # by LVGL on the vertical gesture axis.
       on_swipe_down:
-        - script.execute: open_first_light_or_settings
+        - script.execute: thermostat_next
+      on_swipe_up:
+        - script.execute: thermostat_previous
       widgets:
         - button:
             id: button_thermostat_background
@@ -528,35 +530,22 @@ lvgl:
             hidden: true
 
         - label:
-            id: label_clock_time
-            text: "21:05"
-            text_font: rajdhani_semibold_28
-            text_color: 0xE0E0E0
-            align: BOTTOM_MID
-            x: -30
-            y: -20
-            width: 70
-            text_align: RIGHT
-        - label:
-            id: label_thermo_weekday
-            text: "Tue"
+            id: label_climate_name
+            text: ""
             text_font: rajdhani_medium_16
-            text_color: 0xB0B0B0
+            text_color: 0x9A9A9A
             align: BOTTOM_MID
-            x: 32
-            y: -33
-            width: 45
-            text_align: LEFT
+            y: -28
+            width: 100
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
         - label:
-            id: label_thermo_date
-            text: "07 Jul"
+            id: label_climate_page
+            text: "1 / 1"
             text_font: rajdhani_medium_16
-            text_color: 0x8A8A8A
+            text_color: 0x555555
             align: BOTTOM_MID
-            x: 32
-            y: -21
-            width: 45
-            text_align: LEFT
+            y: -12
 
     # ================= Light control =================
     - id: screen_light
@@ -744,6 +733,7 @@ lvgl:
             text_color: 0x777777
             align: BOTTOM_MID
             y: -28
+            width: 120
         - label:
             id: label_light_page
             text: "1 / 1"

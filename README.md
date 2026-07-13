@@ -132,16 +132,25 @@ The ESPHome integration in Home Assistant should discover the device after it
 joins Wi-Fi. Home Assistant asks for the API encryption key if one is defined
 in `secrets.yaml`.
 
-The default climate entity is configured in `thermostat_common.yaml`:
+Thermostat pages are configured as an array in `thermostat_common.yaml`:
 
 ```yaml
-climate_default_entity: "climate.wohnzimmer_better_thermostat"
+ha_climate_controller:
+  id: ha_climates
+  climates:
+    - entity_id: "climate.wohnzimmer_better_thermostat"
+      name: "Living Room"
+    - entity_id: "climate.schlafzimmer"
+      name: "Bedroom"
 ```
 
-You can change the entity in Home Assistant through the exposed `Climate
-Entity` text field after the device is connected. For outgoing service calls
-to work, enable the Home Assistant device option that allows the ESPHome
-device to perform Home Assistant actions.
+Every entry adds one logical thermostat page. Each page keeps its live state,
+TRV/AC selection, targets, HVAC mode, preset, and humidity separate. For
+outgoing service calls to work, enable the Home Assistant device option that
+allows the ESPHome device to perform Home Assistant actions.
+
+`name` is optional. If omitted, the name line on that thermostat page remains
+empty.
 
 Light pages are configured as an array in `thermostat_common.yaml`. Every
 entry adds one logical page to the horizontal swipe order:
@@ -170,7 +179,7 @@ brightness, color temperature, and color.
 | Hold 800 ms on thermostat | Toggle HVAC off/on and restore its last mode |
 | Hold 800 ms on a light page | Toggle the selected light on/off |
 | Hold 800 ms on the settings page | Go back one menu level |
-| Horizontal swipe | Thermostat → light pages → settings, or back |
+| Horizontal swipe | Thermostat pages → light pages → settings, or back |
 | Touch the display | Wake the display |
 
 Temperature changes are debounced. The UI updates immediately, but
