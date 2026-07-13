@@ -70,27 +70,12 @@ touchscreen:
     swap_xy: true
   on_touch:
     - script.execute: wake_display
-    - lambda: |-
-        // swap_xy above already maps the physical horizontal axis to X.
-        id(swipe_start_x) = touch.x;
-        id(swipe_last_x) = touch.x;
-        id(swipe_start_y) = touch.y;
-        id(swipe_last_y) = touch.y;
-  on_update:
-    - lambda: |-
-        for (auto t : touches)
-          if (t.state <= 2) {
-            id(swipe_last_x) = t.x;
-            id(swipe_last_y) = t.y;
-          }
-  on_release:
-    - script.execute: handle_swipe_release
 
 display:
   - platform: mipi_spi
     id: my_display
     model: GC9A01A
-    update_interval: 50ms
+    update_interval: never
     cs_pin: GPIO9
     dc_pin: GPIO3
     reset_pin: GPIO14
@@ -131,6 +116,9 @@ sensor:
 # LVGL – 3 Screens
 # ------------------------------------------------------------------
 lvgl:
+  # LVGL invalidates and redraws changed regions itself. Periodic full display
+  # updates make page transitions noticeably less fluid.
+  buffer_size: 12%
   displays:
     - my_display
   touchscreens:
@@ -279,6 +267,12 @@ lvgl:
     # ================= Thermostat-Screen =================
     - id: screen_thermostat
       bg_color: "0x000000"
+      # CST816 is mounted rotated: physical horizontal gestures are reported
+      # by LVGL on the vertical gesture axis.
+      on_swipe_up:
+        - script.execute: open_settings
+      on_swipe_down:
+        - script.execute: open_settings
       widgets:
         - button:
             id: button_thermostat_background
@@ -567,6 +561,10 @@ lvgl:
     # ================= Settings menu =================
     - id: screen_settings
       bg_color: "0x000000"
+      on_swipe_up:
+        - script.execute: close_settings
+      on_swipe_down:
+        - script.execute: close_settings
       widgets:
         - label:
             id: label_settings_title

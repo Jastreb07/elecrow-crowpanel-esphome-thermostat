@@ -103,32 +103,13 @@ touchscreen:
   skip_probe: true
   update_interval: 25ms
   address: 0x15
-  transform:
-    swap_xy: true
-    mirror_x: false
-    mirror_y: false
   on_touch:
     - script.execute: wake_display
-    - lambda: |-
-        // swap_xy maps the physical horizontal axis to display X.
-        id(swipe_start_x) = touch.x;
-        id(swipe_last_x) = touch.x;
-        id(swipe_start_y) = touch.y;
-        id(swipe_last_y) = touch.y;
-  on_update:
-    - lambda: |-
-        for (auto t : touches)
-          if (t.state <= 2) {
-            id(swipe_last_x) = t.x;
-            id(swipe_last_y) = t.y;
-          }
-  on_release:
-    - script.execute: handle_swipe_release
 
 display:
   - platform: st7701s
     id: my_display
-    update_interval: 50ms
+    update_interval: never
     spi_mode: MODE3
     color_order: RGB
     invert_colors: false
@@ -196,6 +177,9 @@ display:
 # LVGL – 3 Screens
 # ------------------------------------------------------------------
 lvgl:
+  # Keep the draw buffer small enough for fast internal RAM on PSRAM boards.
+  # LVGL invalidates and redraws changed regions itself.
+  buffer_size: 12%
   displays:
     - my_display
   touchscreens:
@@ -354,6 +338,12 @@ lvgl:
     # ================= Thermostat-Screen =================
     - id: screen_thermostat
       bg_color: "0x000000"
+      # The CST826 coordinates are not swapped, so physical horizontal
+      # gestures arrive on LVGL's native horizontal axis.
+      on_swipe_left:
+        - script.execute: open_settings
+      on_swipe_right:
+        - script.execute: open_settings
       widgets:
         - button:
             id: button_thermostat_background
@@ -655,6 +645,10 @@ lvgl:
     # ================= Settings menu =================
     - id: screen_settings
       bg_color: "0x000000"
+      on_swipe_left:
+        - script.execute: close_settings
+      on_swipe_right:
+        - script.execute: close_settings
       widgets:
         - label:
             id: label_settings_title

@@ -206,23 +206,6 @@ globals:
   # Raw coordinate tracking for swipe detection. LVGL on_swipe_* events were
   # unreliable on the full-screen button, so the board files feed raw touch
   # start/end coordinates into handle_swipe_release.
-  - id: swipe_start_x
-    type: int
-    restore_value: false
-    initial_value: "0"
-  - id: swipe_last_x
-    type: int
-    restore_value: false
-    initial_value: "0"
-  - id: swipe_start_y
-    type: int
-    restore_value: false
-    initial_value: "0"
-  - id: swipe_last_y
-    type: int
-    restore_value: false
-    initial_value: "0"
-
   # UI navigation: 0 Home, 1 Thermostat, 2 groups, 3 group items, 4 editor
   - id: ui_context
     type: int
@@ -656,8 +639,8 @@ binary_sensor:
                                   - lambda: 'id(ui_context) = 1;'
                                   - lvgl.page.show:
                                       id: screen_thermostat
-                                      animation: MOVE_RIGHT
-                                      time: 220ms
+                                      animation: OVER_RIGHT
+                                      time: 140ms
                                 else:
                                   - script.execute: group_enter
                           else:
@@ -1097,32 +1080,15 @@ script:
                 brightness: !lambda 'return id(brightness_pct) / 100.0f;'
             - script.execute: update_status_led
 
-  # Horizontal swipes switch between thermostat and settings. Home is kept out
-  # of this swipe order so it can only be reached by the existing idle/back flow.
-  - id: handle_swipe_release
+  # Target for the native LVGL swipe handlers on the settings page.
+  - id: close_settings
     then:
-      - if:
-          condition:
-            lambda: |-
-              int dx = id(swipe_last_x) - id(swipe_start_x);
-              int dy = id(swipe_last_y) - id(swipe_start_y);
-              return id(ui_context) == 1 && dx < -60 && abs(dx) > abs(dy);
-          then:
-            - script.execute: wake_display
-            - script.execute: open_settings
-      - if:
-          condition:
-            lambda: |-
-              int dx = id(swipe_last_x) - id(swipe_start_x);
-              int dy = id(swipe_last_y) - id(swipe_start_y);
-              return id(ui_context) >= 2 && dx > 60 && abs(dx) > abs(dy);
-          then:
-            - script.execute: wake_display
-            - lambda: 'id(ui_context) = 1;'
-            - lvgl.page.show:
-                id: screen_thermostat
-                animation: MOVE_RIGHT
-                time: 220ms
+      - script.execute: wake_display
+      - lambda: 'id(ui_context) = 1;'
+      - lvgl.page.show:
+          id: screen_thermostat
+          animation: OVER_RIGHT
+          time: 140ms
 
   - id: toggle_adjust_target
     then:
@@ -1506,8 +1472,8 @@ script:
       - script.execute: update_settings_labels
       - lvgl.page.show:
           id: screen_settings
-          animation: MOVE_LEFT
-          time: 220ms
+          animation: OVER_LEFT
+          time: 140ms
 
   - id: group_enter
     then:
