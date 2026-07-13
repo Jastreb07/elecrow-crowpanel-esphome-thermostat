@@ -281,25 +281,114 @@ lvgl:
               - script.execute: wake_display
 
         - arc:
-            id: arc_temperature
+            id: arc_temperature_track
             align: CENTER
-            width: 230
-            height: 230
+            width: 226
+            height: 226
             min_value: 0
             max_value: 100
-            value: 55
-            start_angle: 0
-            end_angle: 360
-            rotation: 270
-            arc_color: 0x2A2A2A
-            arc_width: 7
+            value: 0
+            start_angle: 135
+            end_angle: 45
+            rotation: 0
+            arc_color: 0xDCE3E7
+            arc_width: 16
+            arc_rounded: true
             adjustable: false
             clickable: false
             x: 0
             y: 0
             indicator:
-              arc_color: 0xFF5A2D
-              arc_width: 7
+              arc_opa: TRANSP
+
+        - arc:
+            id: arc_temperature_heat
+            align: CENTER
+            width: 226
+            height: 226
+            min_value: 0
+            max_value: 100
+            value: 18
+            start_angle: 135
+            end_angle: 45
+            rotation: 0
+            arc_opa: TRANSP
+            arc_width: 16
+            arc_rounded: true
+            adjustable: true
+            clickable: false
+            x: 0
+            y: 0
+            indicator:
+              arc_color: 0xF3A0A8
+              arc_width: 16
+              arc_rounded: true
+            knob:
+              bg_color: 0xF7FBFD
+              bg_opa: COVER
+              border_color: 0xEE5263
+              border_width: 2
+              radius: 100%
+              pad_all: 0
+
+        - arc:
+            id: arc_temperature_cool
+            align: CENTER
+            width: 226
+            height: 226
+            min_value: 0
+            max_value: 100
+            value: 88
+            start_angle: 135
+            end_angle: 45
+            rotation: 0
+            mode: REVERSE
+            arc_opa: TRANSP
+            arc_width: 16
+            arc_rounded: true
+            adjustable: true
+            clickable: false
+            x: 0
+            y: 0
+            indicator:
+              arc_color: 0x72C7F2
+              arc_width: 16
+              arc_rounded: true
+            knob:
+              bg_color: 0xF7FBFD
+              bg_opa: COVER
+              border_color: 0x159DDD
+              border_width: 2
+              radius: 100%
+              pad_all: 0
+
+        - arc:
+            id: arc_temperature_current
+            align: CENTER
+            width: 226
+            height: 226
+            min_value: 0
+            max_value: 100
+            value: 60
+            start_angle: 135
+            end_angle: 45
+            rotation: 0
+            arc_opa: TRANSP
+            arc_width: 16
+            arc_rounded: true
+            adjustable: true
+            clickable: false
+            x: 0
+            y: 0
+            indicator:
+              arc_opa: TRANSP
+              arc_width: 16
+            knob:
+              bg_color: 0x808081
+              bg_opa: COVER
+              border_width: 0
+              radius: 100%
+              pad_all: -5
 
         - label:
             id: label_hvac_mode
@@ -307,21 +396,21 @@ lvgl:
             text_font: rajdhani_medium_16
             text_color: 0xEDEDED
             align: TOP_MID
-            y: 35
+            y: 40
         - label:
             id: label_preset
             text: ""
             text_font: rajdhani_medium_16
             text_color: 0x9A9A9A
             align: TOP_MID
-            y: 50
+            y: 55
         - label:
             id: label_conn_thermo
             text: "Connection failed"
             text_font: rajdhani_medium_16
             text_color: 0x9A9A9A
             align: TOP_MID
-            y: 50
+            y: 55
             hidden: true
 
         - label:
@@ -432,7 +521,7 @@ lvgl:
             text_color: 0xE0E0E0
             align: BOTTOM_MID
             x: -30
-            y: -32
+            y: -20
             width: 70
             text_align: RIGHT
         - label:
@@ -442,7 +531,7 @@ lvgl:
             text_color: 0xB0B0B0
             align: BOTTOM_MID
             x: 32
-            y: -45
+            y: -33
             width: 45
             text_align: LEFT
         - label:
@@ -452,7 +541,7 @@ lvgl:
             text_color: 0x8A8A8A
             align: BOTTOM_MID
             x: 32
-            y: -33
+            y: -21
             width: 45
             text_align: LEFT
 

@@ -1125,11 +1125,48 @@ script:
       - lvgl.label.update:
           id: label_home_current_unit
           text: !lambda 'return id(unit_select).current_option() == "Fahrenheit" ? std::string("°F") : std::string("°C");'
+      # Two independent setpoint handles share the same neutral track. Heat
+      # fills from the left; cool uses REVERSE mode and fills from the right.
       - lvgl.arc.update:
-          id: arc_temperature
+          id: arc_temperature_heat
           value: !lambda |-
-            return (int) roundf((id(target_temperature) - ${temperature_min}) /
-                                (${temperature_max} - ${temperature_min}) * 100.0f);
+            float target = !std::isnan(id(target_low_v)) ? id(target_low_v) : id(target_temperature);
+            return clamp((int) roundf((target - ${temperature_min}) /
+                                      (${temperature_max} - ${temperature_min}) * 100.0f), 0, 100);
+      - lvgl.arc.update:
+          id: arc_temperature_cool
+          value: !lambda |-
+            float target = !std::isnan(id(target_high_v)) ? id(target_high_v) : id(target_temperature);
+            return clamp((int) roundf((target - ${temperature_min}) /
+                                      (${temperature_max} - ${temperature_min}) * 100.0f), 0, 100);
+      - lvgl.arc.update:
+          id: arc_temperature_current
+          value: !lambda |-
+            return clamp((int) roundf((id(pending_current_temperature) - ${temperature_min}) /
+                                      (${temperature_max} - ${temperature_min}) * 100.0f), 0, 100);
+      - if:
+          condition:
+            lambda: |-
+              if (!std::isnan(id(target_low_v))) return true;
+              for (const auto &mode : ha_parse_list(id(hvac_modes_raw)))
+                if (mode == "heat" || mode == "heat_cool" || mode == "auto") return true;
+              return id(current_hvac_raw) == "heat";
+          then:
+            - lvgl.widget.show: arc_temperature_heat
+          else:
+            - lvgl.widget.hide: arc_temperature_heat
+      - if:
+          condition:
+            lambda: |-
+              if (!std::isnan(id(target_high_v))) return true;
+              for (const auto &mode : ha_parse_list(id(hvac_modes_raw)))
+                if (mode == "cool" || mode == "heat_cool" || mode == "auto") return true;
+              return id(current_hvac_raw) == "cool" || id(current_hvac_raw) == "dry"
+                     || id(current_hvac_raw) == "fan_only";
+          then:
+            - lvgl.widget.show: arc_temperature_cool
+          else:
+            - lvgl.widget.hide: arc_temperature_cool
       # Humidity, only visible when a value exists.
       - if:
           condition:
@@ -1227,19 +1264,28 @@ script:
             if (id(current_hvac_raw) == "cool" || id(current_hvac_raw) == "dry"
                 || id(current_hvac_raw) == "fan_only") return lv_color_hex(0x6EC6FF);
             return lv_color_hex(0xFF8A3D);
-      # Ring indicator color: Mono -> white, otherwise by mode. In dual-setpoint
-      # mode the color follows the active target.
+      # Keep both setpoint markers visible at once. Switching TRV/AC still only
+      # changes `adjust_target`; it does not hide the other setpoint.
       - lvgl.arc.update:
-          id: arc_temperature
+          id: arc_temperature_heat
           indicator:
-            arc_color: !lambda |-
-              if (id(design_select).current_option() != "Color") return lv_color_hex(0xFFFFFF);
-              if (!std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v)))
-                return id(adjust_target) == 1 ? lv_color_hex(0x6EC6FF) : lv_color_hex(0xFF5A2D);
-              if (id(current_hvac_raw) == "off") return lv_color_hex(0x555555);
-              if (id(current_hvac_raw) == "cool" || id(current_hvac_raw) == "dry"
-                  || id(current_hvac_raw) == "fan_only") return lv_color_hex(0x6EC6FF);
-              return lv_color_hex(0xFF5A2D);
+            arc_opa: !lambda |-
+              return id(current_hvac_raw) == "off" ? LV_OPA_TRANSP : LV_OPA_COVER;
+          knob:
+            bg_opa: !lambda |-
+              return id(current_hvac_raw) == "off" ? LV_OPA_TRANSP : LV_OPA_COVER;
+            border_opa: !lambda |-
+              return id(current_hvac_raw) == "off" ? LV_OPA_TRANSP : LV_OPA_COVER;
+      - lvgl.arc.update:
+          id: arc_temperature_cool
+          indicator:
+            arc_opa: !lambda |-
+              return id(current_hvac_raw) == "off" ? LV_OPA_TRANSP : LV_OPA_COVER;
+          knob:
+            bg_opa: !lambda |-
+              return id(current_hvac_raw) == "off" ? LV_OPA_TRANSP : LV_OPA_COVER;
+            border_opa: !lambda |-
+              return id(current_hvac_raw) == "off" ? LV_OPA_TRANSP : LV_OPA_COVER;
       - if:
           condition:
             lambda: 'return id(icons_enabled).state && id(ha_connected);'

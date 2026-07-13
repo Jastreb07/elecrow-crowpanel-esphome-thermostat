@@ -14,6 +14,7 @@
 # Output: tools\preview.html
 
 import re
+import math
 import sys
 import time
 import threading
@@ -200,13 +201,60 @@ def render_widget(widget_entry, fonts, size):
         )
     if wtype == "arc":
         d = int(w.get("width", 200))
-        aw = int((w.get("indicator") or {}).get("arc_width", w.get("arc_width", 10)))
-        color = color_css((w.get("indicator") or {}).get("arc_color"), "#FF5A2D")
+        indicator = w.get("indicator") or {}
+        aw = int(indicator.get("arc_width", w.get("arc_width", 10)))
+        color = color_css(indicator.get("arc_color"), "#FF5A2D")
         bg = color_css(w.get("arc_color"), "#2A2A2A")
+        bg_opacity = 0 if str(w.get("arc_opa", "COVER")).upper() == "TRANSP" else 1
+        indicator_opacity = 0 if str(indicator.get("arc_opa", "COVER")).upper() == "TRANSP" else 1
+        start = float(w.get("start_angle", 135)) + float(w.get("rotation", 0))
+        end = float(w.get("end_angle", 45)) + float(w.get("rotation", 0))
+        sweep = (end - start) % 360
+        if sweep == 0:
+            sweep = 360
+        minimum = float(w.get("min_value", 0))
+        maximum = float(w.get("max_value", 100))
+        value = min(max(float(w.get("value", minimum)), minimum), maximum)
+        progress = sweep * ((value - minimum) / (maximum - minimum)) if maximum != minimum else 0
+        center = d / 2
+        radius = (d - aw) / 2
+
+        def point(angle):
+            rad = math.radians(angle)
+            return center + radius * math.cos(rad), center + radius * math.sin(rad)
+
+        def arc_path(angle, angle_sweep):
+            x1, y1 = point(angle)
+            x2, y2 = point(angle + angle_sweep)
+            large = 1 if angle_sweep > 180 else 0
+            return f"M {x1:.2f} {y1:.2f} A {radius:.2f} {radius:.2f} 0 {large} 1 {x2:.2f} {y2:.2f}"
+
+        reverse = str(w.get("mode", "NORMAL")).upper() == "REVERSE"
+        indicator_start = start + progress if reverse else start
+        indicator_sweep = sweep - progress if reverse else progress
+        knob = w.get("knob") or {}
+        knob_html = ""
+        if w.get("adjustable", False):
+            kx, ky = point(start + progress)
+            kr = aw / 2 + int(knob.get("pad_all", 0) or 0)
+            kfill = color_css(knob.get("bg_color"), "#F7FBFD")
+            kstroke = color_css(knob.get("border_color"), "#159DDD")
+            kbw = int(knob.get("border_width", 0) or 0)
+            # SVG strokes are centered on their path. Reduce the circle radius
+            # by half the stroke so the knob border grows inward only, matching
+            # LVGL's border geometry instead of enlarging the marker.
+            stroke_radius = max(0.0, kr - kbw / 2)
+            knob_html = (
+                f'<circle cx="{kx:.2f}" cy="{ky:.2f}" r="{stroke_radius:.2f}" '
+                f'fill="{kfill}" stroke="{kstroke}" stroke-width="{kbw}"/>'
+            )
         return (
-            f'<div class="w" title="{title}" style="{pos_css(w, size)};width:{d - aw}px;'
-            f"height:{d - aw}px;border-radius:50%;border:{aw}px solid {bg};"
-            f'border-top-color:{color};border-right-color:{color};{hid_css}"></div>'
+            f'<div class="w" title="{title}" style="{pos_css(w, size)};width:{d}px;height:{d}px;{hid_css}">'
+            f'<svg width="{d}" height="{d}" viewBox="0 0 {d} {d}">'
+            f'<path d="{arc_path(start, sweep)}" fill="none" stroke="{bg}" '
+            f'stroke-width="{aw}" stroke-linecap="round" opacity="{bg_opacity}"/>'
+            f'<path d="{arc_path(indicator_start, indicator_sweep)}" fill="none" stroke="{color}" '
+            f'stroke-width="{aw}" stroke-linecap="round" opacity="{indicator_opacity}"/>{knob_html}</svg></div>'
         )
     if wtype == "obj":
         wd, ht = int(w.get("width", 10)), int(w.get("height", 10))
@@ -260,7 +308,7 @@ def generate():
  @font-face{{font-family:'Material Design Icons';
    src:url('https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/fonts/materialdesignicons-webfont.woff2') format('woff2')}}
  body{{background:#1b1b1b;color:#ddd;font-family:'Rajdhani','Segoe UI',sans-serif;
-      padding:24px}}
+      padding:24px 390px 24px 24px}}
  h1{{font-size:18px;font-weight:600;color:#ccc;margin:0 0 12px}}
  h2{{font-size:16px;font-weight:500;color:#9a9a9a;text-align:center}}
  .board{{margin-bottom:36px}}
@@ -270,16 +318,117 @@ def generate():
  .w{{position:absolute;white-space:nowrap;line-height:1}}
  .w:hover{{outline:1px solid #0f0}}
  #status{{position:fixed;right:12px;top:8px;font-size:13px;color:#6a6}}
- #icon-library{{position:fixed;left:12px;top:8px;font-size:14px;color:#9ac7ff;
-               text-decoration:none}}
- #icon-library:hover{{text-decoration:underline}}
+ #mdi-panel{{position:fixed;z-index:10;top:0;right:0;width:350px;height:100vh;
+      box-sizing:border-box;display:flex;flex-direction:column;background:#242424;
+      border-left:1px solid #444;box-shadow:-8px 0 24px #0006;padding:16px}}
+ #mdi-panel h2{{margin:0 0 10px;text-align:left;color:#eee;font-size:20px}}
+ #mdi-search{{box-sizing:border-box;width:100%;padding:10px 12px;border:1px solid #555;
+      border-radius:7px;background:#181818;color:#fff;font:500 16px 'Rajdhani','Segoe UI',sans-serif;
+      outline:none}}
+ #mdi-search:focus{{border-color:#55BCEB;box-shadow:0 0 0 2px #55BCEB33}}
+ #mdi-count{{min-height:20px;margin:8px 2px;color:#999;font-size:13px}}
+ #mdi-results{{min-height:0;overflow-y:auto;padding-right:4px}}
+ #mdi-grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}}
+ .mdi-card{{min-width:0;min-height:82px;display:flex;flex-direction:column;align-items:center;
+      justify-content:center;gap:6px;padding:8px 5px;border:1px solid #3b3b3b;border-radius:7px;
+      background:#2d2d2d;color:#ddd;font:500 12px 'Rajdhani','Segoe UI',sans-serif;cursor:default}}
+ .mdi-card:hover{{border-color:#55BCEB;background:#333}}
+ .mdi-glyph{{font:32px/1 'Material Design Icons';color:#f3f3f3}}
+ .mdi-name{{width:100%;overflow:hidden;text-align:center;text-overflow:ellipsis;white-space:nowrap}}
+ #mdi-sentinel{{height:2px}}
 </style></head><body>
-<a id="icon-library" href="https://pictogrammers.com/library/mdi/"
-   target="_blank" rel="noopener noreferrer">MDI Icon Library</a>
+<aside id="mdi-panel" aria-label="Material Design Icons">
+  <h2>MDI Icons</h2>
+  <input id="mdi-search" type="search" placeholder="Icons durchsuchen..." autocomplete="off">
+  <div id="mdi-count">Icon-Bibliothek wird geladen...</div>
+  <div id="mdi-results"><div id="mdi-grid"></div><div id="mdi-sentinel"></div></div>
+</aside>
 <div id="status">live \N{BLACK CIRCLE}</div>
 {board_html}
 <script>
 const VERSION = "{version}";
+const MDI_META_URL = "https://cdn.jsdelivr.net/npm/@mdi/svg@7.4.47/meta.json";
+const MDI_BATCH_SIZE = 160;
+let mdiIcons = [];
+let mdiFiltered = [];
+let mdiRendered = 0;
+
+const mdiSearch = document.getElementById("mdi-search");
+const mdiCount = document.getElementById("mdi-count");
+const mdiGrid = document.getElementById("mdi-grid");
+const mdiResults = document.getElementById("mdi-results");
+const mdiSentinel = document.getElementById("mdi-sentinel");
+
+function updateMdiCount() {{
+  const total = mdiFiltered.length;
+  mdiCount.textContent = `${{total.toLocaleString("de-DE")}} Icons` +
+      (mdiRendered < total ? ` · ${{mdiRendered.toLocaleString("de-DE")}} angezeigt` : "");
+}}
+
+function renderMoreMdiIcons() {{
+  if (mdiRendered >= mdiFiltered.length) {{
+    updateMdiCount();
+    return;
+  }}
+  const fragment = document.createDocumentFragment();
+  const next = mdiFiltered.slice(mdiRendered, mdiRendered + MDI_BATCH_SIZE);
+  for (const icon of next) {{
+    const card = document.createElement("div");
+    card.className = "mdi-card";
+    card.title = `mdi:${{icon.name}} · U+${{icon.codepoint}}`;
+
+    const glyph = document.createElement("span");
+    glyph.className = "mdi-glyph";
+    glyph.textContent = String.fromCodePoint(parseInt(icon.codepoint, 16));
+    glyph.setAttribute("aria-hidden", "true");
+
+    const name = document.createElement("span");
+    name.className = "mdi-name";
+    name.textContent = icon.name;
+    card.append(glyph, name);
+    fragment.append(card);
+  }}
+  mdiGrid.append(fragment);
+  mdiRendered += next.length;
+  updateMdiCount();
+}}
+
+function filterMdiIcons() {{
+  const query = mdiSearch.value.trim().toLowerCase();
+  mdiFiltered = query ? mdiIcons.filter(icon => icon.search.includes(query)) : mdiIcons;
+  mdiRendered = 0;
+  mdiGrid.replaceChildren();
+  renderMoreMdiIcons();
+  mdiResults.scrollTop = 0;
+}}
+
+let mdiSearchTimer;
+mdiSearch.addEventListener("input", () => {{
+  clearTimeout(mdiSearchTimer);
+  mdiSearchTimer = setTimeout(filterMdiIcons, 100);
+}});
+
+new IntersectionObserver(entries => {{
+  if (entries.some(entry => entry.isIntersecting)) renderMoreMdiIcons();
+}}, {{root: mdiResults, rootMargin: "300px"}}).observe(mdiSentinel);
+
+async function loadMdiIcons() {{
+  try {{
+    const response = await fetch(MDI_META_URL);
+    if (!response.ok) throw new Error(`HTTP ${{response.status}}`);
+    mdiIcons = (await response.json()).map(icon => ({{
+      ...icon,
+      search: [icon.name, ...(icon.aliases || []), ...(icon.tags || [])].join(" ").toLowerCase()
+    }}));
+    mdiFiltered = mdiIcons;
+    renderMoreMdiIcons();
+    mdiSearch.focus();
+  }} catch (error) {{
+    mdiCount.textContent = "Icon-Bibliothek konnte nicht geladen werden.";
+    mdiCount.style.color = "#e88";
+  }}
+}}
+
 async function poll() {{
   try {{
     const r = await fetch("preview_version.txt", {{cache: "no-store"}});
@@ -291,6 +440,7 @@ async function poll() {{
   }}
   setTimeout(poll, 700);
 }}
+loadMdiIcons();
 poll();
 </script></body></html>""",
         encoding="utf-8",
