@@ -146,6 +146,9 @@ logger:
 
 # API without encryption lets Home Assistant add the device without a key.
 api:
+  # Required by the dynamic climate/light array controllers. Without this,
+  # ESPHome compiles APIServer without subscribe_home_assistant_state().
+  homeassistant_states: true
   on_client_connected:
     - lambda: |-
         // Ignore ESPHome Logs/CLI clients; only a real Home Assistant API
