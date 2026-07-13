@@ -230,12 +230,14 @@ def render_widget(widget_entry, fonts, size):
             return f"M {x1:.2f} {y1:.2f} A {radius:.2f} {radius:.2f} 0 {large} 1 {x2:.2f} {y2:.2f}"
 
         reverse = str(w.get("mode", "NORMAL")).upper() == "REVERSE"
-        indicator_start = start + progress if reverse else start
-        indicator_sweep = sweep - progress if reverse else progress
+        # LVGL maps REVERSE value 0 to the right/end side of the arc.
+        marker_progress = sweep - progress if reverse else progress
+        indicator_start = start + marker_progress if reverse else start
+        indicator_sweep = sweep - marker_progress if reverse else marker_progress
         knob = w.get("knob") or {}
         knob_html = ""
         if w.get("adjustable", False):
-            kx, ky = point(start + progress)
+            kx, ky = point(start + marker_progress)
             kr = aw / 2 + int(knob.get("pad_all", 0) or 0)
             kfill = color_css(knob.get("bg_color"), "#F7FBFD")
             kstroke = color_css(knob.get("border_color"), "#159DDD")
@@ -259,9 +261,11 @@ def render_widget(widget_entry, fonts, size):
     if wtype == "obj":
         wd, ht = int(w.get("width", 10)), int(w.get("height", 10))
         bg = color_css(w.get("bg_color"), "#3A3A3A")
+        radius = w.get("radius", 0)
+        radius_css = str(radius) if str(radius).endswith("%") else f"{int(radius)}px"
         return (
             f'<div class="w" title="{title}" style="{pos_css(w, size)};width:{wd}px;'
-            f'height:{ht}px;background:{bg};{hid_css}"></div>'
+            f'height:{ht}px;background:{bg};border-radius:{radius_css};{hid_css}"></div>'
         )
     return ""  # Skip transparent buttons and unsupported widgets.
 

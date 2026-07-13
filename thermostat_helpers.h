@@ -44,6 +44,21 @@ static const char *const MENU_ICONS[] = {
 };
 constexpr int SETTINGS_MENU_COUNT = 19;
 
+// Visible settings order. Values are stable setting IDs used by the shared
+// submenu logic below; changing this list only changes the menu presentation.
+static constexpr int SETTINGS_MENU_ORDER[SETTINGS_MENU_COUNT] = {
+    0,  1,  7, 12, 13, 11,  // Thermostat and knob operation
+    5,  6,  2,  3,  4,      // Appearance and general display
+    8,  9, 10,              // Screen timeout and dimming
+   17, 18,                  // Status LED
+   14, 15, 16               // Network, information and maintenance
+};
+
+inline int settings_menu_type_at(int position) {
+  position = ((position % SETTINGS_MENU_COUNT) + SETTINGS_MENU_COUNT) % SETTINGS_MENU_COUNT;
+  return SETTINGS_MENU_ORDER[position];
+}
+
 // Icon per better_thermostat preset.
 inline const char *ha_preset_icon(const std::string &p) {
   if (p == "eco") return "󰌪";       // mdi-leaf

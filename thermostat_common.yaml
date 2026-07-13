@@ -51,6 +51,8 @@ substitutions:
   temperature_max: "30.0"
   setpoint_min_gap: "0.5"       # Minimum TRV(low) <-> AC(high) gap in Celsius
   debounce_ms: "500ms"          # Quiet time before climate.set_temperature
+  settings_row_gap: "82"        # Overridden by the 240x240 board
+  settings_extra_rows: "false"  # 480x480 overrides this to show five rows
 
 esphome:
   name: ${device_name}
@@ -110,6 +112,10 @@ psram:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
+  on_connect:
+    - script.execute: refresh_connection
+  on_disconnect:
+    - script.execute: refresh_connection
   ap:
     ssid: "${friendly_name} Fallback"
     password: !secret wifi_ap_password
@@ -122,11 +128,19 @@ logger:
 # API without encryption lets Home Assistant add the device without a key.
 api:
   on_client_connected:
-    - lambda: 'id(ha_connected) = true;'
+    - lambda: |-
+        // Ignore ESPHome Logs/CLI clients; only a real Home Assistant API
+        // session may mark HA as reachable.
+        if (client_info.find("Home Assistant") == std::string::npos) return;
+        id(ha_connected) = true;
+        id(ha_connected_since_ms) = millis();
     - script.execute: refresh_connection
     - script.execute: sync_ha_states
   on_client_disconnected:
-    - lambda: 'id(ha_connected) = false;'
+    - lambda: |-
+        if (client_info.find("Home Assistant") == std::string::npos) return;
+        id(ha_connected) = false;
+        id(ha_connected_since_ms) = 0;
     - script.execute: refresh_connection
 
 ota:
@@ -135,6 +149,17 @@ ota:
 
 web_server:
   port: 80
+
+# Refresh staged connection diagnostics while WiFi, Home Assistant, or the
+# configured climate entity is still becoming available.
+interval:
+  - interval: 2s
+    then:
+      - if:
+          condition:
+            lambda: 'return id(app_booted);'
+          then:
+            - script.execute: refresh_connection
 
 # ------------------------------------------------------------------
 # Global state
@@ -155,6 +180,20 @@ globals:
     type: bool
     restore_value: false
     initial_value: "false"
+
+  - id: ha_connected_since_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+
+  - id: connection_ready
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+  - id: connection_message
+    type: std::string
+    restore_value: false
 
   # Becomes true only at the end of the on_boot(-100) sequence. This prevents
   # select components from restoring values and triggering refresh_status ->
@@ -183,6 +222,11 @@ globals:
     initial_value: "0"
 
   - id: menu_index
+    type: int
+    restore_value: false
+    initial_value: "0"
+
+  - id: settings_scroll_dir
     type: int
     restore_value: false
     initial_value: "0"
@@ -294,10 +338,16 @@ globals:
   - id: set_prev
     type: std::string
     restore_value: false
+  - id: set_prev2
+    type: std::string
+    restore_value: false
   - id: set_cur
     type: std::string
     restore_value: false
   - id: set_next
+    type: std::string
+    restore_value: false
+  - id: set_next2
     type: std::string
     restore_value: false
   - id: set_value
@@ -690,6 +740,12 @@ sensor:
                       new_temp = id(target_low_v) + ${setpoint_min_gap};
                   }
                   id(target_temperature) = new_temp;
+                  // Update the selected dual-setpoint cache immediately so
+                  // its on-screen arc and knob follow every encoder detent.
+                  if (!std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v))) {
+                    if (id(adjust_target) == 1) id(target_high_v) = new_temp;
+                    else id(target_low_v) = new_temp;
+                  }
                   id(pending_temperature_change) = true;
               - script.execute: refresh_temps
               - script.execute: send_temperature_update
@@ -700,7 +756,8 @@ sensor:
               - lambda: |-
                   int d = id(encoder_delta) > 0 ? 1 : -1;
                   id(menu_index) = (id(menu_index) + d + SETTINGS_MENU_COUNT) % SETTINGS_MENU_COUNT;
-              - script.execute: update_settings_labels
+                  id(settings_scroll_dir) = d;
+              - script.execute: animate_settings_scroll
         - if:
             condition:
               lambda: 'return id(encoder_delta) != 0 && id(ui_context) == 3;'
@@ -790,7 +847,9 @@ sensor:
               lambda: 'return !id(pending_temperature_change) && !std::isnan(x) && id(adjust_target) == 0;'
             then:
               - lambda: 'id(target_temperature) = x;'
-              - script.execute: refresh_temps
+        # The inactive setpoint must redraw too, otherwise only one knob is
+        # visible until TRV/AC is toggled.
+        - script.execute: refresh_temps
   - platform: homeassistant
     id: target_high_ha
     entity_id: ${climate_default_entity}
@@ -803,7 +862,7 @@ sensor:
               lambda: 'return !id(pending_temperature_change) && !std::isnan(x) && id(adjust_target) == 1;'
             then:
               - lambda: 'id(target_temperature) = x;'
-              - script.execute: refresh_temps
+        - script.execute: refresh_temps
 
   # ---- Humidity: better_thermostat "humidity" or standard
   # "current_humidity". ----
@@ -847,7 +906,9 @@ text_sensor:
     on_value:
       then:
         - lambda: 'id(current_hvac_raw) = x;'
+        - script.execute: refresh_temps
         - script.execute: refresh_status
+        - script.execute: refresh_connection
 
   # Current action phase: heating, cooling, idle, or off.
   - platform: homeassistant
@@ -866,6 +927,7 @@ text_sensor:
     on_value:
       then:
         - lambda: 'id(hvac_modes_raw) = x;'
+        - script.execute: refresh_temps
 
   - platform: homeassistant
     id: preset_modes_ha
@@ -926,6 +988,7 @@ script:
           }
       - script.execute: refresh_temps
       - script.execute: refresh_status
+      - script.execute: refresh_connection
 
   - id: send_temperature_update
     mode: restart
@@ -1127,30 +1190,54 @@ script:
           text: !lambda 'return id(unit_select).current_option() == "Fahrenheit" ? std::string("°F") : std::string("°C");'
       # Two independent setpoint handles share the same neutral track. Heat
       # fills from the left; cool uses REVERSE mode and fills from the right.
-      - lvgl.arc.update:
-          id: arc_temperature_heat
-          value: !lambda |-
-            float target = !std::isnan(id(target_low_v)) ? id(target_low_v) : id(target_temperature);
-            return clamp((int) roundf((target - ${temperature_min}) /
-                                      (${temperature_max} - ${temperature_min}) * 100.0f), 0, 100);
-      - lvgl.arc.update:
-          id: arc_temperature_cool
-          value: !lambda |-
-            float target = !std::isnan(id(target_high_v)) ? id(target_high_v) : id(target_temperature);
-            return clamp((int) roundf((target - ${temperature_min}) /
-                                      (${temperature_max} - ${temperature_min}) * 100.0f), 0, 100);
-      - lvgl.arc.update:
-          id: arc_temperature_current
-          value: !lambda |-
-            return clamp((int) roundf((id(pending_current_temperature) - ${temperature_min}) /
-                                      (${temperature_max} - ${temperature_min}) * 100.0f), 0, 100);
+      # Animate the underlying arc value so its indicator and knob move as one.
+      # Restarting from the currently rendered value also keeps quick encoder
+      # turns fluid instead of snapping between consecutive temperature steps.
+      - lambda: |-
+          lv_anim_exec_xcb_t set_arc_value = [](void *var, int32_t value) {
+            lv_arc_set_value(static_cast<lv_obj_t *>(var), value);
+          };
+          auto animate_arc_to = [set_arc_value](lv_obj_t *arc, int32_t target) {
+            target = clamp(target, 0, 100);
+            int32_t current = lv_arc_get_value(arc);
+            lv_anim_delete(arc, set_arc_value);
+            if (current == target) return;
+
+            lv_anim_t anim;
+            lv_anim_init(&anim);
+            lv_anim_set_var(&anim, arc);
+            lv_anim_set_values(&anim, current, target);
+            lv_anim_set_time(&anim, 180);
+            lv_anim_set_path_cb(&anim, lv_anim_path_ease_out);
+            lv_anim_set_exec_cb(&anim, set_arc_value);
+            lv_anim_start(&anim);
+          };
+
+          auto normalize_temperature = [](float temperature) {
+            return clamp((int32_t) roundf((temperature - ${temperature_min}) /
+                                          (${temperature_max} - ${temperature_min}) * 100.0f),
+                         (int32_t) 0, (int32_t) 100);
+          };
+
+          float heat_target = !std::isnan(id(target_low_v))
+                                  ? id(target_low_v) : id(target_temperature);
+          float cool_target = !std::isnan(id(target_high_v))
+                                  ? id(target_high_v) : id(target_temperature);
+          int32_t cool_normalized = normalize_temperature(cool_target);
+
+          animate_arc_to(id(arc_temperature_heat), normalize_temperature(heat_target));
+          // REVERSE places internal value 0 at the right-hand end. Inverting
+          // the visual value keeps minimum temperature on the left like HA.
+          animate_arc_to(id(arc_temperature_cool), 100 - cool_normalized);
+          animate_arc_to(id(arc_temperature_current),
+                         normalize_temperature(id(pending_current_temperature)));
       - if:
           condition:
             lambda: |-
               if (!std::isnan(id(target_low_v))) return true;
               for (const auto &mode : ha_parse_list(id(hvac_modes_raw)))
                 if (mode == "heat" || mode == "heat_cool" || mode == "auto") return true;
-              return id(current_hvac_raw) == "heat";
+              return id(current_hvac_raw) == "heat" || id(current_hvac_raw) == "heat_cool";
           then:
             - lvgl.widget.show: arc_temperature_heat
           else:
@@ -1161,7 +1248,8 @@ script:
               if (!std::isnan(id(target_high_v))) return true;
               for (const auto &mode : ha_parse_list(id(hvac_modes_raw)))
                 if (mode == "cool" || mode == "heat_cool" || mode == "auto") return true;
-              return id(current_hvac_raw) == "cool" || id(current_hvac_raw) == "dry"
+              return id(current_hvac_raw) == "cool" || id(current_hvac_raw) == "heat_cool"
+                     || id(current_hvac_raw) == "dry"
                      || id(current_hvac_raw) == "fan_only";
           then:
             - lvgl.widget.show: arc_temperature_cool
@@ -1297,13 +1385,47 @@ script:
             - lvgl.widget.hide: icon_mode_home
       - script.execute: update_status_led
 
-  # Connection state: hide HVAC/preset/icon on disconnect and show the
-  # connection error labels.
+  # Staged connection diagnostics: WiFi -> HA API -> climate entity.
   - id: refresh_connection
+    mode: restart
     then:
       - if:
           condition:
-            lambda: 'return id(ha_connected);'
+            wifi.connected:
+          then:
+            - lambda: |-
+                id(connection_ready) = false;
+                if (!id(ha_connected)) {
+                  id(connection_message) = millis() < 60000
+                      ? "HA connecting..." : "HA unreachable";
+                  return;
+                }
+                bool valid_climate = id(hvac_state_ha).has_state()
+                    && !id(hvac_state_ha).state.empty()
+                    && id(hvac_state_ha).state != "unknown"
+                    && id(hvac_state_ha).state != "unavailable";
+                if (valid_climate) {
+                  id(connection_ready) = true;
+                  id(connection_message).clear();
+                  return;
+                }
+                uint32_t connected_for = millis() - id(ha_connected_since_ms);
+                id(connection_message) = connected_for < 10000
+                    ? "Climate entity loading..." : "Climate entity not found";
+          else:
+            - lambda: |-
+                id(connection_ready) = false;
+                id(connection_message) = millis() < 30000
+                    ? "WiFi connecting..." : "WiFi error";
+      - lvgl.label.update:
+          id: label_conn_thermo
+          text: !lambda 'return id(connection_message);'
+      - lvgl.label.update:
+          id: label_conn_home
+          text: !lambda 'return id(connection_message);'
+      - if:
+          condition:
+            lambda: 'return id(connection_ready);'
           then:
             - lvgl.widget.hide: label_conn_thermo
             - lvgl.widget.hide: label_conn_home
@@ -1313,12 +1435,6 @@ script:
             - lvgl.widget.show: label_home_preset
             - script.execute: refresh_status
           else:
-            - lvgl.label.update:
-                id: label_conn_thermo
-                text: "Connection failed"
-            - lvgl.label.update:
-                id: label_conn_home
-                text: "Connection failed"
             - lvgl.widget.show: label_conn_thermo
             - lvgl.widget.show: label_conn_home
             - lvgl.widget.hide: label_hvac_mode
@@ -1339,9 +1455,9 @@ script:
   - id: menu_enter
     then:
       - lambda: |-
-          id(submenu_type) = id(menu_index);
+          id(submenu_type) = settings_menu_type_at(id(menu_index));
           id(submenu_index) = 0;
-          switch (id(menu_index)) {
+          switch (id(submenu_type)) {
             case 0: {
               auto vec = ha_filter_modes(id(hvac_modes_raw), id(knob_hvac_modes).current_option() != "All");
               id(submenu_count) = (int) vec.size();
@@ -1512,6 +1628,40 @@ script:
           then: [{number.set: {id: led_brightness_num, value: !lambda 'return id(num_preview);'}}]
       - script.execute: update_settings_labels
 
+  # Slide the newly selected settings row into the fixed center selection.
+  # Labels and icons have no background objects, matching the round list UI.
+  - id: animate_settings_scroll
+    mode: restart
+    then:
+      - script.execute: update_settings_labels
+      - lambda: |-
+          int32_t from = id(settings_scroll_dir) * ${settings_row_gap};
+          auto animate_translate_y = [from](lv_obj_t *obj) {
+            lv_anim_del(obj, nullptr);
+            lv_obj_set_style_translate_y(obj, from, LV_PART_MAIN);
+            lv_anim_t anim;
+            lv_anim_init(&anim);
+            lv_anim_set_var(&anim, obj);
+            lv_anim_set_values(&anim, from, 0);
+            lv_anim_set_time(&anim, 180);
+            lv_anim_set_path_cb(&anim, lv_anim_path_ease_out);
+            lv_anim_set_exec_cb(&anim, [](void *var, int32_t value) {
+              lv_obj_set_style_translate_y(static_cast<lv_obj_t *>(var), value, LV_PART_MAIN);
+            });
+            lv_anim_start(&anim);
+          };
+          animate_translate_y(id(label_menu_icon_prev));
+          animate_translate_y(id(label_menu_icon));
+          animate_translate_y(id(label_menu_icon_next));
+          animate_translate_y(id(label_menu_icon_prev2));
+          animate_translate_y(id(label_menu_icon_next2));
+          animate_translate_y(id(label_menu_prev));
+          animate_translate_y(id(label_menu_current));
+          animate_translate_y(id(label_menu_next));
+          animate_translate_y(id(label_menu_prev2));
+          animate_translate_y(id(label_menu_next2));
+          id(settings_scroll_dir) = 0;
+
   - id: update_settings_labels
     then:
       - lambda: |-
@@ -1520,12 +1670,15 @@ script:
           char buf[64];
           if (id(ui_context) == 2) {
             int i = id(menu_index);
+            int t = settings_menu_type_at(i);
             id(set_title) = "Settings";
-            id(set_prev) = settings_menu_name((i + N - 1) % N, de);
-            id(set_cur) = settings_menu_name(i, de);
-            id(set_next) = settings_menu_name((i + 1) % N, de);
+            id(set_prev2) = ${settings_extra_rows} ? settings_menu_name(settings_menu_type_at(i - 2), de) : "";
+            id(set_prev) = settings_menu_name(settings_menu_type_at(i - 1), de);
+            id(set_cur) = settings_menu_name(t, de);
+            id(set_next) = settings_menu_name(settings_menu_type_at(i + 1), de);
+            id(set_next2) = ${settings_extra_rows} ? settings_menu_name(settings_menu_type_at(i + 2), de) : "";
             std::string val;
-            switch (i) {
+            switch (t) {
               case 0: val = ha_hvac_mode_label(id(current_hvac_raw), de); break;
               case 1: val = ha_preset_label(id(current_preset_raw), de); break;
               case 2: snprintf(buf, sizeof(buf), "%d%%", id(brightness_pct)); val = buf; break;
@@ -1550,8 +1703,10 @@ script:
           } else {
             int t = id(submenu_type);
             id(set_title) = settings_menu_name(t, de);
+            id(set_prev2) = "";
             id(set_prev) = "";
             id(set_next) = "";
+            id(set_next2) = "";
             std::string cur, val;
             std::string h_apply = "Press = apply";
             std::string h_save = "Press = save";
@@ -1614,17 +1769,69 @@ script:
           id: label_settings_title
           text: !lambda 'return id(set_title);'
       - lvgl.label.update:
+          id: label_menu_icon_prev2
+          text: !lambda |-
+            int i = id(ui_context) == 2
+                ? settings_menu_type_at(id(menu_index) - 2)
+                : id(submenu_type);
+            return std::string(MENU_ICONS[i]);
+      - lvgl.label.update:
+          id: label_menu_icon_prev
+          text: !lambda |-
+            int i = id(ui_context) == 2
+                ? settings_menu_type_at(id(menu_index) - 1)
+                : id(submenu_type);
+            return std::string(MENU_ICONS[i]);
+      - lvgl.label.update:
           id: label_menu_icon
           text: !lambda |-
-            int i = id(ui_context) == 2 ? id(menu_index) : id(submenu_type);
+            int i = id(ui_context) == 2 ? settings_menu_type_at(id(menu_index)) : id(submenu_type);
+            return std::string(MENU_ICONS[i]);
+      - lvgl.label.update:
+          id: label_menu_icon_next
+          text: !lambda |-
+            int i = id(ui_context) == 2
+                ? settings_menu_type_at(id(menu_index) + 1)
+                : id(submenu_type);
+            return std::string(MENU_ICONS[i]);
+      - lvgl.label.update:
+          id: label_menu_icon_next2
+          text: !lambda |-
+            int i = id(ui_context) == 2
+                ? settings_menu_type_at(id(menu_index) + 2)
+                : id(submenu_type);
             return std::string(MENU_ICONS[i]);
       - if:
           condition: {lambda: 'return id(icons_enabled).state;'}
-          then: [lvgl.widget.show: label_menu_icon]
-          else: [lvgl.widget.hide: label_menu_icon]
+          then:
+            - lvgl.widget.show: label_menu_icon
+            - if:
+                condition: {lambda: 'return !id(set_prev2).empty();'}
+                then: [lvgl.widget.show: label_menu_icon_prev2]
+                else: [lvgl.widget.hide: label_menu_icon_prev2]
+            - if:
+                condition: {lambda: 'return !id(set_prev).empty();'}
+                then: [lvgl.widget.show: label_menu_icon_prev]
+                else: [lvgl.widget.hide: label_menu_icon_prev]
+            - if:
+                condition: {lambda: 'return !id(set_next).empty();'}
+                then: [lvgl.widget.show: label_menu_icon_next]
+                else: [lvgl.widget.hide: label_menu_icon_next]
+            - if:
+                condition: {lambda: 'return !id(set_next2).empty();'}
+                then: [lvgl.widget.show: label_menu_icon_next2]
+                else: [lvgl.widget.hide: label_menu_icon_next2]
+          else:
+            - lvgl.widget.hide: label_menu_icon_prev2
+            - lvgl.widget.hide: label_menu_icon_prev
+            - lvgl.widget.hide: label_menu_icon
+            - lvgl.widget.hide: label_menu_icon_next
+            - lvgl.widget.hide: label_menu_icon_next2
+      - lvgl.label.update: {id: label_menu_prev2, text: !lambda 'return id(set_prev2);'}
       - lvgl.label.update: {id: label_menu_prev, text: !lambda 'return id(set_prev);'}
       - lvgl.label.update: {id: label_menu_current, text: !lambda 'return id(set_cur);'}
       - lvgl.label.update: {id: label_menu_next, text: !lambda 'return id(set_next);'}
+      - lvgl.label.update: {id: label_menu_next2, text: !lambda 'return id(set_next2);'}
       - lvgl.label.update: {id: label_menu_value, text: !lambda 'return id(set_value);'}
 
   - id: update_clock_labels

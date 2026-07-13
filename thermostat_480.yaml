@@ -14,6 +14,8 @@ packages:
 # unique on the network.
 substitutions:
   device_name: thermostat480
+  settings_row_gap: "82"
+  settings_extra_rows: "true"
 
 esphome:
   on_boot:
@@ -190,6 +192,8 @@ lvgl:
     - my_touchscreen
   bg_color: "0x000000"
   default_font: rajdhani_medium_24
+  scrollable: false
+  scrollbar_mode: "OFF"
 
   on_idle:
     - timeout: !lambda 'return (uint32_t)(id(dim_delay_num).state * 1000.0f);'
@@ -222,8 +226,6 @@ lvgl:
             shadow_width: 0
             on_click:
               - script.execute: wake_display
-              - lambda: 'id(ui_context) = 1;'
-              - lvgl.page.show: screen_thermostat
 
         - label:
             id: label_home_hvac_mode
@@ -241,11 +243,14 @@ lvgl:
             y: 80
         - label:
             id: label_conn_home
-            text: "Connection failed"
+            text: "WiFi connecting..."
             text_font: rajdhani_medium_24
             text_color: 0x9A9A9A
             align: CENTER
             y: -110
+            width: 420
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
             hidden: true
 
         - label:
@@ -351,14 +356,12 @@ lvgl:
             shadow_width: 0
             on_click:
               - script.execute: wake_display
-              - lambda: 'id(ui_context) = 0;'
-              - lvgl.page.show: screen_home
 
         - arc:
             id: arc_temperature_track
             align: CENTER
-            width: 450
-            height: 450
+            width: 472
+            height: 472
             min_value: 0
             max_value: 100
             value: 0
@@ -371,28 +374,29 @@ lvgl:
             adjustable: false
             clickable: false
             x: 0
-            y: 0
+            y: 4
             indicator:
               arc_opa: TRANSP
 
         - arc:
             id: arc_temperature_heat
             align: CENTER
-            width: 450
-            height: 450
+            width: 472
+            height: 472
             min_value: 0
             max_value: 100
             value: 18
             start_angle: 135
             end_angle: 45
             rotation: 0
+            arc_color: 0xDCE3E7
             arc_opa: TRANSP
             arc_width: 30
             arc_rounded: true
             adjustable: true
             clickable: false
             x: 0
-            y: 0
+            y: 4
             indicator:
               arc_color: 0xF3A0A8
               arc_width: 30
@@ -408,22 +412,23 @@ lvgl:
         - arc:
             id: arc_temperature_cool
             align: CENTER
-            width: 450
-            height: 450
+            width: 472
+            height: 472
             min_value: 0
             max_value: 100
-            value: 88
+            value: 12
             start_angle: 135
             end_angle: 45
             rotation: 0
             mode: REVERSE
+            arc_color: 0xDCE3E7
             arc_opa: TRANSP
             arc_width: 30
             arc_rounded: true
             adjustable: true
             clickable: false
             x: 0
-            y: 0
+            y: 4
             indicator:
               arc_color: 0x72C7F2
               arc_width: 30
@@ -439,22 +444,24 @@ lvgl:
         - arc:
             id: arc_temperature_current
             align: CENTER
-            width: 450
-            height: 450
+            width: 472
+            height: 472
             min_value: 0
             max_value: 100
             value: 60
             start_angle: 135
             end_angle: 45
             rotation: 0
+            arc_color: 0xDCE3E7
             arc_opa: TRANSP
             arc_width: 30
             arc_rounded: true
             adjustable: true
             clickable: false
             x: 0
-            y: 0
+            y: 4
             indicator:
+              arc_color: 0x808081
               arc_opa: TRANSP
               arc_width: 30
             knob:
@@ -480,11 +487,14 @@ lvgl:
             y: 110
         - label:
             id: label_conn_thermo
-            text: "Connection failed"
+            text: "WiFi connecting..."
             text_font: rajdhani_medium_24
             text_color: 0x9A9A9A
             align: TOP_MID
             y: 110
+            width: 420
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
             hidden: true
 
         - label:
@@ -640,27 +650,92 @@ lvgl:
             id: label_settings_title
             text: "Settings"
             text_font: rajdhani_medium_24
-            text_color: 0x9A9A9A
+            text_color: 0x686868
             align: TOP_MID
-            y: 48
+            y: 30
+
+        - label:
+            id: label_menu_icon_prev2
+            text: ""
+            text_font: menu_icons_24
+            text_color: 0x333333
+            align: CENTER
+            x: -105
+            y: -134
+            width: 44
+            text_align: CENTER
+        - label:
+            id: label_menu_icon_prev
+            text: ""
+            text_font: icons_32
+            text_color: 0x555555
+            align: CENTER
+            x: -145
+            y: -74
+            width: 44
+            text_align: CENTER
         - label:
             id: label_menu_icon
             text: ""
-            text_font: icons_32
+            text_font: icons_48
             text_color: 0xFFFFFF
-            align: TOP_MID
-            y: 92
-            width: 40
-            height: 40
-            long_mode: CLIP
+            align: CENTER
+            x: -185
+            width: 44
+            text_align: CENTER
+        - label:
+            id: label_menu_icon_next
+            text: ""
+            text_font: icons_32
+            text_color: 0x555555
+            align: CENTER
+            x: -145
+            y: 74
+            width: 44
+            text_align: CENTER
+        - label:
+            id: label_menu_icon_next2
+            text: ""
+            text_font: menu_icons_24
+            text_color: 0x333333
+            align: CENTER
+            x: -105
+            y: 134
+            width: 44
+            text_align: CENTER
+
+        - label:
+            id: label_menu_prev2
+            text: ""
+            text_font: rajdhani_medium_22
+            text_color: 0x333333
+            align: CENTER
+            x: 95
+            y: -134
+            width: 290
+            text_align: LEFT
+            long_mode: SCROLL_CIRCULAR
         - label:
             id: label_menu_prev
             text: ""
             text_font: rajdhani_medium_24
             text_color: 0x555555
             align: CENTER
-            y: -80
-            width: 400
+            x: 55
+            y: -74
+            width: 330
+            text_align: LEFT
+            long_mode: SCROLL_CIRCULAR
+        - label:
+            id: label_menu_next2
+            text: ""
+            text_font: rajdhani_medium_22
+            text_color: 0x333333
+            align: CENTER
+            x: 95
+            y: 134
+            width: 290
+            text_align: LEFT
             long_mode: SCROLL_CIRCULAR
         - label:
             id: label_menu_current
@@ -668,7 +743,9 @@ lvgl:
             text_font: rajdhani_semibold_40
             text_color: 0xFFFFFF
             align: CENTER
-            width: 420
+            x: 15
+            width: 330
+            text_align: LEFT
             long_mode: SCROLL_CIRCULAR
         - label:
             id: label_menu_next
@@ -676,8 +753,10 @@ lvgl:
             text_font: rajdhani_medium_24
             text_color: 0x555555
             align: CENTER
-            y: 80
-            width: 400
+            x: 55
+            y: 74
+            width: 330
+            text_align: LEFT
             long_mode: SCROLL_CIRCULAR
         - label:
             id: label_menu_value
@@ -685,8 +764,9 @@ lvgl:
             text_font: rajdhani_medium_24
             text_color: 0x9A9A9A
             align: BOTTOM_MID
-            y: -68
-            width: 440
+            y: -42
+            width: 400
+            text_align: CENTER
             long_mode: SCROLL_CIRCULAR
 
 # ------------------------------------------------------------------
@@ -774,3 +854,13 @@ font:
         "󰔡", "󰑧", "󰖩", "󰋽",
         "󰜉", "󰌵", "󰃟",
       ]
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
+    id: menu_icons_24
+    size: 24
+    bpp: 4
+    glyphs: *menu_icons_all
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
+    id: icons_48
+    size: 48
+    bpp: 4
+    glyphs: *menu_icons_all
