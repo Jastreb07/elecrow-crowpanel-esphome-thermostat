@@ -214,14 +214,27 @@ globals:
     type: int
     restore_value: false
     initial_value: "0"
+  - id: swipe_start_y
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: swipe_last_y
+    type: int
+    restore_value: false
+    initial_value: "0"
 
-  # UI navigation: 0 Home, 1 Thermostat, 2 menu, 3 submenu
+  # UI navigation: 0 Home, 1 Thermostat, 2 groups, 3 group items, 4 editor
   - id: ui_context
     type: int
     restore_value: false
     initial_value: "0"
 
   - id: menu_index
+    type: int
+    restore_value: false
+    initial_value: "0"
+
+  - id: group_item_index
     type: int
     restore_value: false
     initial_value: "0"
@@ -464,14 +477,6 @@ select:
         - script.execute: refresh_temps
 
   - platform: template
-    name: "3s Button Opens"
-    id: longpress3_select
-    optimistic: true
-    restore_value: true
-    options: ["HVAC", "Preset"]
-    initial_option: "HVAC"
-
-  - platform: template
     name: "Knob HVAC Modes"
     id: knob_hvac_modes
     optimistic: true
@@ -553,7 +558,7 @@ number:
         # Update the settings screen live when it is open.
         - if:
             condition:
-              lambda: 'return id(ui_context) == 2 || id(ui_context) == 3;'
+              lambda: 'return id(ui_context) == 2 || id(ui_context) == 3 || id(ui_context) == 4;'
             then:
               - script.execute: update_settings_labels
 
@@ -576,7 +581,7 @@ number:
         - script.execute: update_status_led
         - if:
             condition:
-              lambda: 'return id(ui_context) == 2 || id(ui_context) == 3;'
+              lambda: 'return id(ui_context) == 2 || id(ui_context) == 3 || id(ui_context) == 4;'
             then:
               - script.execute: update_settings_labels
 
@@ -605,8 +610,8 @@ binary_sensor:
     on_press:
       - script.execute: wake_display
     on_multi_click:
-      # Double click: from home/settings, jump to thermostat. On the thermostat
-      # screen, switch between TRV/heat and AC/cool target in dual-setpoint mode.
+      # Double click keeps the quick jump to the thermostat. A press while the
+      # thermostat is already open also selects the other TRV/AC target.
       - timing:
           - ON for at most 350ms
           - OFF for 40ms to 350ms
@@ -621,7 +626,8 @@ binary_sensor:
                 - lvgl.page.show: screen_thermostat
               else:
                 - script.execute: toggle_adjust_target
-      # Single click
+      # Single click: enter/select inside settings. On the thermostat it now
+      # switches directly between the TRV and AC/cool target.
       - timing:
           - ON for at most 350ms
           - OFF for at least 400ms
@@ -637,15 +643,39 @@ binary_sensor:
                     condition:
                       lambda: 'return id(ui_context) == 1;'
                     then:
-                      - script.execute: open_settings
+                      - script.execute: toggle_adjust_target
                     else:
                       - if:
                           condition:
                             lambda: 'return id(ui_context) == 2;'
                           then:
-                            - script.execute: menu_enter
+                            - if:
+                                condition:
+                                  lambda: 'return id(menu_index) == SETTINGS_GROUP_COUNT;'
+                                then:
+                                  - lambda: 'id(ui_context) = 1;'
+                                  - lvgl.page.show:
+                                      id: screen_thermostat
+                                      animation: MOVE_RIGHT
+                                      time: 220ms
+                                else:
+                                  - script.execute: group_enter
                           else:
-                            - script.execute: submenu_apply
+                            - if:
+                                condition:
+                                  lambda: 'return id(ui_context) == 3;'
+                                then:
+                                  - if:
+                                      condition:
+                                        lambda: |-
+                                          return id(group_item_index) == settings_group_count(id(menu_index));
+                                      then:
+                                        - lambda: 'id(ui_context) = 2;'
+                                        - script.execute: update_settings_labels
+                                      else:
+                                        - script.execute: menu_enter
+                                else:
+                                  - script.execute: submenu_apply
       # 1 s: go back one level
       - timing:
           - ON for 800ms to 2500ms
@@ -653,30 +683,27 @@ binary_sensor:
         then:
           - if:
               condition:
-                lambda: 'return id(ui_context) == 3;'
+                lambda: 'return id(ui_context) == 4;'
               then:
-                - lambda: 'id(ui_context) = 2;'
+                - lambda: 'id(ui_context) = 3;'
                 - script.execute: update_settings_labels
               else:
                 - if:
                     condition:
-                      lambda: 'return id(ui_context) == 2;'
+                      lambda: 'return id(ui_context) == 3;'
                     then:
-                      - lambda: 'id(ui_context) = 1;'
-                      - lvgl.page.show: screen_thermostat
+                      - lambda: 'id(ui_context) = 2;'
+                      - script.execute: update_settings_labels
                     else:
-                      - lambda: 'id(ui_context) = 0;'
-                      - lvgl.page.show: screen_home
-      # 3 s: open the HVAC or preset submenu directly
-      - timing:
-          - ON for at least 2800ms
-          - OFF for at least 50ms
-        then:
-          - lambda: |-
-              id(menu_index) = id(longpress3_select).current_option() == "Preset" ? 1 : 0;
-          - lvgl.page.show: screen_settings
-          - script.execute: menu_enter
-
+                      - if:
+                          condition:
+                            lambda: 'return id(ui_context) == 2;'
+                          then:
+                            - lambda: 'id(ui_context) = 1;'
+                            - lvgl.page.show: screen_thermostat
+                          else:
+                            - lambda: 'id(ui_context) = 0;'
+                            - lvgl.page.show: screen_home
 # ------------------------------------------------------------------
 # Rotary encoder. Pins are swapped to fix rotation direction.
 # ------------------------------------------------------------------
@@ -755,12 +782,23 @@ sensor:
             then:
               - lambda: |-
                   int d = id(encoder_delta) > 0 ? 1 : -1;
-                  id(menu_index) = (id(menu_index) + d + SETTINGS_MENU_COUNT) % SETTINGS_MENU_COUNT;
+                  id(menu_index) = (id(menu_index) + d + SETTINGS_ROOT_COUNT) % SETTINGS_ROOT_COUNT;
                   id(settings_scroll_dir) = d;
               - script.execute: animate_settings_scroll
         - if:
             condition:
               lambda: 'return id(encoder_delta) != 0 && id(ui_context) == 3;'
+            then:
+              - lambda: |-
+                  int d = id(encoder_delta) > 0 ? 1 : -1;
+                  int count = settings_group_entry_count(id(menu_index));
+                  if (count > 0)
+                    id(group_item_index) = (id(group_item_index) + d + count) % count;
+                  id(settings_scroll_dir) = d;
+              - script.execute: animate_settings_scroll
+        - if:
+            condition:
+              lambda: 'return id(encoder_delta) != 0 && id(ui_context) == 4;'
             then:
               - lambda: |-
                   int d = id(encoder_delta) > 0 ? 1 : -1;
@@ -775,7 +813,7 @@ sensor:
                       id(brightness_pct) = clamp(id(brightness_pct) + d * 5, 5, 100);
                       break;
                     case 3: case 4: case 5: case 6: case 7:
-                    case 11: case 12: case 16: case 17:
+                    case 12: case 16: case 17:
                       id(submenu_index) = 1 - id(submenu_index);
                       break;
                     case 8:
@@ -1059,17 +1097,32 @@ script:
                 brightness: !lambda 'return id(brightness_pct) / 100.0f;'
             - script.execute: update_status_led
 
-  # Switch between TRV/heat and AC/cool targets in dual-setpoint mode, or toggle
-  # HVAC mode for better_thermostat-style entities. Used by double click and by
-  # swipe release from the board files.
+  # Horizontal swipes switch between thermostat and settings. Home is kept out
+  # of this swipe order so it can only be reached by the existing idle/back flow.
   - id: handle_swipe_release
     then:
       - if:
           condition:
-            lambda: 'return id(ui_context) == 1 && abs(id(swipe_last_x) - id(swipe_start_x)) > 60;'
+            lambda: |-
+              int dx = id(swipe_last_x) - id(swipe_start_x);
+              int dy = id(swipe_last_y) - id(swipe_start_y);
+              return id(ui_context) == 1 && dx < -60 && abs(dx) > abs(dy);
           then:
             - script.execute: wake_display
-            - script.execute: toggle_adjust_target
+            - script.execute: open_settings
+      - if:
+          condition:
+            lambda: |-
+              int dx = id(swipe_last_x) - id(swipe_start_x);
+              int dy = id(swipe_last_y) - id(swipe_start_y);
+              return id(ui_context) >= 2 && dx > 60 && abs(dx) > abs(dy);
+          then:
+            - script.execute: wake_display
+            - lambda: 'id(ui_context) = 1;'
+            - lvgl.page.show:
+                id: screen_thermostat
+                animation: MOVE_RIGHT
+                time: 220ms
 
   - id: toggle_adjust_target
     then:
@@ -1198,7 +1251,7 @@ script:
             lv_arc_set_value(static_cast<lv_obj_t *>(var), value);
           };
           auto animate_arc_to = [set_arc_value](lv_obj_t *arc, int32_t target) {
-            target = clamp(target, 0, 100);
+            target = clamp(target, (int32_t) 0, (int32_t) 100);
             int32_t current = lv_arc_get_value(arc);
             lv_anim_delete(arc, set_arc_value);
             if (current == target) return;
@@ -1449,13 +1502,24 @@ script:
       - lambda: |-
           id(ui_context) = 2;
           id(menu_index) = 0;
+          id(group_item_index) = 0;
       - script.execute: update_settings_labels
-      - lvgl.page.show: screen_settings
+      - lvgl.page.show:
+          id: screen_settings
+          animation: MOVE_LEFT
+          time: 220ms
+
+  - id: group_enter
+    then:
+      - lambda: |-
+          id(group_item_index) = 0;
+          id(ui_context) = 3;
+      - script.execute: update_settings_labels
 
   - id: menu_enter
     then:
       - lambda: |-
-          id(submenu_type) = settings_menu_type_at(id(menu_index));
+          id(submenu_type) = settings_group_type_at(id(menu_index), id(group_item_index));
           id(submenu_index) = 0;
           switch (id(submenu_type)) {
             case 0: {
@@ -1481,7 +1545,6 @@ script:
             case 8:  id(num_preview) = (int) id(idle_home_num).state; break;
             case 9:  id(num_preview) = (int) id(dim_delay_num).state; break;
             case 10: id(num_preview) = (int) id(dim_level_num).state; break;
-            case 11: id(submenu_index) = id(longpress3_select).current_option() == "Preset" ? 1 : 0; break;
             case 12: id(submenu_index) = id(knob_hvac_modes).current_option() == "All" ? 1 : 0; break;
             case 13: {
               static const char *const opts[] = {"0.1", "0.2", "0.5", "1.0"};
@@ -1494,7 +1557,7 @@ script:
             case 18: id(num_preview) = (int) id(led_brightness_num).state; break;
             default: break;
           }
-          id(ui_context) = 3;
+          id(ui_context) = 4;
       - script.execute: update_settings_labels
 
   - id: submenu_apply
@@ -1505,6 +1568,7 @@ script:
             case 0: {
               auto vec = ha_filter_modes(id(hvac_modes_raw), id(knob_hvac_modes).current_option() != "All");
               int n = (int) vec.size();
+              if (n <= 0) break;
               int idx = ((id(submenu_index) % n) + n) % n;
               id(pending_mode_holder) = vec[idx];
               id(apply_service) = 1;
@@ -1513,6 +1577,7 @@ script:
             case 1: {
               auto vec = ha_filter_presets(id(preset_modes_raw));
               int n = (int) vec.size();
+              if (n <= 0) break;
               int idx = ((id(submenu_index) % n) + n) % n;
               id(pending_mode_holder) = vec[idx];
               id(apply_service) = 2;
@@ -1526,7 +1591,6 @@ script:
             case 8:  id(apply_service) = 16; break;
             case 9:  id(apply_service) = 17; break;
             case 10: id(apply_service) = 18; break;
-            case 11: id(apply_service) = id(submenu_index) ? 20 : 19; break;
             case 12: id(apply_service) = id(submenu_index) ? 5 : 6; break;
             case 13: {
               static const char *const opts[] = {"0.1", "0.2", "0.5", "1.0"};
@@ -1540,7 +1604,7 @@ script:
             case 18: id(apply_service) = 24; break;
             default: break;
           }
-          id(ui_context) = 2;
+          id(ui_context) = 3;
       - if:
           condition: {lambda: 'return id(apply_service) == 1;'}
           then:
@@ -1606,12 +1670,6 @@ script:
           condition: {lambda: 'return id(apply_service) == 18;'}
           then: [{number.set: {id: dim_level_num, value: !lambda 'return id(num_preview);'}}]
       - if:
-          condition: {lambda: 'return id(apply_service) == 19;'}
-          then: [{select.set: {id: longpress3_select, option: "HVAC"}}]
-      - if:
-          condition: {lambda: 'return id(apply_service) == 20;'}
-          then: [{select.set: {id: longpress3_select, option: "Preset"}}]
-      - if:
           condition: {lambda: 'return id(apply_service) == 21;'}
           then:
             - select.set:
@@ -1666,18 +1724,39 @@ script:
     then:
       - lambda: |-
           bool de = false;
-          const int N = SETTINGS_MENU_COUNT;
           char buf[64];
           if (id(ui_context) == 2) {
-            int i = id(menu_index);
-            int t = settings_menu_type_at(i);
+            int position = settings_root_wrap(id(menu_index));
             id(set_title) = "Settings";
-            id(set_prev2) = ${settings_extra_rows} ? settings_menu_name(settings_menu_type_at(i - 2), de) : "";
-            id(set_prev) = settings_menu_name(settings_menu_type_at(i - 1), de);
-            id(set_cur) = settings_menu_name(t, de);
-            id(set_next) = settings_menu_name(settings_menu_type_at(i + 1), de);
-            id(set_next2) = ${settings_extra_rows} ? settings_menu_name(settings_menu_type_at(i + 2), de) : "";
-            std::string val;
+            id(set_prev2) = "";
+            id(set_prev) = settings_root_name(position - 1);
+            id(set_cur) = settings_root_name(position);
+            id(set_next) = settings_root_name(position + 1);
+            id(set_next2) = "";
+            if (position == SETTINGS_GROUP_COUNT) {
+              id(set_value) = "Press = back";
+            } else {
+              snprintf(buf, sizeof(buf), "%d settings", settings_group_count(position));
+              id(set_value) = buf;
+            }
+          } else if (id(ui_context) == 3) {
+            int group = settings_group_wrap(id(menu_index));
+            int count = settings_group_entry_count(group);
+            int i = ((id(group_item_index) % count) + count) % count;
+            int t = settings_group_entry_type_at(group, i);
+            auto entry_name = [group, de](int position) -> std::string {
+              int type = settings_group_entry_type_at(group, position);
+              return type < 0 ? std::string("Back") : std::string(settings_menu_name(type, de));
+            };
+            id(set_title) = SETTINGS_GROUP_NAMES[group];
+            id(set_prev2) = ${settings_extra_rows} && count >= 5
+                                ? entry_name(i - 2) : "";
+            id(set_prev) = count > 1 ? entry_name(i - 1) : "";
+            id(set_cur) = entry_name(i);
+            id(set_next) = count > 1 ? entry_name(i + 1) : "";
+            id(set_next2) = ${settings_extra_rows} && count >= 5
+                                ? entry_name(i + 2) : "";
+            std::string val = t < 0 ? "Press = back" : "";
             switch (t) {
               case 0: val = ha_hvac_mode_label(id(current_hvac_raw), de); break;
               case 1: val = ha_preset_label(id(current_preset_raw), de); break;
@@ -1690,7 +1769,6 @@ script:
               case 8: snprintf(buf, sizeof(buf), "%ds", (int) id(idle_home_num).state); val = buf; break;
               case 9: snprintf(buf, sizeof(buf), "%ds", (int) id(dim_delay_num).state); val = buf; break;
               case 10: snprintf(buf, sizeof(buf), "%d%%", (int) id(dim_level_num).state); val = buf; break;
-              case 11: val = id(longpress3_select).current_option(); break;
               case 12: val = id(knob_hvac_modes).current_option() == "All" ? "All modes" : "Heat/Off"; break;
               case 13: val = id(knob_step_select).current_option().str() + "°C"; break;
               case 14: val = id(wifi_ssid_txt).state; break;
@@ -1722,6 +1800,11 @@ script:
                 }
                 id(submenu_count) = (int) vec.size();
                 int n = (int) vec.size();
+                if (n <= 0) {
+                  cur = t == 0 ? "No HVAC modes" : "No presets";
+                  val = "Home Assistant unavailable";
+                  break;
+                }
                 int idx = ((id(submenu_index) % n) + n) % n;
                 cur = (t == 0) ? ha_hvac_mode_label(vec[idx], de) : ha_preset_label(vec[idx], de);
                 if (n > 1) {
@@ -1740,7 +1823,6 @@ script:
               case 8:
               case 9: snprintf(buf, sizeof(buf), "%ds", id(num_preview)); cur = buf; val = h_save; break;
               case 10: snprintf(buf, sizeof(buf), "%d%%", id(num_preview)); cur = buf; val = h_save; break;
-              case 11: cur = id(submenu_index) ? "Preset" : "HVAC"; val = h_save; break;
               case 12: cur = id(submenu_index) ? "All modes" : "Heat/Off"; val = h_save; break;
               case 13: {
                 static const char *const opts[] = {"0.1", "0.2", "0.5", "1.0"};
@@ -1771,36 +1853,53 @@ script:
       - lvgl.label.update:
           id: label_menu_icon_prev2
           text: !lambda |-
-            int i = id(ui_context) == 2
-                ? settings_menu_type_at(id(menu_index) - 2)
-                : id(submenu_type);
-            return std::string(MENU_ICONS[i]);
+            if (id(ui_context) == 2)
+              return std::string(settings_root_icon(id(menu_index) - 2));
+            if (id(ui_context) == 3) {
+              int type = settings_group_entry_type_at(id(menu_index), id(group_item_index) - 2);
+              return std::string(type < 0 ? ICON_BACK : MENU_ICONS[type]);
+            }
+            return std::string(MENU_ICONS[id(submenu_type)]);
       - lvgl.label.update:
           id: label_menu_icon_prev
           text: !lambda |-
-            int i = id(ui_context) == 2
-                ? settings_menu_type_at(id(menu_index) - 1)
-                : id(submenu_type);
-            return std::string(MENU_ICONS[i]);
+            if (id(ui_context) == 2)
+              return std::string(settings_root_icon(id(menu_index) - 1));
+            if (id(ui_context) == 3) {
+              int type = settings_group_entry_type_at(id(menu_index), id(group_item_index) - 1);
+              return std::string(type < 0 ? ICON_BACK : MENU_ICONS[type]);
+            }
+            return std::string(MENU_ICONS[id(submenu_type)]);
       - lvgl.label.update:
           id: label_menu_icon
           text: !lambda |-
-            int i = id(ui_context) == 2 ? settings_menu_type_at(id(menu_index)) : id(submenu_type);
-            return std::string(MENU_ICONS[i]);
+            if (id(ui_context) == 2)
+              return std::string(settings_root_icon(id(menu_index)));
+            if (id(ui_context) == 3) {
+              int type = settings_group_entry_type_at(id(menu_index), id(group_item_index));
+              return std::string(type < 0 ? ICON_BACK : MENU_ICONS[type]);
+            }
+            return std::string(MENU_ICONS[id(submenu_type)]);
       - lvgl.label.update:
           id: label_menu_icon_next
           text: !lambda |-
-            int i = id(ui_context) == 2
-                ? settings_menu_type_at(id(menu_index) + 1)
-                : id(submenu_type);
-            return std::string(MENU_ICONS[i]);
+            if (id(ui_context) == 2)
+              return std::string(settings_root_icon(id(menu_index) + 1));
+            if (id(ui_context) == 3) {
+              int type = settings_group_entry_type_at(id(menu_index), id(group_item_index) + 1);
+              return std::string(type < 0 ? ICON_BACK : MENU_ICONS[type]);
+            }
+            return std::string(MENU_ICONS[id(submenu_type)]);
       - lvgl.label.update:
           id: label_menu_icon_next2
           text: !lambda |-
-            int i = id(ui_context) == 2
-                ? settings_menu_type_at(id(menu_index) + 2)
-                : id(submenu_type);
-            return std::string(MENU_ICONS[i]);
+            if (id(ui_context) == 2)
+              return std::string(settings_root_icon(id(menu_index) + 2));
+            if (id(ui_context) == 3) {
+              int type = settings_group_entry_type_at(id(menu_index), id(group_item_index) + 2);
+              return std::string(type < 0 ? ICON_BACK : MENU_ICONS[type]);
+            }
+            return std::string(MENU_ICONS[id(submenu_type)]);
       - if:
           condition: {lambda: 'return id(icons_enabled).state;'}
           then:

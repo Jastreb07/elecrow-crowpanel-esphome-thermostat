@@ -103,15 +103,25 @@ touchscreen:
   skip_probe: true
   update_interval: 25ms
   address: 0x15
+  transform:
+    swap_xy: true
+    mirror_x: false
+    mirror_y: false
   on_touch:
     - script.execute: wake_display
     - lambda: |-
+        // swap_xy maps the physical horizontal axis to display X.
         id(swipe_start_x) = touch.x;
         id(swipe_last_x) = touch.x;
+        id(swipe_start_y) = touch.y;
+        id(swipe_last_y) = touch.y;
   on_update:
     - lambda: |-
         for (auto t : touches)
-          if (t.state <= 2) id(swipe_last_x) = t.x;
+          if (t.state <= 2) {
+            id(swipe_last_x) = t.x;
+            id(swipe_last_y) = t.y;
+          }
   on_release:
     - script.execute: handle_swipe_release
 
@@ -852,7 +862,7 @@ font:
         "󰗊", "󰏘", "󰈈", "󰔄",
         "󰔟", "󰃜", "󰏰", "󰇣",
         "󰔡", "󰑧", "󰖩", "󰋽",
-        "󰜉", "󰌵", "󰃟",
+        "󰜉", "󰌵", "󰃟", "󰁍",
       ]
   - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
     id: menu_icons_24

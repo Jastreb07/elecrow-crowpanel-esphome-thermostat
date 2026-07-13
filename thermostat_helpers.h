@@ -19,6 +19,7 @@ static const char *const ICON_TOGGLE_OFF = "󰔢";    // mdi-toggle-switch-off
 static const char *const ICON_POWER = "󰐥";         // mdi-power
 static const char *const ICON_THERMO_HIGH = "󰔏";   // mdi-thermometer
 static const char *const ICON_DROPLET_HALF = "󰖎";  // mdi-water-percent
+static const char *const ICON_BACK = "󰁍";          // mdi-arrow-left
 
 // Menu icons. Index matches the settings menu item.
 static const char *const MENU_ICONS[] = {
@@ -33,7 +34,7 @@ static const char *const MENU_ICONS[] = {
     "󰔟",  //  8 Idle time      mdi-timer-sand
     "󰃜",  //  9 Dim after      mdi-brightness-4
     "󰏰",  // 10 Dim level      mdi-percent
-    "󰇣",  // 11 3s button      mdi-av-timer
+    "",   // 11 removed/reserved
     "󰔡",  // 12 Knob modes     mdi-toggle-switch
     "󰑧",  // 13 Knob step      mdi-rotate-right
     "󰖩",  // 14 WiFi           mdi-wifi
@@ -44,19 +45,68 @@ static const char *const MENU_ICONS[] = {
 };
 constexpr int SETTINGS_MENU_COUNT = 19;
 
-// Visible settings order. Values are stable setting IDs used by the shared
-// submenu logic below; changing this list only changes the menu presentation.
-static constexpr int SETTINGS_MENU_ORDER[SETTINGS_MENU_COUNT] = {
-    0,  1,  7, 12, 13, 11,  // Thermostat and knob operation
-    5,  6,  2,  3,  4,      // Appearance and general display
-    8,  9, 10,              // Screen timeout and dimming
-   17, 18,                  // Status LED
-   14, 15, 16               // Network, information and maintenance
-};
+// Root groups for the hierarchical settings screen. The values below are the
+// stable setting IDs used by the existing editor/apply logic.
+constexpr int SETTINGS_GROUP_COUNT = 3;
+constexpr int SETTINGS_ROOT_COUNT = SETTINGS_GROUP_COUNT + 1;  // + Back
+static const char *const SETTINGS_GROUP_NAMES[SETTINGS_GROUP_COUNT] = {
+    "Thermostat", "Smart Knob", "System"};
+static const char *const SETTINGS_GROUP_ICONS[SETTINGS_GROUP_COUNT] = {
+    MENU_ICONS[0], MENU_ICONS[12], MENU_ICONS[14]};
 
-inline int settings_menu_type_at(int position) {
-  position = ((position % SETTINGS_MENU_COUNT) + SETTINGS_MENU_COUNT) % SETTINGS_MENU_COUNT;
-  return SETTINGS_MENU_ORDER[position];
+static constexpr int SETTINGS_GROUP_THERMOSTAT[] = {0, 1, 7};
+static constexpr int SETTINGS_GROUP_SMART_KNOB[] = {
+    12, 13, 5, 6, 2, 3, 4, 8, 9, 10, 17, 18};
+static constexpr int SETTINGS_GROUP_SYSTEM[] = {14, 15, 16};
+
+inline int settings_group_count(int group) {
+  switch (group) {
+    case 0: return sizeof(SETTINGS_GROUP_THERMOSTAT) / sizeof(SETTINGS_GROUP_THERMOSTAT[0]);
+    case 1: return sizeof(SETTINGS_GROUP_SMART_KNOB) / sizeof(SETTINGS_GROUP_SMART_KNOB[0]);
+    case 2: return sizeof(SETTINGS_GROUP_SYSTEM) / sizeof(SETTINGS_GROUP_SYSTEM[0]);
+    default: return 0;
+  }
+}
+
+inline int settings_group_type_at(int group, int position) {
+  int count = settings_group_count(group);
+  if (count <= 0) return 0;
+  position = ((position % count) + count) % count;
+  switch (group) {
+    case 0: return SETTINGS_GROUP_THERMOSTAT[position];
+    case 1: return SETTINGS_GROUP_SMART_KNOB[position];
+    case 2: return SETTINGS_GROUP_SYSTEM[position];
+    default: return 0;
+  }
+}
+
+inline int settings_group_wrap(int group) {
+  return ((group % SETTINGS_GROUP_COUNT) + SETTINGS_GROUP_COUNT) % SETTINGS_GROUP_COUNT;
+}
+
+inline int settings_root_wrap(int position) {
+  return ((position % SETTINGS_ROOT_COUNT) + SETTINGS_ROOT_COUNT) % SETTINGS_ROOT_COUNT;
+}
+
+inline const char *settings_root_name(int position) {
+  position = settings_root_wrap(position);
+  return position == SETTINGS_GROUP_COUNT ? "Back" : SETTINGS_GROUP_NAMES[position];
+}
+
+inline const char *settings_root_icon(int position) {
+  position = settings_root_wrap(position);
+  return position == SETTINGS_GROUP_COUNT ? ICON_BACK : SETTINGS_GROUP_ICONS[position];
+}
+
+inline int settings_group_entry_count(int group) {
+  return settings_group_count(group) + 1;  // Last entry is Back.
+}
+
+inline int settings_group_entry_type_at(int group, int position) {
+  int settings_count = settings_group_count(group);
+  int entry_count = settings_count + 1;
+  position = ((position % entry_count) + entry_count) % entry_count;
+  return position == settings_count ? -1 : settings_group_type_at(group, position);
 }
 
 // Icon per better_thermostat preset.
@@ -104,7 +154,7 @@ inline const char *settings_menu_name(int i, bool de) {
   (void) de;
   static const char *const EN[] = {
       "HVAC Mode",  "Preset", "Brightness", "Clock",     "Language",   "Design",
-      "Icons",      "Unit",   "Idle Time",  "Dim After", "Dim Level",  "3s Button",
+      "Icons",      "Unit",   "Idle Time",  "Dim After", "Dim Level",  "-",
       "Knob Modes", "Knob Step", "WiFi",    "Firmware",  "Reset",      "LED",
       "LED Brightness"};
   if (i < 0 || i >= SETTINGS_MENU_COUNT) return "-";

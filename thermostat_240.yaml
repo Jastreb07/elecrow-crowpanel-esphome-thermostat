@@ -71,12 +71,18 @@ touchscreen:
   on_touch:
     - script.execute: wake_display
     - lambda: |-
+        // swap_xy above already maps the physical horizontal axis to X.
         id(swipe_start_x) = touch.x;
         id(swipe_last_x) = touch.x;
+        id(swipe_start_y) = touch.y;
+        id(swipe_last_y) = touch.y;
   on_update:
     - lambda: |-
         for (auto t : touches)
-          if (t.state <= 2) id(swipe_last_x) = t.x;
+          if (t.state <= 2) {
+            id(swipe_last_x) = t.x;
+            id(swipe_last_y) = t.y;
+          }
   on_release:
     - script.execute: handle_swipe_release
 
@@ -689,7 +695,7 @@ font:
         "󰗊", "󰏘", "󰈈", "󰔄",
         "󰔟", "󰃜", "󰏰", "󰇣",
         "󰔡", "󰑧", "󰖩", "󰋽",
-        "󰜉", "󰌵", "󰃟",
+        "󰜉", "󰌵", "󰃟", "󰁍",
       ]
   - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
     id: icons_24
