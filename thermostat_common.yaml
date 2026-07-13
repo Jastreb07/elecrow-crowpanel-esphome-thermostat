@@ -1145,8 +1145,6 @@ script:
             - script.execute: refresh_light
             - lvgl.page.show:
                 id: screen_light
-                animation: OVER_RIGHT
-                time: 140ms
           else:
             - lambda: |-
                 id(climate_index) = (int) id(ha_climates).size() - 1;
@@ -1154,8 +1152,6 @@ script:
             - script.execute: load_active_climate
             - lvgl.page.show:
                 id: screen_thermostat
-                animation: OVER_RIGHT
-                time: 140ms
 
   # Move forward through configured thermostats. After the final thermostat,
   # continue with the first light or settings.
@@ -1210,8 +1206,6 @@ script:
             - script.execute: refresh_light
             - lvgl.page.show:
                 id: screen_light
-                animation: OVER_LEFT
-                time: 140ms
           else:
             - script.execute: open_settings
 
@@ -1246,8 +1240,6 @@ script:
             - script.execute: load_active_climate
             - lvgl.page.show:
                 id: screen_thermostat
-                animation: OVER_RIGHT
-                time: 140ms
 
   - id: cycle_light_mode
     then:
@@ -1887,8 +1879,6 @@ script:
       - script.execute: update_settings_labels
       - lvgl.page.show:
           id: screen_settings
-          animation: OVER_LEFT
-          time: 140ms
 
   - id: group_enter
     then:
