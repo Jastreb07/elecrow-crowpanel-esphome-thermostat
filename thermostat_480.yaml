@@ -701,9 +701,9 @@ lvgl:
       on_swipe_right:
         - script.execute: open_entity_overview
       on_swipe_down:
-        - script.execute: cycle_light_mode
+        - script.execute: {id: cycle_light_mode, direction: 1}
       on_swipe_up:
-        - script.execute: cycle_light_mode
+        - script.execute: {id: cycle_light_mode, direction: -1}
       widgets:
         - button:
             id: button_light_background
@@ -799,8 +799,8 @@ lvgl:
             width: 300
             text_align: CENTER
         - label:
-            id: label_light_icon
-            text: "\U000F05A8"
+            id: label_light_icon_brightness
+            text: "\U000F00DF"
             text_font: icons_70
             text_color: 0x555555
             align: CENTER
@@ -826,7 +826,7 @@ lvgl:
         - obj: &light_mode_dot_480
             id: light_mode_dot_0
             align: LEFT_MID
-            x: 60
+            x: 70
             y: -32
             width: 12
             height: 12
@@ -844,9 +844,9 @@ lvgl:
       on_swipe_right:
         - script.execute: open_entity_overview
       on_swipe_down:
-        - script.execute: cycle_light_mode
+        - script.execute: {id: cycle_light_mode, direction: 1}
       on_swipe_up:
-        - script.execute: cycle_light_mode
+        - script.execute: {id: cycle_light_mode, direction: -1}
       widgets:
         - button:
             align: CENTER
@@ -858,6 +858,13 @@ lvgl:
             shadow_width: 0
             on_click:
               - script.execute: wake_display
+        - label:
+            id: label_light_icon_temperature
+            text: "\U000F18D7"
+            text_font: icons_70
+            text_color: 0x555555
+            align: CENTER
+            y: -165
 
     - id: screen_light_color
       bg_color: "0x000000"
@@ -866,9 +873,9 @@ lvgl:
       on_swipe_right:
         - script.execute: open_entity_overview
       on_swipe_down:
-        - script.execute: cycle_light_mode
+        - script.execute: {id: cycle_light_mode, direction: 1}
       on_swipe_up:
-        - script.execute: cycle_light_mode
+        - script.execute: {id: cycle_light_mode, direction: -1}
       widgets:
         - button:
             align: CENTER
@@ -882,52 +889,65 @@ lvgl:
               - script.execute: wake_display
         - label:
             id: label_light_icon_color
-            text: "\U000F020A"
+            text: "\U000F03D8"
             text_font: icons_70
             text_color: 0x555555
             align: CENTER
-            y: -110
+            y: -165
         # Center preview of the currently selected color preset.
         - obj:
             id: light_color_swatch
             align: CENTER
             y: 8
-            width: 96
-            height: 96
-            radius: 48
+            width: 60
+            height: 60
+            radius: 30
             bg_color: 0xFF6655
             bg_opa: COVER
             border_color: 0xD7D7D7
             border_width: 4
         - label:
-            id: label_light_mode_color
-            text: "Farbe"
-            text_font: rajdhani_medium_24
-            text_color: 0xB0B0B0
+            id: label_light_swatch_off
+            text: "OFF"
+            text_font: rajdhani_medium_22
+            text_color: 0xAAAAAA
             align: CENTER
-            y: 90
-            width: 200
-            text_align: CENTER
+            y: 8
+            hidden: true
 
-        # Fixed color presets instead of a full hue ring: cycling a 96-segment
-        # arc every refresh was too slow on this panel, and a handful of
-        # favorite colors covers how the knob is actually used in practice.
+        # 18 fixed color presets in a ring instead of a full hue arc: cycling
+        # a 96-segment arc every refresh was too slow on this panel, and
+        # precomputed swatch colors (LIGHT_COLOR_PRESETS) need no per-refresh
+        # HSV conversion at all.
         - obj: &light_color_preset_480
             id: light_color_preset_0
             align: CENTER
-            x: -120
-            y: 140
-            width: 44
-            height: 44
-            radius: 22
+            x: 0
+            y: -208
+            width: 36
+            height: 36
+            radius: 18
             bg_color: 0xFFFFFF
             bg_opa: COVER
             border_width: 0
             shadow_width: 0
-        - obj: { <<: *light_color_preset_480, id: light_color_preset_1, x: -60 }
-        - obj: { <<: *light_color_preset_480, id: light_color_preset_2, x: 0 }
-        - obj: { <<: *light_color_preset_480, id: light_color_preset_3, x: 60 }
-        - obj: { <<: *light_color_preset_480, id: light_color_preset_4, x: 120 }
+        - obj: { <<: *light_color_preset_480, id: light_color_preset_1, x: 71, y: -195 }
+        - obj: { <<: *light_color_preset_480, id: light_color_preset_2, x: 134, y: -159 }
+        - obj: { <<: *light_color_preset_480, id: light_color_preset_3, x: 180, y: -104 }
+        - obj: { <<: *light_color_preset_480, id: light_color_preset_4, x: 205, y: -36 }
+        - obj: { <<: *light_color_preset_480, id: light_color_preset_5, x: 205, y: 36 }
+        - obj: { <<: *light_color_preset_480, id: light_color_preset_6, x: 180, y: 104 }
+        - obj: { <<: *light_color_preset_480, id: light_color_preset_7, x: 134, y: 159 }
+        - obj: { <<: *light_color_preset_480, id: light_color_preset_8, x: 71, y: 195 }
+        - obj: { <<: *light_color_preset_480, id: light_color_preset_9, x: 0, y: 208 }
+        - obj: { <<: *light_color_preset_480, id: light_color_preset_10, x: -71, y: 195 }
+        - obj: { <<: *light_color_preset_480, id: light_color_preset_11, x: -134, y: 159 }
+        - obj: { <<: *light_color_preset_480, id: light_color_preset_12, x: -180, y: 104 }
+        - obj: { <<: *light_color_preset_480, id: light_color_preset_13, x: -205, y: 36 }
+        - obj: { <<: *light_color_preset_480, id: light_color_preset_14, x: -205, y: -36 }
+        - obj: { <<: *light_color_preset_480, id: light_color_preset_15, x: -180, y: -104 }
+        - obj: { <<: *light_color_preset_480, id: light_color_preset_16, x: -134, y: -159 }
+        - obj: { <<: *light_color_preset_480, id: light_color_preset_17, x: -71, y: -195 }
 
     # ================= Settings menu =================
     - id: screen_navigation
@@ -1158,6 +1178,7 @@ font:
         "󰔟", "󰃜", "󰏰", "󰇣",
         "󰔡", "󰑧", "󰖩", "󰋽",
         "󰜉", "󰌵", "󰃟", "󰁍",
+        "\U000F18D7",
       ]
   - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
     id: menu_icons_24

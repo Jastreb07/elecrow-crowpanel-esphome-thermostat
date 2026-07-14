@@ -139,11 +139,15 @@ class HALightController : public Component {
     return light.control_mode;
   }
 
-  int cycle_mode(size_t index) {
+  // Steps to the next (direction > 0) or previous (direction < 0) supported
+  // mode, skipping any mode the light does not support, and wrapping around
+  // in both directions.
+  int cycle_mode(size_t index, int direction) {
     auto &light = this->get_mutable(index);
     int current = this->ensure_mode(index);
+    int step = direction < 0 ? -1 : 1;
     for (int offset = 1; offset <= 3; offset++) {
-      int candidate = (current + offset) % 3;
+      int candidate = ((current + step * offset) % 3 + 3) % 3;
       if (this->mode_available_(index, candidate)) {
         light.control_mode = candidate;
         this->dirty_ = true;

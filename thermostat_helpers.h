@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <cctype>
+#include <cstdint>
 #include <cstdio>
 #include <cmath>
 #include <functional>
@@ -55,6 +56,9 @@ static const char *const ICON_SUN = "\U000F05A8";           // mdi-white-balance
 static const char *const ICON_EYEDROPPER = "\U000F020A";    // mdi-eyedropper
 static const char *const ICON_DROPLET_HALF = "󰖎";  // mdi-water-percent
 static const char *const ICON_BACK = "󰁍";          // mdi-arrow-left
+static const char *const ICON_BRIGHTNESS_6 = "\U000F00DF";           // mdi-brightness-6
+static const char *const ICON_SUN_THERMOMETER_OUTLINE = "\U000F18D7";  // mdi-sun-thermometer-outline
+static const char *const ICON_PALETTE = "\U000F03D8";                // mdi-palette
 
 // Menu icons. Index matches the settings menu item.
 static const char *const MENU_ICONS[] = {
@@ -160,12 +164,18 @@ inline int settings_group_entry_type_at(int group, int position) {
 // identically no matter which list is on screen.
 // ------------------------------------------------------------------
 
-// Clockwise (positive encoder delta) moves the selection up (toward
-// index - 1) and wraps around `count`. Only the sign of `delta` matters.
-inline int menu_scroll_index(int index, int delta, int count) {
+// Clockwise (positive encoder delta) moves the selection down (toward
+// index + 1). Only the sign of `delta` matters. With `loop` false (the
+// default) the index clamps at 0/count-1 instead of wrapping; pass `loop`
+// true for callers that want it to wrap around (e.g. swipe-driven cycling).
+inline int menu_scroll_index(int index, int delta, int count, bool loop = false) {
   if (count <= 0) return 0;
-  int d = delta > 0 ? -1 : 1;
-  return ((index + d) % count + count) % count;
+  int d = delta > 0 ? 1 : -1;
+  if (loop) return ((index + d) % count + count) % count;
+  int next = index + d;
+  if (next < 0) return 0;
+  if (next >= count) return count - 1;
+  return next;
 }
 
 struct MenuWindow {
@@ -175,21 +185,47 @@ struct MenuWindow {
 // Builds the prev2/prev/cur/next/next2 row texts and the "i / n" value
 // string around `index`, calling `name(position)` for each visible row.
 // `extra_rows` enables the outer prev2/next2 rows (only shown once the list
-// has at least 5 entries).
+// has at least 5 entries). With `loop` false (the default, matching
+// menu_scroll_index) a row past the first/last entry is left empty instead
+// of wrapping around to show a menu item that scrolling can't reach.
 inline MenuWindow menu_window(int index, int count, bool extra_rows,
-                               const std::function<std::string(int)> &name) {
+                               const std::function<std::string(int)> &name,
+                               bool loop = false) {
   MenuWindow m;
   if (count <= 0 || !name) return m;
   int i = ((index % count) + count) % count;
-  m.prev2 = (extra_rows && count >= 5) ? name(i - 2) : "";
-  m.prev = count > 1 ? name(i - 1) : "";
+  bool prev2_ok = extra_rows && count >= 5 && (loop || i - 2 >= 0);
+  bool prev_ok = count > 1 && (loop || i - 1 >= 0);
+  bool next_ok = count > 1 && (loop || i + 1 < count);
+  bool next2_ok = extra_rows && count >= 5 && (loop || i + 2 < count);
+  m.prev2 = prev2_ok ? name(i - 2) : "";
+  m.prev = prev_ok ? name(i - 1) : "";
   m.cur = name(i);
-  m.next = count > 1 ? name(i + 1) : "";
-  m.next2 = (extra_rows && count >= 5) ? name(i + 2) : "";
+  m.next = next_ok ? name(i + 1) : "";
+  m.next2 = next2_ok ? name(i + 2) : "";
   char buf[32];
   snprintf(buf, sizeof(buf), "%d / %d", i + 1, count);
   m.value = buf;
   return m;
+}
+
+// ------------------------------------------------------------------
+// Shared bidirectional, looping swipe-cycling between a fixed set of
+// screens (e.g. the light control pages). Both gesture directions on an
+// axis are wired to the matching helper so swiping either way always
+// wraps around, instead of every direction cycling the same way forward.
+// ------------------------------------------------------------------
+
+// Step for on_swipe_up / on_swipe_down. `down` is true for the swipe-down
+// gesture (moves to the next screen), false for swipe-up (previous screen).
+inline int swipe_step_vertical(int current, bool down, int count) {
+  return menu_scroll_index(current, down ? 1 : -1, count, true);
+}
+
+// Step for on_swipe_left / on_swipe_right. `right` is true for the
+// swipe-right gesture (moves to the next screen), false for swipe-left.
+inline int swipe_step_horizontal(int current, bool right, int count) {
+  return menu_scroll_index(current, right ? 1 : -1, count, true);
 }
 
 // Icon per better_thermostat preset.
@@ -266,16 +302,31 @@ inline LedColor hvac_led_color(const std::string &hvac, bool dual_setpoint, int 
 // individually recolored arc segments per refresh, which was too slow on
 // this panel; picking from a small fixed set of colors is both fast and
 // matches how the knob is actually used (favorite lamp colors, not a
-// precise color wheel).
+// precise color wheel). `rgb` is precomputed offline (see
+// tools/lvgl_preview.py's hsv_int) so refresh_light never has to run
+// lv_color_hsv_to_rgb for these swatches, only look up a constant.
 // ------------------------------------------------------------------
-struct ColorPreset { float hue; float saturation; };
-constexpr int LIGHT_COLOR_PRESET_COUNT = 5;
+struct ColorPreset { float hue; float saturation; uint32_t rgb; };
+constexpr int LIGHT_COLOR_PRESET_COUNT = 18;
 static constexpr ColorPreset LIGHT_COLOR_PRESETS[LIGHT_COLOR_PRESET_COUNT] = {
-    {30.0f, 22.0f},   // warm white
-    {16.0f, 100.0f},  // orange
-    {50.0f, 100.0f},  // yellow
-    {214.0f, 85.0f},  // blue
-    {265.0f, 55.0f},  // purple
+    {0.0f, 70.0f, 0xFF4D4D},
+    {20.0f, 70.0f, 0xFF884D},
+    {40.0f, 70.0f, 0xFFC34D},
+    {60.0f, 70.0f, 0xFFFF4D},
+    {80.0f, 70.0f, 0xC4FF4D},
+    {100.0f, 70.0f, 0x88FF4D},
+    {120.0f, 70.0f, 0x4DFF4D},
+    {140.0f, 70.0f, 0x4DFF88},
+    {160.0f, 70.0f, 0x4DFFC3},
+    {180.0f, 70.0f, 0x4DFFFF},
+    {200.0f, 70.0f, 0x4DC3FF},
+    {220.0f, 70.0f, 0x4D88FF},
+    {240.0f, 70.0f, 0x4D4DFF},
+    {260.0f, 70.0f, 0x884DFF},
+    {280.0f, 70.0f, 0xC44DFF},
+    {300.0f, 70.0f, 0xFF4DFF},
+    {320.0f, 70.0f, 0xFF4DC4},
+    {340.0f, 70.0f, 0xFF4D88},
 };
 
 // Closest preset to a given HA hue, e.g. to highlight the right swatch when

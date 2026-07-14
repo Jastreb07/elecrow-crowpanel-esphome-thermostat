@@ -45,13 +45,7 @@ BOARDS = [
 WATCH_FILES = [COMMON_FILE] + [p for _, p, _ in BOARDS]
 
 # Mirrors LIGHT_COLOR_PRESETS in thermostat_helpers.h (hue, saturation).
-LIGHT_COLOR_PRESETS = [
-    (30.0, 22.0),   # warm white
-    (16.0, 100.0),  # orange
-    (50.0, 100.0),  # yellow
-    (214.0, 85.0),  # blue
-    (265.0, 55.0),  # purple
-]
+LIGHT_COLOR_PRESETS = [(i * 20.0, 70.0) for i in range(18)]
 
 
 def hsv_int(hue, saturation, value=100.0):
@@ -212,13 +206,12 @@ def render_widget(widget_entry, fonts, size):
     (wtype, w), = widget_entry.items()
     wid = w.get("id", "?")
     hidden = w.get("hidden", False)
-    # LVGL does not paint hidden objects at reduced opacity; it does not paint
-    # them at all. Showing them as debug outlines made several pages look as if
-    # incompatible modes were active simultaneously.
-    if hidden:
-        return ""
-    hid_css = ""
-    title = f"{wid} ({wtype})"
+    # LVGL does not paint hidden objects at all; the preview still renders
+    # them with the .w-hidden class (faded, dotted outline). The "Hidden
+    # anzeigen" toggle flips a class on <body> to show/hide them globally,
+    # including after a live-reload swap of #boards.
+    hid_class = " w-hidden" if hidden else ""
+    title = f"{wid} ({wtype})" + (" [hidden]" if hidden else "")
 
     if wtype == "label":
         fsize, weight, family = fonts.get(str(w.get("text_font", "")), (24, 400, "Rajdhani"))
@@ -228,9 +221,9 @@ def render_widget(widget_entry, fonts, size):
             ta = str(w.get("text_align", "CENTER")).lower()
             extra = f"width:{int(w['width'])}px;text-align:{ta};"
         return (
-            f'<div class="w" title="{title}" style="{pos_css(w, size)};'
+            f'<div class="w{hid_class}" title="{title}" style="{pos_css(w, size)};'
             f"font-family:'{family}';font-size:{fsize}px;font-weight:{weight};"
-            f'color:{color};{extra}{hid_css}">'
+            f'color:{color};{extra}">'
             f"{label_text(w)}</div>"
         )
     if wtype == "arc":
@@ -285,7 +278,7 @@ def render_widget(widget_entry, fonts, size):
                 f'fill="{kfill}" stroke="{kstroke}" stroke-width="{kbw}"/>'
             )
         return (
-            f'<div class="w" title="{title}" style="{pos_css(w, size)};width:{d}px;height:{d}px;{hid_css}">'
+            f'<div class="w{hid_class}" title="{title}" style="{pos_css(w, size)};width:{d}px;height:{d}px;">'
             f'<svg width="{d}" height="{d}" viewBox="0 0 {d} {d}">'
             f'<path d="{arc_path(start, sweep)}" fill="none" stroke="{bg}" '
             f'stroke-width="{aw}" stroke-linecap="round" opacity="{bg_opacity}"/>'
@@ -310,16 +303,16 @@ def render_widget(widget_entry, fonts, size):
         )
         overflow = "overflow:hidden;" if w.get("clip_corner", False) else ""
         return (
-            f'<div class="w" title="{title}" style="{pos_css(w, size)};width:{wd}px;'
+            f'<div class="w{hid_class}" title="{title}" style="{pos_css(w, size)};width:{wd}px;'
             f'height:{ht}px;background:{bg};border:{border_width}px solid {border_color};'
-            f'box-sizing:border-box;border-radius:{radius_css};{overflow}{hid_css}">{children}</div>'
+            f'box-sizing:border-box;border-radius:{radius_css};{overflow}">{children}</div>'
         )
     if wtype == "spinner":
         diameter = int(w.get("width", w.get("height", 80)))
         arc_width = int(w.get("arc_width", 6) or 6)
         color = color_css(w.get("arc_color"), "#FFFFFF")
         return (
-            f'<div class="w preview-spinner" title="{title}" style="{pos_css(w, size)};'
+            f'<div class="w preview-spinner{hid_class}" title="{title}" style="{pos_css(w, size)};'
             f'width:{diameter}px;height:{diameter}px;border:{arc_width}px solid #FFFFFF22;'
             f'border-top-color:{color};border-radius:50%;box-sizing:border-box"></div>'
         )
@@ -335,9 +328,9 @@ def render_widget(widget_entry, fonts, size):
         radius = w.get("radius", 0)
         radius_css = "9999px" if str(radius).endswith("%") else f"{int(radius or 0)}px"
         return (
-            f'<div class="w preview-bar" title="{title}" style="{pos_css(w, size)};'
+            f'<div class="w preview-bar{hid_class}" title="{title}" style="{pos_css(w, size)};'
             f'width:{wd}px;height:{ht}px;background:{bg};border-radius:{radius_css};'
-            f'overflow:hidden;{hid_css}"><div style="width:{progress:.1f}%;height:100%;'
+            f'overflow:hidden;"><div style="width:{progress:.1f}%;height:100%;'
             f'background:{fill};border-radius:inherit;"></div></div>'
         )
     if wtype == "button":
@@ -357,9 +350,9 @@ def render_widget(widget_entry, fonts, size):
             return ""
 
         return (
-            f'<div class="w preview-button" title="{title}" style="{pos_css(w, size)};'
+            f'<div class="w preview-button{hid_class}" title="{title}" style="{pos_css(w, size)};'
             f'width:{wd}px;height:{ht}px;background:{bg};border:{border_width}px solid {border_color};'
-            f'border-radius:{radius_css};box-sizing:border-box;{hid_css}">{children}</div>'
+            f'border-radius:{radius_css};box-sizing:border-box;">{children}</div>'
         )
     return ""  # Skip unsupported widgets.
 
@@ -407,9 +400,10 @@ def render_board(name, path, size):
         brightness = pid == "screen_light_brightness"
         temperature = pid == "screen_light_temperature"
         color = pid == "screen_light_color"
-        if color:
-            # The color page owns its own statically positioned labels
-            # (label_light_icon_color / label_light_mode_color).
+        if temperature or color:
+            # Each non-brightness page owns its own statically positioned
+            # icon (label_light_icon_temperature / _color), plus the color
+            # page's swatch/presets.
             widgets += copy.deepcopy(original)
         show = ({"light_brightness_scale", "label_light_brightness_ticks", "light_slider_knob"}
                 if brightness else
@@ -421,8 +415,8 @@ def render_board(name, path, size):
                 {"light_brightness_scale", "label_light_brightness_ticks"} if temperature else
                 {"light_brightness_scale", "label_light_brightness_ticks",
                  "light_kelvin_scale", "light_slider_knob", "label_light_kelvin_min",
-                 "label_light_kelvin_max", "label_light_value", "label_light_name",
-                 "label_light_page", "label_light_mode", "label_light_icon"})
+                 "label_light_kelvin_max", "label_light_value",
+                 "label_light_page"})
         active_dot = 0 if brightness else 1 if temperature else 2
         for cfg in widget_configs(widgets):
             wid = cfg.get("id")
@@ -431,11 +425,9 @@ def render_board(name, path, size):
             elif wid in hide:
                 cfg["hidden"] = True
             if wid == "label_light_mode":
-                cfg["text"] = "Helligkeit" if brightness else "Kelvin"
+                cfg["text"] = "Helligkeit" if brightness else "Kelvin" if temperature else "Farbe"
             elif wid == "label_light_value" and temperature:
                 cfg["text"] = "3200K"
-            elif wid == "label_light_icon":
-                cfg["_preview_text"] = "\U000F0599" if brightness else "\U000F050F"
             elif str(wid).startswith("light_mode_dot_"):
                 dot = int(str(wid).rsplit("_", 1)[-1])
                 cfg["bg_color"] = 0xFFFFFF if dot == active_dot else 0x292B2E
@@ -486,7 +478,13 @@ def generate():
  @font-face{{font-family:'Material Design Icons';
    src:url('https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/fonts/materialdesignicons-webfont.woff2') format('woff2')}}
  body{{background:#1b1b1b;color:#ddd;font-family:'Rajdhani','Segoe UI',sans-serif;
-      padding:24px 390px 24px 24px}}
+      padding:76px 390px 24px 24px}}
+ #page-header{{position:fixed;z-index:30;top:0;left:0;right:0;height:52px;
+      box-sizing:border-box;display:flex;align-items:center;justify-content:space-between;
+      gap:16px;padding:0 20px;background:#202020;border-bottom:1px solid #3a3a3a;
+      box-shadow:0 2px 12px #0006}}
+ #page-header h1{{font-size:17px;font-weight:600;color:#eee;margin:0;white-space:nowrap}}
+ #page-header-right{{display:flex;align-items:center;gap:20px;font-size:13px}}
  h1{{font-size:18px;font-weight:600;color:#ccc;margin:0 0 12px}}
  h2{{font-size:16px;font-weight:500;color:#9a9a9a;text-align:center}}
  .board{{margin-bottom:36px}}
@@ -495,10 +493,14 @@ def generate():
       border-radius:50%;overflow:hidden;box-shadow:0 0 0 6px #333}}
  .w{{position:absolute;white-space:nowrap;line-height:1}}
  .w:hover{{outline:1px solid #0f0}}
+ .w-hidden{{opacity:.35;outline:1px dotted #888;outline-offset:-1px}}
+ body.hide-hidden .w-hidden{{display:none}}
  @keyframes preview-spin{{to{{transform:translate(-50%,-50%) rotate(360deg)}}}}
  .preview-spinner{{animation:preview-spin .9s linear infinite}}
- #status{{position:fixed;right:12px;top:8px;font-size:13px;color:#6a6}}
- #mdi-panel{{position:fixed;z-index:10;top:0;right:0;width:350px;height:100vh;
+ #status{{color:#6a6}}
+ #hidden-toggle{{color:#aaa;display:flex;align-items:center;gap:6px;
+      user-select:none;cursor:pointer}}
+ #mdi-panel{{position:fixed;z-index:10;top:52px;right:0;width:350px;height:calc(100vh - 52px);
       box-sizing:border-box;display:flex;flex-direction:column;background:#242424;
       border-left:1px solid #444;box-shadow:-8px 0 24px #0006;padding:16px}}
  #mdi-panel h2{{margin:0 0 10px;text-align:left;color:#eee;font-size:20px}}
@@ -517,13 +519,19 @@ def generate():
  .mdi-name{{width:100%;overflow:hidden;text-align:center;text-overflow:ellipsis;white-space:nowrap}}
  #mdi-sentinel{{height:2px}}
 </style></head><body>
+<header id="page-header">
+  <h1>LVGL Preview &ndash; thermostat_480 / thermostat_240</h1>
+  <div id="page-header-right">
+    <div id="status">live \N{BLACK CIRCLE}</div>
+    <label id="hidden-toggle"><input id="hidden-checkbox" type="checkbox"> Hidden anzeigen</label>
+  </div>
+</header>
 <aside id="mdi-panel" aria-label="Material Design Icons">
   <h2>MDI Icons</h2>
   <input id="mdi-search" type="search" placeholder="Icons durchsuchen..." autocomplete="off">
   <div id="mdi-count">Icon-Bibliothek wird geladen...</div>
   <div id="mdi-results"><div id="mdi-grid"></div><div id="mdi-sentinel"></div></div>
 </aside>
-<div id="status">live \N{BLACK CIRCLE}</div>
 <main id="boards">{board_html}</main>
 <script>
 let VERSION = "{version}";
@@ -637,6 +645,18 @@ async function poll() {{
   }}
   setTimeout(poll, 700);
 }}
+
+const HIDDEN_TOGGLE_KEY = "lvglPreviewShowHidden";
+const hiddenCheckbox = document.getElementById("hidden-checkbox");
+// Default to showing hidden widgets when no preference was saved yet.
+const showHidden = localStorage.getItem(HIDDEN_TOGGLE_KEY) !== "false";
+hiddenCheckbox.checked = showHidden;
+document.body.classList.toggle("hide-hidden", !showHidden);
+hiddenCheckbox.addEventListener("change", () => {{
+  document.body.classList.toggle("hide-hidden", !hiddenCheckbox.checked);
+  localStorage.setItem(HIDDEN_TOGGLE_KEY, String(hiddenCheckbox.checked));
+}});
+
 loadMdiIcons();
 poll();
 </script></body></html>"""

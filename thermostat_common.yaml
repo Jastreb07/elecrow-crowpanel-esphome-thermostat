@@ -1224,26 +1224,14 @@ script:
                       id: screen_light_brightness
                       animation: NONE
 
+  # Returns to whichever real screen open_settings/open_entity_overview
+  # remembered (entity_return_kind/entity_return_index), i.e. the screen
+  # that was actually open before entering screen_navigation.
   - id: close_settings
     then:
       - script.execute: wake_display
       - lambda: 'id(thermostat_quick_stage) = 0;'
-      - if:
-          condition:
-            lambda: 'return !id(ha_lights).empty();'
-          then:
-            - lambda: |-
-                id(light_index) = (int) id(ha_lights).size() - 1;
-                id(ui_context) = 5;
-            - script.execute: refresh_light
-            - script.execute: show_active_light_screen
-          else:
-            - lambda: |-
-                id(climate_index) = (int) id(ha_climates).size() - 1;
-                id(ui_context) = 1;
-            - script.execute: load_active_climate
-            - lvgl.page.show:
-                id: screen_thermostat
+      - script.execute: close_entity_overview
 
   # Move forward through configured thermostats. After the final thermostat,
   # continue with the first light or settings.
@@ -1334,11 +1322,15 @@ script:
             - lvgl.page.show:
                 id: screen_thermostat
 
+  # direction > 0 moves to the next light screen, direction < 0 to the
+  # previous one; both wrap around (see swipe_step_vertical/horizontal).
   - id: cycle_light_mode
+    parameters:
+      direction: int
     then:
       - script.stop: send_light_update
       - lambda: 'id(pending_light_change) = false;'
-      - lambda: 'id(ha_lights).cycle_mode(id(light_index));'
+      - lambda: 'id(ha_lights).cycle_mode(id(light_index), direction);'
       - script.execute: refresh_light
       - script.execute: show_active_light_screen
 
@@ -1580,7 +1572,7 @@ script:
             if (!id(connection_ready))
               return ha_text_or_placeholder(false, std::string(), 3);
             const auto &light = id(ha_lights).get(id(light_index));
-            if (light.state != "on") return std::string("--");
+            if (light.state != "on") return std::string("OFF");
             int mode = id(ha_lights).ensure_mode(id(light_index));
             char value[20];
             if (mode == esphome::ha_light_controller::LIGHT_TEMPERATURE)
@@ -1590,27 +1582,17 @@ script:
             else
               snprintf(value, sizeof(value), "%.0f%%", light.brightness);
             return std::string(value);
-      - lvgl.label.update:
-          id: label_light_icon
-          text: !lambda |-
-            int mode = id(ha_lights).ensure_mode(id(light_index));
-            if (mode == esphome::ha_light_controller::LIGHT_TEMPERATURE)
-              return std::string(ICON_THERMO_HIGH);
-            if (mode == esphome::ha_light_controller::LIGHT_COLOR)
-              return std::string(ICON_EYEDROPPER);
-            return std::string(ICON_SUN);
-      - lvgl.widget.update:
-          id: label_light_icon
-          text_color: !lambda |-
-            return id(ha_lights).get(id(light_index)).state == "on"
-                       ? lv_color_hex(0xE8E8E8)
-                       : lv_color_hex(0x555555);
-      - lvgl.widget.update:
-          id: label_light_icon_color
-          text_color: !lambda |-
-            return id(ha_lights).get(id(light_index)).state == "on"
-                       ? lv_color_hex(0xE8E8E8)
-                       : lv_color_hex(0x555555);
+      # Each light page has its own static icon glyph (see thermostat_240/480
+      # .yaml); only its on/off tint needs a runtime update.
+      - lambda: |-
+          int mode = id(ha_lights).ensure_mode(id(light_index));
+          lv_obj_t *mode_icons[3] = {id(label_light_icon_brightness),
+                                      id(label_light_icon_temperature),
+                                      id(label_light_icon_color)};
+          lv_color_t icon_color = id(ha_lights).get(id(light_index)).state == "on"
+                                       ? lv_color_hex(0xE8E8E8)
+                                       : lv_color_hex(0x555555);
+          lv_obj_set_style_text_color(mode_icons[mode], icon_color, LV_PART_MAIN);
       - lvgl.label.update:
           id: label_light_state
           text: !lambda |-
@@ -1642,7 +1624,7 @@ script:
           lv_obj_t *shared_widgets[] = {
               id(light_brightness_scale), id(label_light_brightness_ticks),
               id(light_kelvin_scale), id(light_slider_knob), id(label_light_name),
-              id(label_light_mode), id(label_light_value), id(label_light_icon),
+              id(label_light_mode), id(label_light_value),
               id(label_light_state), id(label_light_page), id(light_mode_dot_0),
               id(light_mode_dot_1), id(light_mode_dot_2)};
           for (lv_obj_t *widget : shared_widgets)
@@ -1664,13 +1646,9 @@ script:
           visible(id(light_kelvin_scale), temperature);
           visible(id(light_slider_knob), on && (brightness || temperature));
           visible(id(label_light_value), !color);
-          visible(id(label_light_name), !color);
           visible(id(label_light_page), !color);
-          // The color page has its own statically positioned labels/swatches
-          // (label_light_icon_color / label_light_mode_color / light_color_*),
-          // so the shared icon and mode label stay at their widget positions.
-          visible(id(label_light_icon), !color);
-          visible(id(label_light_mode), !color);
+          // label_light_name and label_light_mode ("Farbe") stay visible on
+          // the color page too, same as on brightness/temperature.
 
           float normalized = on
               ? clamp(id(ha_lights).normalized_value(id(light_index)) / 100.0f, 0.0f, 1.0f)
@@ -1702,18 +1680,21 @@ script:
                                      (uint8_t) roundf(light.saturation), 100)
               : lv_color_hex(0x333333);
           lv_obj_set_style_bg_color(id(light_color_swatch), current_color, LV_PART_MAIN);
+          visible(id(label_light_swatch_off), !on);
 
-          lv_obj_t *presets[] = {id(light_color_preset_0), id(light_color_preset_1),
-                                  id(light_color_preset_2), id(light_color_preset_3),
-                                  id(light_color_preset_4)};
+          lv_obj_t *presets[LIGHT_COLOR_PRESET_COUNT] = {
+              id(light_color_preset_0), id(light_color_preset_1), id(light_color_preset_2),
+              id(light_color_preset_3), id(light_color_preset_4), id(light_color_preset_5),
+              id(light_color_preset_6), id(light_color_preset_7), id(light_color_preset_8),
+              id(light_color_preset_9), id(light_color_preset_10), id(light_color_preset_11),
+              id(light_color_preset_12), id(light_color_preset_13), id(light_color_preset_14),
+              id(light_color_preset_15), id(light_color_preset_16), id(light_color_preset_17)};
+          // Preset colors are precomputed constants (LIGHT_COLOR_PRESETS[i].rgb),
+          // so this loop only ever does a color lookup, never an HSV conversion.
           int selected_preset = nearest_color_preset(light.hue);
           for (int i = 0; i < LIGHT_COLOR_PRESET_COUNT; i++) {
-            const auto &preset = LIGHT_COLOR_PRESETS[i];
-            lv_obj_set_style_bg_color(
-                presets[i],
-                lv_color_hsv_to_rgb((uint16_t) roundf(preset.hue),
-                                     (uint8_t) roundf(preset.saturation), 100),
-                LV_PART_MAIN);
+            lv_obj_set_style_bg_color(presets[i], lv_color_hex(LIGHT_COLOR_PRESETS[i].rgb),
+                                       LV_PART_MAIN);
             bool selected = on && color && i == selected_preset;
             lv_obj_set_style_border_width(presets[i], selected ? ${light_color_preset_border} : 0,
                                            LV_PART_MAIN);
@@ -1724,12 +1705,8 @@ script:
           // foreground order for the color page's own static widgets.
           lv_obj_move_foreground(id(label_light_icon_color));
           lv_obj_move_foreground(id(light_color_swatch));
-          lv_obj_move_foreground(id(label_light_mode_color));
-          lv_obj_move_foreground(id(light_color_preset_0));
-          lv_obj_move_foreground(id(light_color_preset_1));
-          lv_obj_move_foreground(id(light_color_preset_2));
-          lv_obj_move_foreground(id(light_color_preset_3));
-          lv_obj_move_foreground(id(light_color_preset_4));
+          lv_obj_move_foreground(id(label_light_swatch_off));
+          for (lv_obj_t *preset : presets) lv_obj_move_foreground(preset);
           lv_obj_move_foreground(id(label_light_name));
           lv_obj_move_foreground(id(label_light_page));
           lv_obj_move_foreground(id(light_mode_dot_0));
@@ -2218,6 +2195,17 @@ script:
               id(label_menu_next), id(label_menu_next2), id(label_menu_value)};
           for (lv_obj_t *widget : widgets)
             if (lv_obj_get_parent(widget) != target) lv_obj_set_parent(widget, target);
+          // Remember which real screen we came from so "Back" returns there,
+          // same as open_entity_overview. Entering from inside
+          // screen_navigation itself (e.g. "Settings" in the entity list)
+          // leaves the previously saved return screen untouched.
+          if (id(ui_context) == 1) {
+            id(entity_return_kind) = 1;
+            id(entity_return_index) = id(climate_index);
+          } else if (id(ui_context) == 5) {
+            id(entity_return_kind) = 2;
+            id(entity_return_index) = id(light_index);
+          }
           id(thermostat_quick_stage) = 0;
           id(ui_context) = 2;
           id(menu_index) = 0;
