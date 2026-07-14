@@ -906,14 +906,6 @@ lvgl:
             bg_opa: COVER
             border_color: 0xD7D7D7
             border_width: 4
-        - label:
-            id: label_light_swatch_off
-            text: "OFF"
-            text_font: rajdhani_medium_22
-            text_color: 0xAAAAAA
-            align: CENTER
-            y: 8
-            hidden: true
 
         # 18 fixed color presets in a ring instead of a full hue arc: cycling
         # a 96-segment arc every refresh was too slow on this panel, and
@@ -1126,7 +1118,7 @@ font:
     id: rajdhani_semibold_74
     size: 74
     bpp: 4
-    glyphs: ["0123456789", ".-°CFK%"]
+    glyphs: ["0123456789", ".-°CFKO%"]
   - file: "assets/fonts/Rajdhani-Medium.ttf"
     id: rajdhani_medium_22
     size: 22

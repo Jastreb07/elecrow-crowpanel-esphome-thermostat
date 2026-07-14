@@ -832,13 +832,6 @@ lvgl:
             bg_opa: COVER
             border_color: 0xD7D7D7
             border_width: 2
-        - label:
-            id: label_light_swatch_off
-            text: "OFF"
-            text_font: rajdhani_medium_16
-            text_color: 0xAAAAAA
-            align: CENTER
-            hidden: true
 
         # 18 fixed color presets in a ring instead of a full hue arc: cycling
         # a 96-segment arc every refresh was too slow on this panel, and

@@ -1645,7 +1645,10 @@ script:
           visible(id(label_light_brightness_ticks), brightness);
           visible(id(light_kelvin_scale), temperature);
           visible(id(light_slider_knob), on && (brightness || temperature));
-          visible(id(label_light_value), !color);
+          // On the color page the swatch itself shows the color, but there is
+          // nothing to show when the light is off, so label_light_value ("OFF")
+          // takes its place instead.
+          visible(id(label_light_value), !color || !on);
           visible(id(label_light_page), !color);
           // label_light_name and label_light_mode ("Farbe") stay visible on
           // the color page too, same as on brightness/temperature.
@@ -1673,14 +1676,16 @@ script:
                 LV_PART_MAIN);
           }
 
-          // Big center preview shows the light's actual current color; the
-          // preset row below highlights whichever preset is closest to it.
-          lv_color_t current_color = on
-              ? lv_color_hsv_to_rgb((uint16_t) roundf(light.hue),
-                                     (uint8_t) roundf(light.saturation), 100)
-              : lv_color_hex(0x333333);
-          lv_obj_set_style_bg_color(id(light_color_swatch), current_color, LV_PART_MAIN);
-          visible(id(label_light_swatch_off), !on);
+          // Big center preview shows the light's actual current color; hidden
+          // while off since label_light_value ("OFF") takes its place then.
+          // The preset row below highlights whichever preset is closest to it.
+          visible(id(light_color_swatch), on);
+          if (on)
+            lv_obj_set_style_bg_color(
+                id(light_color_swatch),
+                lv_color_hsv_to_rgb((uint16_t) roundf(light.hue),
+                                     (uint8_t) roundf(light.saturation), 100),
+                LV_PART_MAIN);
 
           lv_obj_t *presets[LIGHT_COLOR_PRESET_COUNT] = {
               id(light_color_preset_0), id(light_color_preset_1), id(light_color_preset_2),
@@ -1705,7 +1710,6 @@ script:
           // foreground order for the color page's own static widgets.
           lv_obj_move_foreground(id(label_light_icon_color));
           lv_obj_move_foreground(id(light_color_swatch));
-          lv_obj_move_foreground(id(label_light_swatch_off));
           for (lv_obj_t *preset : presets) lv_obj_move_foreground(preset);
           lv_obj_move_foreground(id(label_light_name));
           lv_obj_move_foreground(id(label_light_page));
