@@ -9,6 +9,36 @@
 #include <vector>
 #include <cctype>
 
+// Return live Home Assistant text once the configuration and entity state are
+// ready. Until then, callers choose the exact placeholder width per label.
+inline std::string ha_text_or_placeholder(bool ready, const std::string &text,
+                                          size_t placeholder_count) {
+  return ready ? text : std::string(placeholder_count, '-');
+}
+
+// Keep connection states as stable English keys internally and translate only
+// their presentation. Error comparisons and actions therefore stay language
+// independent.
+inline std::string ha_connection_label(const std::string &status, bool de) {
+  if (!de) return status;
+  if (status == "WiFi connecting...") return "WLAN wird verbunden...";
+  if (status == "WiFi error") return "WLAN-Fehler";
+  if (status == "HA connecting...") return "Home Assistant wird verbunden...";
+  if (status == "HA unreachable") return "Home Assistant nicht erreichbar";
+  if (status == "Smart Knob config loading...") return "Smart-Knob-Konfiguration wird geladen...";
+  if (status == "Smart Knob config not found") return "Smart-Knob-Konfiguration nicht gefunden";
+  if (status == "Smart Knob config JSON error") return "Smart-Knob-Konfiguration: JSON-Fehler";
+  if (status == "No climate configured") return "Kein Thermostat konfiguriert";
+  if (status == "Climate entity loading...") return "Thermostat-Entität wird geladen...";
+  if (status == "Climate entity not found") return "Thermostat-Entität nicht gefunden";
+  return status;
+}
+
+inline std::string reboot_hint_label(bool de) {
+  return de ? "Knob drücken oder Display berühren zum Neustart"
+            : "Press knob or touch display to reboot";
+}
+
 // ------------------------------------------------------------------
 // Material Design Icons (materialdesignicons-webfont.ttf, per URL in den
 // YAML font:-Bloecken geladen). Codepoints: https://pictogrammers.com/library/mdi/

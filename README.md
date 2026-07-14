@@ -132,38 +132,66 @@ The ESPHome integration in Home Assistant should discover the device after it
 joins Wi-Fi. Home Assistant asks for the API encryption key if one is defined
 in `secrets.yaml`.
 
-Thermostat pages are configured as an array in `thermostat_common.yaml`:
+There are two compatible ways to provide the page configuration:
+
+1. Install the custom integration from `integration/custom_components/` and
+   select the climate/light entities in the Home Assistant UI. See
+   [`integration/README.md`](integration/README.md).
+2. Use the manual Template-Entity configuration below.
+
+Both produce the same `sensor.smart_knob_config` interface. Do not enable both
+with the same entity ID at the same time.
+
+Create one template sensor in Home Assistant's `configuration.yaml`. Users only
+edit `entity_id` and `name` inside the two lists:
 
 ```yaml
-ha_climate_controller:
-  id: ha_climates
-  climates:
-    - entity_id: "climate.wohnzimmer_better_thermostat"
-      name: "Living Room"
-    - entity_id: "climate.schlafzimmer"
-      name: "Bedroom"
+template:
+  - sensor:
+      - name: "Smart Knob Config"
+        unique_id: smart_knob_config
+        default_entity_id: sensor.smart_knob_config
+        icon: mdi:tune-variant
+        state: "ready"
+        attributes:
+          climates: >-
+            {{ "json:" ~ ([
+              {
+                "entity_id": "climate.wohnzimmer_better_thermostat",
+                "name": "Living Room"
+              }
+            ] | to_json) }}
+
+          lights: >-
+            {{ "json:" ~ ([
+              {
+                "entity_id": "light.licht_wohnzimmer",
+                "name": "Licht Wohnzimmer"
+              },
+              {
+                "entity_id": "light.lampe_hinter_der_couch",
+                "name": "Lampe hinter der Couch"
+              }
+            ] | to_json) }}
 ```
 
-Every entry adds one logical thermostat page. Each page keeps its live state,
-TRV/AC selection, targets, HVAC mode, preset, and humidity separate. For
-outgoing service calls to work, enable the Home Assistant device option that
-allows the ESPHome device to perform Home Assistant actions.
+The `json:` prefix deliberately keeps Home Assistant from converting the JSON
+back into a native Python-style list before sending it over the ESPHome API.
+Every entry adds one logical page. Reload the Template entities after changing
+the lists; the ESP updates without recompiling or rebooting.
+
+The ESPHome device exposes a persisted text entity named **Home Assistant
+Config Entity**. Its initial value is `sensor.smart_knob_config`. Change it in
+Home Assistant if the template sensor has another entity ID; the ESP stores the
+selection in flash and restores it after a restart.
+
+Each thermostat page keeps its live state, TRV/AC selection, targets, HVAC
+mode, preset, and humidity separate. For outgoing service calls to work,
+enable the Home Assistant device option that allows the ESPHome device to
+perform Home Assistant actions.
 
 `name` is optional. If omitted, the name line on that thermostat page remains
 empty.
-
-Light pages are configured as an array in `thermostat_common.yaml`. Every
-entry adds one logical page to the horizontal swipe order:
-
-```yaml
-ha_light_controller:
-  id: ha_lights
-  lights:
-    - entity_id: "light.lampe_hinter_der_couch"
-      name: "Light"
-    - entity_id: "light.stehlampe"
-      name: "Floor Light"
-```
 
 The controller reads each entity's `supported_color_modes` attribute. A short
 press therefore cycles only through controls supported by that light:

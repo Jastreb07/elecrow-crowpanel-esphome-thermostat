@@ -1,0 +1,67 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Smart Thermostat Knob",
+        "description": "Vergib einen Namen und wähle die Home-Assistant-Entitäten aus, die auf diesem Smart Knob erscheinen sollen.",
+        "data": {
+          "name": "Name des Smart Knobs",
+          "climates": "Thermostate",
+          "lights": "Lichter",
+          "esphome_config_entity": "ESPHome-Konfigurationsentität"
+        },
+        "data_description": {
+          "name": "Ein eindeutiger, gut erkennbarer Name für diesen Smart Knob.",
+          "climates": "Wähle eine oder mehrere Climate-Entitäten aus.",
+          "lights": "Wähle eine oder mehrere Light-Entitäten aus.",
+          "esphome_config_entity": "Wähle die ESPHome-Textentität Home Assistant Config Entity dieses Knobs. Der zugehörige Neustart-Button wird automatisch erkannt."
+        }
+      },
+      "reconfigure": {
+        "title": "Smart Thermostat Knob konfigurieren",
+        "description": "Ändere den Namen und die Entitäten dieses Smart Knobs.",
+        "data": {
+          "name": "Name des Smart Knobs",
+          "climates": "Thermostate",
+          "lights": "Lichter",
+          "esphome_config_entity": "ESPHome-Konfigurationsentität"
+        },
+        "data_description": {
+          "name": "Ein eindeutiger, gut erkennbarer Name für diesen Smart Knob.",
+          "climates": "Wähle eine oder mehrere Climate-Entitäten aus.",
+          "lights": "Wähle eine oder mehrere Light-Entitäten aus.",
+          "esphome_config_entity": "Wähle die ESPHome-Textentität Home Assistant Config Entity dieses Knobs. Der zugehörige Neustart-Button wird automatisch erkannt."
+        }
+      }
+    },
+    "error": {
+      "no_climate": "Wähle mindestens ein Thermostat aus."
+    },
+    "abort": {
+      "reconfigure_successful": "Smart Thermostat Knob wurde erfolgreich aktualisiert."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Smart Thermostat Knob bearbeiten",
+        "description": "Ändere den Namen und die Entitäten dieses Smart Knobs.",
+        "data": {
+          "name": "Name des Smart Knobs",
+          "climates": "Thermostate",
+          "lights": "Lichter",
+          "esphome_config_entity": "ESPHome-Konfigurationsentität"
+        },
+        "data_description": {
+          "name": "Ein eindeutiger, gut erkennbarer Name für diesen Smart Knob.",
+          "climates": "Wähle eine oder mehrere Climate-Entitäten aus.",
+          "lights": "Wähle eine oder mehrere Light-Entitäten aus.",
+          "esphome_config_entity": "Wähle die ESPHome-Textentität Home Assistant Config Entity dieses Knobs. Der zugehörige Neustart-Button wird automatisch erkannt."
+        }
+      }
+    },
+    "error": {
+      "no_climate": "Wähle mindestens ein Thermostat aus."
+    }
+  }
+}

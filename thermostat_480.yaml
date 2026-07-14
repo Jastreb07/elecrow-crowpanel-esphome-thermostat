@@ -199,12 +199,73 @@ lvgl:
         - script.execute: update_status_led
     - timeout: !lambda 'return (uint32_t)(id(idle_home_num).state * 1000.0f);'
       then:
-        - lambda: 'id(ui_context) = 0;'
-        - script.execute: refresh_temps
-        - script.execute: refresh_status
-        - lvgl.page.show: screen_home
+        - if:
+            condition:
+              lambda: 'return id(connection_ready);'
+            then:
+              - lambda: 'id(ui_context) = 0;'
+              - script.execute: refresh_temps
+              - script.execute: refresh_status
+              - lvgl.page.show: screen_home
 
   pages:
+    # ================= Home Assistant loading =================
+    - id: screen_loading
+      bg_color: "0x000000"
+      widgets:
+        - button:
+            id: button_loading_reboot_background
+            align: CENTER
+            width: 480
+            height: 480
+            radius: 0
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            hidden: true
+            on_click:
+              - button.press: restart_btn
+        - spinner:
+            id: spinner_ha_connection
+            align: CENTER
+            width: 132
+            height: 132
+            spin_time: 900ms
+            arc_length: 80deg
+            arc_color: 0x444444
+            arc_width: 12
+            indicator:
+              arc_color: 0xFFFFFF
+              arc_width: 12
+        - label:
+            id: icon_loading_config_error
+            text: "󰗖"
+            text_font: icons_alert_160
+            text_color: 0xFFFFFF
+            align: CENTER
+            hidden: true
+        - label:
+            id: label_loading_reboot_hint
+            text: "Press knob or touch display to reboot"
+            text_font: rajdhani_medium_24
+            text_color: 0xB0B0B0
+            align: CENTER
+            y: 135
+            width: 340
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+            hidden: true
+        - label:
+            id: label_loading_status
+            text: "WiFi connecting..."
+            text_font: rajdhani_medium_24
+            text_color: 0x9A9A9A
+            align: CENTER
+            y: -130
+            width: 350
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+
     # ================= Home-Screen =================
     - id: screen_home
       bg_color: "0x000000"
@@ -978,6 +1039,7 @@ font:
         "0123456789",
         "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
         "abcdefghijklmnopqrstuvwxyz",
+        "äöüÄÖÜß",
         " .,:%°·-/=()",
       ]
   - file: "assets/fonts/Rajdhani-SemiBold.ttf"
@@ -1016,7 +1078,7 @@ font:
     bpp: 4
     glyphs: &icon_glyphs_all [
         "󰈸", "󰜗", "󰔢", "󰐥",
-        "󰔏", "󰖎",
+        "󰔏", "󰖎", "󰗖",
       ]
   - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
     id: icons_62
@@ -1028,6 +1090,11 @@ font:
     size: 90
     bpp: 4
     glyphs: *icon_glyphs_all
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
+    id: icons_alert_160
+    size: 160
+    bpp: 4
+    glyphs: ["󰗖"]
 
   # Settings menu icons (MDI). Reihenfolge = MENU_ICONS in thermostat_helpers.h.
   - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"

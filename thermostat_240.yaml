@@ -140,12 +140,73 @@ lvgl:
         - script.execute: update_status_led
     - timeout: !lambda 'return (uint32_t)(id(idle_home_num).state * 1000.0f);'
       then:
-        - lambda: 'id(ui_context) = 0;'
-        - script.execute: refresh_temps
-        - script.execute: refresh_status
-        - lvgl.page.show: screen_home
+        - if:
+            condition:
+              lambda: 'return id(connection_ready);'
+            then:
+              - lambda: 'id(ui_context) = 0;'
+              - script.execute: refresh_temps
+              - script.execute: refresh_status
+              - lvgl.page.show: screen_home
 
   pages:
+    # ================= Home Assistant loading =================
+    - id: screen_loading
+      bg_color: "0x000000"
+      widgets:
+        - button:
+            id: button_loading_reboot_background
+            align: CENTER
+            width: 240
+            height: 240
+            radius: 0
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            hidden: true
+            on_click:
+              - button.press: restart_btn
+        - spinner:
+            id: spinner_ha_connection
+            align: CENTER
+            width: 76
+            height: 76
+            spin_time: 900ms
+            arc_length: 80deg
+            arc_color: 0x444444
+            arc_width: 7
+            indicator:
+              arc_color: 0xFFFFFF
+              arc_width: 7
+        - label:
+            id: icon_loading_config_error
+            text: "󰗖"
+            text_font: icons_alert_76
+            text_color: 0xFFFFFF
+            align: CENTER
+            hidden: true
+        - label:
+            id: label_loading_reboot_hint
+            text: "Press knob or touch display to reboot"
+            text_font: rajdhani_medium_16
+            text_color: 0xB0B0B0
+            align: CENTER
+            y: 65
+            width: 160
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+            hidden: true
+        - label:
+            id: label_loading_status
+            text: "WiFi connecting..."
+            text_font: rajdhani_medium_16
+            text_color: 0x9A9A9A
+            align: CENTER
+            y: -60
+            width: 170
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+
     # ================= Home-Screen =================
     - id: screen_home
       bg_color: "0x000000"
@@ -870,7 +931,7 @@ font:
     bpp: 4
     glyphs: &mdi_glyphs_all [
         "󰈸", "󰜗", "󰔢", "󰐥",
-        "󰔏", "󰖎",
+        "󰔏", "󰖎", "󰗖",
         "󰎓", "󰘮", "󰃞", "󰅐",
         "󰗊", "󰏘", "󰈈", "󰔄",
         "󰔟", "󰃜", "󰏰", "󰇣",
@@ -887,6 +948,11 @@ font:
     size: 38
     bpp: 4
     glyphs: *mdi_glyphs_all
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
+    id: icons_alert_76
+    size: 76
+    bpp: 4
+    glyphs: ["󰗖"]
   - file: "assets/fonts/Rajdhani-SemiBold.ttf"
     id: rajdhani_semibold_46
     size: 46
@@ -895,6 +961,7 @@ font:
         "0123456789",
         "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
         "abcdefghijklmnopqrstuvwxyz",
+        "äöüÄÖÜß",
         " .,:%°·-/=()",
       ]
   - file: "assets/fonts/Rajdhani-SemiBold.ttf"

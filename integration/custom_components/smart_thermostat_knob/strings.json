@@ -1,0 +1,67 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Smart Thermostat Knob",
+        "description": "Give this Smart Knob a name and select the Home Assistant entities that should become its pages.",
+        "data": {
+          "name": "Smart Knob name",
+          "climates": "Thermostats",
+          "lights": "Lights",
+          "esphome_config_entity": "ESPHome config entity"
+        },
+        "data_description": {
+          "name": "A unique, recognizable name for this physical Smart Knob.",
+          "climates": "Select one or more climate entities.",
+          "lights": "Select one or more light entities.",
+          "esphome_config_entity": "Select this knob's ESPHome text entity named Home Assistant Config Entity. The matching restart button is detected automatically."
+        }
+      },
+      "reconfigure": {
+        "title": "Configure Smart Thermostat Knob",
+        "description": "Change this Smart Knob's name and the entities shown on it.",
+        "data": {
+          "name": "Smart Knob name",
+          "climates": "Thermostats",
+          "lights": "Lights",
+          "esphome_config_entity": "ESPHome config entity"
+        },
+        "data_description": {
+          "name": "A unique, recognizable name for this physical Smart Knob.",
+          "climates": "Select one or more climate entities.",
+          "lights": "Select one or more light entities.",
+          "esphome_config_entity": "Select this knob's ESPHome text entity named Home Assistant Config Entity. The matching restart button is detected automatically."
+        }
+      }
+    },
+    "error": {
+      "no_climate": "Select at least one thermostat."
+    },
+    "abort": {
+      "reconfigure_successful": "Smart Thermostat Knob updated successfully."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Edit Smart Thermostat Knob",
+        "description": "Change this Smart Knob's name and the entities shown on it.",
+        "data": {
+          "name": "Smart Knob name",
+          "climates": "Thermostats",
+          "lights": "Lights",
+          "esphome_config_entity": "ESPHome config entity"
+        },
+        "data_description": {
+          "name": "A unique, recognizable name for this physical Smart Knob.",
+          "climates": "Select one or more climate entities.",
+          "lights": "Select one or more light entities.",
+          "esphome_config_entity": "Select this knob's ESPHome text entity named Home Assistant Config Entity. The matching restart button is detected automatically."
+        }
+      }
+    },
+    "error": {
+      "no_climate": "Select at least one thermostat."
+    }
+  }
+}

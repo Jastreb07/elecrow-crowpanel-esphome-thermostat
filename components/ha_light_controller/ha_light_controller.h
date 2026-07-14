@@ -4,9 +4,12 @@
 #include <cmath>
 #include <cstdlib>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "esphome/components/api/api_connection.h"
 #include "esphome/components/api/api_server.h"
+#include "esphome/components/json/json_util.h"
 #include "esphome/core/component.h"
 #include "esphome/core/log.h"
 #include "esphome/core/string_ref.h"
@@ -35,21 +38,51 @@ class HALightController : public Component {
     this->lights_.push_back({entity_id, name});
   }
 
+  void set_config_entity_id(const std::string &entity_id) {
+    if (entity_id.empty() || entity_id == this->config_entity_id_) return;
+    this->config_entity_id_ = entity_id;
+    this->config_loaded_ = false;
+    this->config_error_ = false;
+    this->last_config_.clear();
+    this->config_generation_++;
+    if (this->setup_complete_) this->subscribe_config_();
+  }
+
+  void set_config_attribute(const std::string &attribute) { this->config_attribute_ = attribute; }
+
   void setup() override {
+    this->setup_complete_ = true;
+    if (!this->config_entity_id_.empty()) this->subscribe_config_();
+    if (!this->lights_.empty()) this->subscribe_states_();
+  }
+
+  void loop() override {
+    // Do not mutate APIServer::state_subs_ from a callback that is currently
+    // iterating that vector. Register the newly loaded entities afterwards.
+    if (!this->state_subscription_pending_) return;
+    this->state_subscription_pending_ = false;
+    this->subscribe_states_();
+    this->announce_state_subscriptions_();
+  }
+
+  void subscribe_states_() {
+    const uint32_t generation = ++this->state_generation_;
     for (size_t index = 0; index < this->lights_.size(); index++) {
       const std::string entity = this->lights_[index].entity_id;
-      this->subscribe_(index, entity, nullptr, Attribute::STATE);
-      this->subscribe_(index, entity, "supported_color_modes", Attribute::SUPPORTED_MODES);
-      this->subscribe_(index, entity, "brightness", Attribute::BRIGHTNESS);
-      this->subscribe_(index, entity, "color_temp_kelvin", Attribute::COLOR_TEMP);
-      this->subscribe_(index, entity, "min_color_temp_kelvin", Attribute::MIN_COLOR_TEMP);
-      this->subscribe_(index, entity, "max_color_temp_kelvin", Attribute::MAX_COLOR_TEMP);
-      this->subscribe_(index, entity, "hs_color", Attribute::HS_COLOR);
+      this->subscribe_(index, entity, nullptr, Attribute::STATE, generation);
+      this->subscribe_(index, entity, "supported_color_modes", Attribute::SUPPORTED_MODES, generation);
+      this->subscribe_(index, entity, "brightness", Attribute::BRIGHTNESS, generation);
+      this->subscribe_(index, entity, "color_temp_kelvin", Attribute::COLOR_TEMP, generation);
+      this->subscribe_(index, entity, "min_color_temp_kelvin", Attribute::MIN_COLOR_TEMP, generation);
+      this->subscribe_(index, entity, "max_color_temp_kelvin", Attribute::MAX_COLOR_TEMP, generation);
+      this->subscribe_(index, entity, "hs_color", Attribute::HS_COLOR, generation);
     }
   }
 
   void dump_config() override {
     ESP_LOGCONFIG("ha_light_controller", "Home Assistant light controller:");
+    ESP_LOGCONFIG("ha_light_controller", "  Config: %s / %s", this->config_entity_id_.c_str(),
+                  this->config_attribute_.c_str());
     for (const auto &light : this->lights_)
       ESP_LOGCONFIG("ha_light_controller", "  %s (%s)", light.name.c_str(), light.entity_id.c_str());
   }
@@ -58,6 +91,8 @@ class HALightController : public Component {
 
   size_t size() const { return this->lights_.size(); }
   bool empty() const { return this->lights_.empty(); }
+  bool config_loaded() const { return this->config_loaded_; }
+  bool config_error() const { return this->config_error_; }
 
   const HALightState &get(size_t index) const {
     static const HALightState EMPTY{};
@@ -163,12 +198,76 @@ class HALightController : public Component {
  protected:
   enum class Attribute { STATE, SUPPORTED_MODES, BRIGHTNESS, COLOR_TEMP, MIN_COLOR_TEMP, MAX_COLOR_TEMP, HS_COLOR };
 
-  void subscribe_(size_t index, const std::string &entity, const char *attribute, Attribute type) {
+  void subscribe_config_() {
+    const uint32_t generation = this->config_generation_;
+    api::global_api_server->subscribe_home_assistant_state(
+        this->config_entity_id_, optional<std::string>(this->config_attribute_),
+        [this, generation](StringRef state) {
+          if (generation == this->config_generation_) this->apply_config_(state.str());
+        });
+  }
+
+  void apply_config_(const std::string &value) {
+    if (value == this->last_config_) return;
+    std::string payload = value;
+    if (payload.rfind("json:", 0) == 0) payload.erase(0, 5);
+    auto doc = json::parse_json(payload);
+    if (!doc.is<JsonArray>()) {
+      this->config_error_ = true;
+      ESP_LOGW("ha_light_controller", "Attribute '%s' is not a valid JSON array",
+               this->config_attribute_.c_str());
+      return;
+    }
+
+    std::vector<HALightState> lights;
+    for (JsonObject item : doc.as<JsonArray>()) {
+      if (lights.size() >= 16) {
+        ESP_LOGW("ha_light_controller", "Only the first 16 light entries are loaded");
+        break;
+      }
+      const char *entity_value = item["entity_id"] | "";
+      const char *name_value = item["name"] | "";
+      const std::string entity_id{entity_value};
+      const std::string name{name_value};
+      if (entity_id.rfind("light.", 0) != 0 || entity_id.size() <= 6) {
+        ESP_LOGW("ha_light_controller", "Ignoring invalid light entity '%s'", entity_id.c_str());
+        continue;
+      }
+      HALightState light;
+      light.entity_id = entity_id;
+      light.name = name;
+      lights.push_back(std::move(light));
+    }
+
+    this->lights_ = std::move(lights);
+    this->last_config_ = value;
+    this->config_loaded_ = true;
+    this->config_error_ = false;
+    this->dirty_ = true;
+    this->state_subscription_pending_ = true;
+    ESP_LOGI("ha_light_controller", "Loaded %u light(s) from %s", (unsigned) this->lights_.size(),
+             this->config_entity_id_.c_str());
+  }
+
+  void subscribe_(size_t index, const std::string &entity, const char *attribute, Attribute type,
+                  uint32_t generation) {
     optional<std::string> dynamic_attribute;
     if (attribute != nullptr) dynamic_attribute = std::string(attribute);
     api::global_api_server->subscribe_home_assistant_state(
         entity, dynamic_attribute,
-        [this, index, type](StringRef state) { this->receive_(index, type, state.str()); });
+        [this, index, type, generation](StringRef state) {
+          if (generation == this->state_generation_) this->receive_(index, type, state.str());
+        });
+  }
+
+  void announce_state_subscriptions_() {
+    // Re-send the complete subscription list after loading dynamic entities.
+    // If both controllers load together, the last reset wins and HA receives
+    // one list containing both climate and light subscriptions.
+    for (auto &client : api::global_api_server->active_clients()) {
+      if (client != nullptr && client->is_authenticated() && !client->is_marked_for_removal())
+        client->on_subscribe_home_assistant_states_request();
+    }
   }
 
   void receive_(size_t index, Attribute type, const std::string &value) {
@@ -264,6 +363,15 @@ class HALightController : public Component {
 
   std::vector<HALightState> lights_;
   bool dirty_{true};
+  std::string config_entity_id_{"sensor.smart_knob_config"};
+  std::string config_attribute_{"lights"};
+  std::string last_config_;
+  uint32_t config_generation_{0};
+  uint32_t state_generation_{0};
+  bool setup_complete_{false};
+  bool state_subscription_pending_{false};
+  bool config_loaded_{false};
+  bool config_error_{false};
 };
 
 }  // namespace esphome::ha_light_controller

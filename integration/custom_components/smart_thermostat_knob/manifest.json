@@ -1,0 +1,12 @@
+{
+  "domain": "smart_thermostat_knob",
+  "name": "Smart Thermostat Knob",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://github.com/Jastreb07/elecrow-crowpanel-esphome-thermostat/tree/main/integration",
+  "issue_tracker": "https://github.com/Jastreb07/elecrow-crowpanel-esphome-thermostat/issues",
+  "integration_type": "helper",
+  "iot_class": "local_push",
+  "requirements": [],
+  "version": "0.3.1"
+}

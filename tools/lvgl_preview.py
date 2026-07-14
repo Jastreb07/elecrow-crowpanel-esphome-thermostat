@@ -120,6 +120,7 @@ def font_map(config):
 # Real MDI glyphs by widget ID. Runtime code sets them through
 # thermostat_helpers.h, so the preview needs hints.
 ICON_HINTS = [
+    (re.compile(r"loading_config_error"), "\U000F05D6"),  # mdi-alert-circle-outline
     (re.compile(r"hum"), "\U000F058E"),            # mdi-water-percent
     (re.compile(r"thermo_current"), "\U000F050F"),  # mdi-thermometer
     (re.compile(r"mode"), "\U000F0238"),            # mdi-fire
@@ -155,13 +156,17 @@ def color_css(value, default="#FFFFFF"):
 
 def pos_css(widget, size):
     """align + x/y -> CSS position in the square preview container."""
+    if isinstance(size, tuple):
+        container_width, container_height = size
+    else:
+        container_width = container_height = size
     align = str(widget.get("align", "TOP_LEFT")).upper()
     x = int(widget.get("x", 0) or 0)
     y = int(widget.get("y", 0) or 0)
     css, tx, ty = [], "0", "0"
     # Horizontal position.
     if "MID" in align or align == "CENTER":
-        css.append(f"left:{size // 2 + x}px")
+        css.append(f"left:{container_width // 2 + x}px")
         tx = "-50%"
     elif "RIGHT" in align:
         css.append(f"right:{-x}px")
@@ -173,7 +178,7 @@ def pos_css(widget, size):
     elif align.startswith("BOTTOM"):
         css.append(f"bottom:{-y}px")
     else:  # CENTER / LEFT_MID / RIGHT_MID
-        css.append(f"top:{size // 2 + y}px")
+        css.append(f"top:{container_height // 2 + y}px")
         ty = "-50%"
     css.append(f"transform:translate({tx},{ty})")
     return ";".join(css)
@@ -267,7 +272,28 @@ def render_widget(widget_entry, fonts, size):
             f'<div class="w" title="{title}" style="{pos_css(w, size)};width:{wd}px;'
             f'height:{ht}px;background:{bg};border-radius:{radius_css};{hid_css}"></div>'
         )
-    return ""  # Skip transparent buttons and unsupported widgets.
+    if wtype == "button":
+        wd, ht = int(w.get("width", 100)), int(w.get("height", 50))
+        bg_opa = str(w.get("bg_opa", "COVER")).upper()
+        bg = "transparent" if bg_opa == "TRANSP" else color_css(w.get("bg_color"), "#333333")
+        border_width = int(w.get("border_width", 0) or 0)
+        border_color = color_css(w.get("border_color"), "#FFFFFF")
+        radius = w.get("radius", 0)
+        radius_css = "9999px" if str(radius).upper() == "FULL" else f"{int(radius or 0)}px"
+        children = "".join(
+            render_widget(child, fonts, (wd, ht)) for child in w.get("widgets", [])
+        )
+
+        # Full-screen transparent buttons are input catchers, not visible UI.
+        if bg == "transparent" and border_width == 0 and not children:
+            return ""
+
+        return (
+            f'<div class="w preview-button" title="{title}" style="{pos_css(w, size)};'
+            f'width:{wd}px;height:{ht}px;background:{bg};border:{border_width}px solid {border_color};'
+            f'border-radius:{radius_css};box-sizing:border-box;{hid_css}">{children}</div>'
+        )
+    return ""  # Skip unsupported widgets.
 
 
 def render_board(name, path, size):

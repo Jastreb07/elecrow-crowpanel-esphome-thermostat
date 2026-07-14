@@ -4,8 +4,11 @@ from esphome.const import CONF_ID, CONF_NAME
 
 CONF_CLIMATES = "climates"
 CONF_ENTITY_ID = "entity_id"
+CONF_CONFIG_ENTITY_ID = "config_entity_id"
+CONF_CONFIG_ATTRIBUTE = "config_attribute"
 
 DEPENDENCIES = ["api"]
+AUTO_LOAD = ["json"]
 
 ha_climate_ns = cg.esphome_ns.namespace("ha_climate_controller")
 HAClimateController = ha_climate_ns.class_("HAClimateController", cg.Component)
@@ -28,7 +31,9 @@ CLIMATE_SCHEMA = cv.Schema(
 CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(HAClimateController),
-        cv.Required(CONF_CLIMATES): cv.All(cv.ensure_list(CLIMATE_SCHEMA), cv.Length(min=1)),
+        cv.Optional(CONF_CONFIG_ENTITY_ID, default="sensor.smart_knob_config"): cv.entity_id,
+        cv.Optional(CONF_CONFIG_ATTRIBUTE, default="climates"): cv.string_strict,
+        cv.Optional(CONF_CLIMATES, default=[]): cv.ensure_list(CLIMATE_SCHEMA),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -36,5 +41,7 @@ CONFIG_SCHEMA = cv.Schema(
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
+    cg.add(var.set_config_entity_id(config[CONF_CONFIG_ENTITY_ID]))
+    cg.add(var.set_config_attribute(config[CONF_CONFIG_ATTRIBUTE]))
     for climate in config[CONF_CLIMATES]:
         cg.add(var.add_climate(climate[CONF_ENTITY_ID], climate[CONF_NAME]))
