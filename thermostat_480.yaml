@@ -1103,7 +1103,7 @@ lvgl:
             text_font: icons_32
             text_color: 0x555555
             align: CENTER
-            x: -145
+            x: -155
             y: -74
             width: 44
             text_align: CENTER
@@ -1122,7 +1122,7 @@ lvgl:
             text_font: icons_32
             text_color: 0x555555
             align: CENTER
-            x: -145
+            x: -155
             y: 74
             width: 44
             text_align: CENTER
@@ -1143,9 +1143,9 @@ lvgl:
             text_font: rajdhani_medium_22
             text_color: 0x333333
             align: CENTER
-            x: 95
+            x: 55
             y: -134
-            width: 290
+            width: 260
             text_align: LEFT
             long_mode: SCROLL_CIRCULAR
         - label:
@@ -1154,7 +1154,7 @@ lvgl:
             text_font: rajdhani_medium_24
             text_color: 0x555555
             align: CENTER
-            x: 55
+            x: 45
             y: -74
             width: 330
             text_align: LEFT
@@ -1165,9 +1165,9 @@ lvgl:
             text_font: rajdhani_medium_22
             text_color: 0x333333
             align: CENTER
-            x: 95
+            x: 55
             y: 134
-            width: 290
+            width: 260
             text_align: LEFT
             long_mode: SCROLL_CIRCULAR
         - label:
@@ -1176,8 +1176,8 @@ lvgl:
             text_font: rajdhani_semibold_40
             text_color: 0xFFFFFF
             align: CENTER
-            x: 15
-            width: 330
+            x: 40
+            width: 370
             text_align: LEFT
             long_mode: SCROLL_CIRCULAR
         - label:
@@ -1186,7 +1186,7 @@ lvgl:
             text_font: rajdhani_medium_24
             text_color: 0x555555
             align: CENTER
-            x: 55
+            x: 45
             y: 74
             width: 330
             text_align: LEFT
