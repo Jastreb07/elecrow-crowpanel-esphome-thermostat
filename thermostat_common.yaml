@@ -1682,7 +1682,6 @@ script:
               id(arc_light_gradient_8), id(arc_light_gradient_9), id(arc_light_gradient_10),
               id(arc_light_gradient_11), id(arc_light_control), id(light_brightness_scale),
               id(label_light_brightness_ticks), id(light_kelvin_scale), id(light_slider_knob),
-              id(label_light_kelvin_min), id(label_light_kelvin_max), id(light_color_swatch),
               id(light_color_knob), id(label_light_name), id(label_light_mode),
               id(label_light_value), id(label_light_icon), id(label_light_state),
               id(label_light_page), id(light_mode_dot_0), id(light_mode_dot_1),
@@ -1730,8 +1729,6 @@ script:
           visible(id(light_brightness_scale), brightness);
           visible(id(label_light_brightness_ticks), brightness);
           visible(id(light_kelvin_scale), temperature);
-          visible(id(label_light_kelvin_min), temperature);
-          visible(id(label_light_kelvin_max), temperature);
           visible(id(light_slider_knob), on && (brightness || temperature));
           visible(id(light_color_swatch), color);
           visible(id(light_color_knob), on && color);
@@ -1753,8 +1750,6 @@ script:
           char minimum[20], maximum[20];
           snprintf(minimum, sizeof(minimum), "%.0f K", light.min_color_temp_kelvin);
           snprintf(maximum, sizeof(maximum), "%.0f K", light.max_color_temp_kelvin);
-          lv_label_set_text(id(label_light_kelvin_min), minimum);
-          lv_label_set_text(id(label_light_kelvin_max), maximum);
 
           lv_obj_t *dots[] = {id(light_mode_dot_0), id(light_mode_dot_1), id(light_mode_dot_2)};
           for (int i = 0; i < 3; i++) {

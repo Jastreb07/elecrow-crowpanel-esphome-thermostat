@@ -849,7 +849,7 @@ lvgl:
         - obj:
             id: light_brightness_scale
             align: CENTER
-            y: 105
+            y: 145
             width: 300
             height: 68
             radius: 34
@@ -864,14 +864,14 @@ lvgl:
             text_font: rajdhani_medium_24
             text_color: 0x34373A
             align: CENTER
-            y: 105
+            y: 145
             width: 270
             text_align: CENTER
 
         - obj:
             id: light_kelvin_scale
             align: CENTER
-            y: 105
+            y: 145
             width: 288
             height: 56
             radius: 28
@@ -906,7 +906,7 @@ lvgl:
         - obj:
             id: light_slider_knob
             align: CENTER
-            y: 105
+            y: 145
             width: 9
             height: 54
             radius: 5
@@ -914,24 +914,6 @@ lvgl:
             bg_opa: COVER
             border_width: 0
             shadow_width: 0
-        - label:
-            id: label_light_kelvin_min
-            text: "1800 K"
-            text_font: rajdhani_medium_24
-            text_color: 0xB0B0B0
-            align: CENTER
-            x: -110
-            y: 158
-            hidden: true
-        - label:
-            id: label_light_kelvin_max
-            text: "6500 K"
-            text_font: rajdhani_medium_24
-            text_color: 0xB0B0B0
-            align: CENTER
-            x: 110
-            y: 158
-            hidden: true
 
         - obj:
             id: light_color_swatch
@@ -962,11 +944,11 @@ lvgl:
         - label:
             id: label_light_name
             text: "Light"
-            text_font: rajdhani_medium_24
+            text_font: rajdhani_medium_40
             text_color: 0x9A9A9A
             align: CENTER
-            y: 45
-            width: 320
+            y: -75
+            width: 300
             text_align: CENTER
             long_mode: SCROLL_CIRCULAR
         - label:
@@ -975,8 +957,8 @@ lvgl:
             text_font: rajdhani_medium_24
             text_color: 0xB0B0B0
             align: CENTER
-            y: 22
-            width: 200
+            y: 65
+            width: 300
             text_align: CENTER
             long_mode: SCROLL_CIRCULAR
         - label:
@@ -985,8 +967,8 @@ lvgl:
             text_font: rajdhani_semibold_74
             text_color: 0xFFFFFF
             align: CENTER
-            y: -54
-            width: 330
+            y: 0
+            width: 300
             text_align: CENTER
         - label:
             id: label_light_icon
@@ -994,7 +976,7 @@ lvgl:
             text_font: icons_70
             text_color: 0x555555
             align: CENTER
-            y: -140
+            y: -165
         - label:
             id: label_light_state
             text: "Loading..."
@@ -1016,7 +998,7 @@ lvgl:
         - obj: &light_mode_dot_480
             id: light_mode_dot_0
             align: LEFT_MID
-            x: 28
+            x: 60
             y: -32
             width: 12
             height: 12
@@ -1273,6 +1255,11 @@ font:
   - file: "assets/fonts/Rajdhani-Medium.ttf"
     id: rajdhani_medium_24
     size: 24
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+  - file: "assets/fonts/Rajdhani-Medium.ttf"
+    id: rajdhani_medium_40
+    size: 40
     bpp: 4
     glyphs: *rajdhani_glyphs
   - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
