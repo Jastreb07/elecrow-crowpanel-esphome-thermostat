@@ -164,14 +164,10 @@ class HALightController : public Component {
       float high = std::max(light.min_color_temp_kelvin, light.max_color_temp_kelvin);
       light.color_temp_kelvin = clamp_(light.color_temp_kelvin + delta * 100.0f, low, high);
     } else {
-      // The full hue ring is drawn counter-clockwise from the top. Invert the
-      // encoder delta so a clockwise knob turn also moves the marker clockwise.
-      light.hue = std::fmod(light.hue - delta * 5.0f, 360.0f);
-      if (light.hue < 0.0f) light.hue += 360.0f;
-      // Kelvin/white modes commonly report a very low saturation. Never
-      // carry that value into color control or the selected color is washed
-      // out. The color arc always represents fully saturated colors.
-      light.saturation = 100.0f;
+      // Color mode steps through the fixed presets in thermostat_helpers.h
+      // directly at the call site instead of a continuous hue rotation; see
+      // the LIGHT_COLOR branch in the encoder handler.
+      return;
     }
     this->dirty_ = true;
   }
@@ -318,23 +314,6 @@ class HALightController : public Component {
 
   static float clamp_(float value, float low, float high) {
     return value < low ? low : (value > high ? high : value);
-  }
-
-  // Map the visible 270° color scale to Home Assistant hue. The reference UI
-  // begins with magenta (315°) and walks forward through red, yellow, green
-  // and cyan to blue (240°). The omitted violet range is snapped to the
-  // nearest physical end when an external HA update selects it.
-  static float hue_to_arc_position_(float hue) {
-    hue = std::fmod(hue, 360.0f);
-    if (hue < 0.0f) hue += 360.0f;
-    if (hue >= 315.0f) return (hue - 315.0f) / 285.0f;
-    if (hue <= 240.0f) return (hue + 45.0f) / 285.0f;
-    return hue < 277.5f ? 1.0f : 0.0f;
-  }
-
-  static float arc_position_to_hue_(float position) {
-    float hue = 315.0f + clamp_(position, 0.0f, 1.0f) * 285.0f;
-    return std::fmod(hue, 360.0f);
   }
 
   static float parse_number_(const std::string &value, float fallback) {

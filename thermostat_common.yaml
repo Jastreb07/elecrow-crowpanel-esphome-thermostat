@@ -11,7 +11,7 @@
 # Available hvac_modes and preset_modes are read separately at runtime.
 #
 # Screens: screen_home (default), then horizontal navigation through
-# configured thermostat pages -> configured light pages -> screen_settings.
+# configured thermostat pages -> configured light pages -> screen_navigation.
 #
 # Knob controls:
 #   Home:        rotate or short-press -> thermostat screen
@@ -54,13 +54,8 @@ substitutions:
   debounce_ms: "500ms"          # Quiet time before climate.set_temperature
   settings_row_gap: "82"        # Overridden by the 240x240 board
   settings_extra_rows: "false"  # 480x480 overrides this to show five rows
-  light_arc_size: "472"
-  light_arc_y: "4"
-  light_color_ring_size: "472"
-  light_color_ring_width: "30"
-  light_color_ring_y: "0"
+  light_color_preset_border: "5"
   light_slider_range: "230"
-  light_slider_y: "105"
   light_kelvin_scale_width: "288"
   light_kelvin_scale_height: "56"
 
@@ -853,7 +848,18 @@ sensor:
                        id(ha_lights).get(id(light_index)).state == "on";
             then:
               - lambda: |-
-                  id(ha_lights).adjust(id(light_index), id(encoder_delta));
+                  if (id(ha_lights).ensure_mode(id(light_index)) ==
+                      esphome::ha_light_controller::LIGHT_COLOR) {
+                    auto &light = id(ha_lights).get_mutable(id(light_index));
+                    int current = nearest_color_preset(light.hue);
+                    int dir = id(encoder_delta) > 0 ? 1 : -1;
+                    int next = ((current + dir) % LIGHT_COLOR_PRESET_COUNT +
+                                LIGHT_COLOR_PRESET_COUNT) % LIGHT_COLOR_PRESET_COUNT;
+                    light.hue = LIGHT_COLOR_PRESETS[next].hue;
+                    light.saturation = LIGHT_COLOR_PRESETS[next].saturation;
+                  } else {
+                    id(ha_lights).adjust(id(light_index), id(encoder_delta));
+                  }
                   id(pending_light_change) = true;
               - script.execute: refresh_light
               - script.execute: send_light_update
@@ -862,27 +868,23 @@ sensor:
               lambda: 'return id(encoder_delta) != 0 && id(ui_context) == 2;'
             then:
               - lambda: |-
-                  int d = id(encoder_delta) > 0 ? 1 : -1;
-                  id(menu_index) = (id(menu_index) + d + SETTINGS_ROOT_COUNT) % SETTINGS_ROOT_COUNT;
+                  id(menu_index) = menu_scroll_index(id(menu_index), id(encoder_delta), SETTINGS_ROOT_COUNT);
               - script.execute: update_settings_labels
         - if:
             condition:
               lambda: 'return id(encoder_delta) != 0 && id(ui_context) == 6;'
             then:
               - lambda: |-
-                  int d = id(encoder_delta) > 0 ? 1 : -1;
                   int count = (int) id(ha_climates).size() + (int) id(ha_lights).size() + 2;
-                  id(entity_menu_index) = (id(entity_menu_index) + d + count) % count;
+                  id(entity_menu_index) = menu_scroll_index(id(entity_menu_index), id(encoder_delta), count);
               - script.execute: update_settings_labels
         - if:
             condition:
               lambda: 'return id(encoder_delta) != 0 && id(ui_context) == 3;'
             then:
               - lambda: |-
-                  int d = id(encoder_delta) > 0 ? 1 : -1;
                   int count = settings_group_entry_count(id(menu_index));
-                  if (count > 0)
-                    id(group_item_index) = (id(group_item_index) + d + count) % count;
+                  id(group_item_index) = menu_scroll_index(id(group_item_index), id(encoder_delta), count);
               - script.execute: update_settings_labels
         - if:
             condition:
@@ -894,8 +896,7 @@ sensor:
                     case 0:
                     case 1:
                     case 13:
-                      if (id(submenu_count) > 0)
-                        id(submenu_index) = (id(submenu_index) + d + id(submenu_count)) % id(submenu_count);
+                      id(submenu_index) = menu_scroll_index(id(submenu_index), id(encoder_delta), id(submenu_count));
                       break;
                     case 2:
                       id(brightness_pct) = clamp(id(brightness_pct) + d * 5, 5, 100);
@@ -1341,7 +1342,7 @@ script:
       - script.execute: refresh_light
       - script.execute: show_active_light_screen
 
-  # Shared overview on screen_settings. It lists every configured climate and
+  # Shared overview on screen_navigation. It lists every configured climate and
   # light, followed by Settings and Back. Pressing an entity opens it directly.
   - id: open_entity_overview
     then:
@@ -1360,7 +1361,7 @@ script:
           id(ui_context) = 6;
       - script.execute: update_settings_labels
       - lvgl.page.show:
-          id: screen_settings
+          id: screen_navigation
           animation: NONE
 
   - id: close_entity_overview
@@ -1451,7 +1452,7 @@ script:
       - script.execute: wake_display
       - lambda: |-
           auto page_obj = [](esphome::lvgl::LvPageType *page) { return page->obj; };
-          lv_obj_t *target = page_obj(screen_settings);
+          lv_obj_t *target = page_obj(screen_navigation);
           lv_obj_t *widgets[] = {
               id(label_settings_title), id(label_menu_icon_prev2), id(label_menu_icon_prev),
               id(label_menu_icon), id(label_menu_icon_next), id(label_menu_icon_next2),
@@ -1469,7 +1470,7 @@ script:
           id(ui_context) = 4;
       - script.execute: update_settings_labels
       - lvgl.page.show:
-          id: screen_settings
+          id: screen_navigation
           animation: NONE
 
   - id: cycle_thermostat_quick
@@ -1628,46 +1629,9 @@ script:
             char page[20];
             snprintf(page, sizeof(page), "%d / %d", id(light_index) + 1, (int) id(ha_lights).size());
             return std::string(page);
-      - lvgl.arc.update:
-          id: arc_light_control
-          indicator:
-            arc_opa: !lambda |-
-              return id(ha_lights).get(id(light_index)).state == "on" &&
-                             id(ha_lights).ensure_mode(id(light_index)) ==
-                                 esphome::ha_light_controller::LIGHT_BRIGHTNESS
-                         ? LV_OPA_COVER : LV_OPA_TRANSP;
-            arc_color: !lambda |-
-              const auto &light = id(ha_lights).get(id(light_index));
-              int mode = id(ha_lights).ensure_mode(id(light_index));
-              if (mode == esphome::ha_light_controller::LIGHT_COLOR)
-                return lv_color_hsv_to_rgb((uint16_t) roundf(light.hue), 100, 100);
-              if (mode == esphome::ha_light_controller::LIGHT_TEMPERATURE) {
-                float low = std::min(light.min_color_temp_kelvin, light.max_color_temp_kelvin);
-                float high = std::max(light.min_color_temp_kelvin, light.max_color_temp_kelvin);
-                float p = high > low ? (light.color_temp_kelvin - low) / (high - low) : 0.5f;
-                uint8_t hue = (uint8_t) roundf(28.0f + clamp(p, 0.0f, 1.0f) * 190.0f);
-                return lv_color_hsv_to_rgb(hue, 45, 100);
-              }
-              return lv_color_hex(0xF7FBFD);
-          knob:
-            bg_color: !lambda |-
-              const auto &light = id(ha_lights).get(id(light_index));
-              if (id(ha_lights).ensure_mode(id(light_index)) ==
-                  esphome::ha_light_controller::LIGHT_COLOR)
-                return lv_color_hsv_to_rgb((uint16_t) roundf(light.hue), 100, 100);
-              return lv_color_hex(0xF7FBFD);
-            border_color: !lambda |-
-              const auto &light = id(ha_lights).get(id(light_index));
-              int mode = id(ha_lights).ensure_mode(id(light_index));
-              if (mode == esphome::ha_light_controller::LIGHT_COLOR)
-                return lv_color_hsv_to_rgb((uint16_t) roundf(light.hue), 100, 72);
-              if (mode == esphome::ha_light_controller::LIGHT_TEMPERATURE)
-                return lv_color_hex(0xC89054);
-              return lv_color_hex(0xA8B0B5);
       - lambda: |-
-          // The reference UI has three deliberately different controls:
-          // brightness uses a tick scale, Kelvin a warm/cold scale and color
-          // a complete 360-degree hue ring.
+          // Brightness uses a tick scale, Kelvin a warm/cold pill and color a
+          // handful of fixed presets (see LIGHT_COLOR_PRESETS).
           int mode = id(ha_lights).ensure_mode(id(light_index));
           auto page_obj = [](esphome::lvgl::LvPageType *page) { return page->obj; };
           lv_obj_t *target_page = mode == esphome::ha_light_controller::LIGHT_TEMPERATURE
@@ -1676,44 +1640,13 @@ script:
                     ? page_obj(screen_light_color)
                     : page_obj(screen_light_brightness);
           lv_obj_t *shared_widgets[] = {
-              id(arc_light_track), id(arc_light_gradient_0), id(arc_light_gradient_1),
-              id(arc_light_gradient_2), id(arc_light_gradient_3), id(arc_light_gradient_4),
-              id(arc_light_gradient_5), id(arc_light_gradient_6), id(arc_light_gradient_7),
-              id(arc_light_gradient_8), id(arc_light_gradient_9), id(arc_light_gradient_10),
-              id(arc_light_gradient_11), id(arc_light_control), id(light_brightness_scale),
-              id(label_light_brightness_ticks), id(light_kelvin_scale), id(light_slider_knob),
-              id(light_color_knob), id(label_light_name), id(label_light_mode),
-              id(label_light_value), id(label_light_icon), id(label_light_state),
-              id(label_light_page), id(light_mode_dot_0), id(light_mode_dot_1),
-              id(light_mode_dot_2)};
+              id(light_brightness_scale), id(label_light_brightness_ticks),
+              id(light_kelvin_scale), id(light_slider_knob), id(label_light_name),
+              id(label_light_mode), id(label_light_value), id(label_light_icon),
+              id(label_light_state), id(label_light_page), id(light_mode_dot_0),
+              id(light_mode_dot_1), id(light_mode_dot_2)};
           for (lv_obj_t *widget : shared_widgets)
             if (lv_obj_get_parent(widget) != target_page) lv_obj_set_parent(widget, target_page);
-
-          static std::vector<lv_obj_t *> segments;
-          constexpr int SEGMENT_COUNT = 96;
-          if (segments.empty()) {
-            lv_obj_t *track = id(arc_light_track);
-            lv_obj_t *parent = lv_obj_get_parent(track);
-            segments.reserve(SEGMENT_COUNT);
-            for (int i = 0; i < SEGMENT_COUNT; i++) {
-              lv_obj_t *segment = lv_arc_create(parent);
-              lv_obj_set_size(segment, ${light_color_ring_size}, ${light_color_ring_size});
-              lv_obj_align(segment, LV_ALIGN_CENTER, 0, ${light_color_ring_y});
-              float start = fmodf(270.0f + 360.0f * i / SEGMENT_COUNT, 360.0f);
-              float end = fmodf(270.0f + 360.0f * (i + 1) / SEGMENT_COUNT, 360.0f);
-              lv_arc_set_bg_angles(segment, start, end);
-              lv_arc_set_range(segment, 0, 100);
-              lv_arc_set_value(segment, 0);
-              lv_obj_set_style_arc_width(segment, ${light_color_ring_width}, LV_PART_MAIN);
-              lv_obj_set_style_arc_rounded(segment, false, LV_PART_MAIN);
-              lv_obj_set_style_arc_opa(segment, LV_OPA_COVER, LV_PART_MAIN);
-              lv_obj_set_style_arc_opa(segment, LV_OPA_TRANSP, LV_PART_INDICATOR);
-              lv_obj_set_style_bg_opa(segment, LV_OPA_TRANSP, LV_PART_KNOB);
-              lv_obj_remove_flag(segment, LV_OBJ_FLAG_CLICKABLE);
-              lv_obj_add_flag(segment, LV_OBJ_FLAG_HIDDEN);
-              segments.push_back(segment);
-            }
-          }
 
           const auto &light = id(ha_lights).get(id(light_index));
           bool on = id(connection_ready) && light.state == "on";
@@ -1730,14 +1663,12 @@ script:
           visible(id(label_light_brightness_ticks), brightness);
           visible(id(light_kelvin_scale), temperature);
           visible(id(light_slider_knob), on && (brightness || temperature));
-          visible(id(light_color_swatch), color);
-          visible(id(light_color_knob), on && color);
           visible(id(label_light_value), !color);
           visible(id(label_light_name), !color);
           visible(id(label_light_page), !color);
-          // The color page has its own statically positioned labels
-          // (label_light_icon_color / label_light_mode_color), so the shared
-          // icon and mode label stay at their widget-definition positions.
+          // The color page has its own statically positioned labels/swatches
+          // (label_light_icon_color / label_light_mode_color / light_color_*),
+          // so the shared icon and mode label stay at their widget positions.
           visible(id(label_light_icon), !color);
           visible(id(label_light_mode), !color);
 
@@ -1745,7 +1676,10 @@ script:
               ? clamp(id(ha_lights).normalized_value(id(light_index)) / 100.0f, 0.0f, 1.0f)
               : 0.0f;
           int slider_x = (int) roundf((normalized - 0.5f) * ${light_slider_range});
-          lv_obj_align(id(light_slider_knob), LV_ALIGN_CENTER, slider_x, ${light_slider_y});
+          // Y comes from the widget's static layout (y: 70 on the 240, y: 145
+          // on the 480) and is read back here unchanged; this only moves X.
+          lv_obj_align(id(light_slider_knob), LV_ALIGN_CENTER, slider_x,
+                       lv_obj_get_y_aligned(id(light_slider_knob)));
 
           char minimum[20], maximum[20];
           snprintf(minimum, sizeof(minimum), "%.0f K", light.min_color_temp_kelvin);
@@ -1761,40 +1695,41 @@ script:
                 LV_PART_MAIN);
           }
 
-          for (int i = 0; i < SEGMENT_COUNT; i++) {
-            if (lv_obj_get_parent(segments[i]) != target_page)
-              lv_obj_set_parent(segments[i], target_page);
-            if (!color) {
-              lv_obj_add_flag(segments[i], LV_OBJ_FLAG_HIDDEN);
-              continue;
-            }
-            float p = (i + 0.5f) / SEGMENT_COUNT;
-            // Red at twelve o'clock, then magenta/blue/cyan/green/yellow
-            // clockwise, exactly like the provided full color wheel.
-            float hue = fmodf(360.0f - p * 360.0f, 360.0f);
-            lv_obj_set_style_arc_color(
-                segments[i], lv_color_hsv_to_rgb((uint16_t) roundf(hue), 100, 100),
+          // Big center preview shows the light's actual current color; the
+          // preset row below highlights whichever preset is closest to it.
+          lv_color_t current_color = on
+              ? lv_color_hsv_to_rgb((uint16_t) roundf(light.hue),
+                                     (uint8_t) roundf(light.saturation), 100)
+              : lv_color_hex(0x333333);
+          lv_obj_set_style_bg_color(id(light_color_swatch), current_color, LV_PART_MAIN);
+
+          lv_obj_t *presets[] = {id(light_color_preset_0), id(light_color_preset_1),
+                                  id(light_color_preset_2), id(light_color_preset_3),
+                                  id(light_color_preset_4)};
+          int selected_preset = nearest_color_preset(light.hue);
+          for (int i = 0; i < LIGHT_COLOR_PRESET_COUNT; i++) {
+            const auto &preset = LIGHT_COLOR_PRESETS[i];
+            lv_obj_set_style_bg_color(
+                presets[i],
+                lv_color_hsv_to_rgb((uint16_t) roundf(preset.hue),
+                                     (uint8_t) roundf(preset.saturation), 100),
                 LV_PART_MAIN);
-            lv_obj_remove_flag(segments[i], LV_OBJ_FLAG_HIDDEN);
+            bool selected = on && color && i == selected_preset;
+            lv_obj_set_style_border_width(presets[i], selected ? ${light_color_preset_border} : 0,
+                                           LV_PART_MAIN);
+            lv_obj_set_style_border_color(presets[i], lv_color_hex(0xFFFFFF), LV_PART_MAIN);
           }
 
-          lv_color_t selected = on
-              ? lv_color_hsv_to_rgb((uint16_t) roundf(light.hue), 100, 100)
-              : lv_color_hex(0x333333);
-          lv_obj_set_style_bg_color(id(light_color_swatch), selected, LV_PART_MAIN);
-          lv_obj_set_style_bg_color(id(light_color_knob), selected, LV_PART_MAIN);
-          float radians = (270.0f - light.hue) * 3.14159265f / 180.0f;
-          float radius = (${light_color_ring_size} - ${light_color_ring_width}) * 0.5f;
-          int knob_x = (int) roundf(cosf(radians) * radius);
-          int knob_y = ${light_color_ring_y} + (int) roundf(sinf(radians) * radius);
-          lv_obj_align(id(light_color_knob), LV_ALIGN_CENTER, knob_x, knob_y);
-
-          // Dynamic ring objects are created last, so restore the intended
-          // foreground order for the knob, center preview and labels.
-          lv_obj_move_foreground(id(light_color_knob));
-          lv_obj_move_foreground(id(light_color_swatch));
+          // Shared widgets are reparented last, so restore the intended
+          // foreground order for the color page's own static widgets.
           lv_obj_move_foreground(id(label_light_icon_color));
+          lv_obj_move_foreground(id(light_color_swatch));
           lv_obj_move_foreground(id(label_light_mode_color));
+          lv_obj_move_foreground(id(light_color_preset_0));
+          lv_obj_move_foreground(id(light_color_preset_1));
+          lv_obj_move_foreground(id(light_color_preset_2));
+          lv_obj_move_foreground(id(light_color_preset_3));
+          lv_obj_move_foreground(id(light_color_preset_4));
           lv_obj_move_foreground(id(label_light_name));
           lv_obj_move_foreground(id(label_light_page));
           lv_obj_move_foreground(id(light_mode_dot_0));
@@ -2275,7 +2210,7 @@ script:
     then:
       - lambda: |-
           auto page_obj = [](esphome::lvgl::LvPageType *page) { return page->obj; };
-          lv_obj_t *target = page_obj(screen_settings);
+          lv_obj_t *target = page_obj(screen_navigation);
           lv_obj_t *widgets[] = {
               id(label_settings_title), id(label_menu_icon_prev2), id(label_menu_icon_prev),
               id(label_menu_icon), id(label_menu_icon_next), id(label_menu_icon_next2),
@@ -2289,7 +2224,7 @@ script:
           id(group_item_index) = 0;
       - script.execute: update_settings_labels
       - lvgl.page.show:
-          id: screen_settings
+          id: screen_navigation
 
   - id: group_enter
     then:
@@ -2496,31 +2431,30 @@ script:
             int climates = (int) id(ha_climates).size();
             int lights = (int) id(ha_lights).size();
             int count = climates + lights + 2;
-            int position = ((id(entity_menu_index) % count) + count) % count;
             auto entity_name = [climates, lights, count](int p) -> std::string {
               p = ((p % count) + count) % count;
               if (p < climates) return id(ha_climates).get(p).name;
               if (p < climates + lights) return id(ha_lights).get(p - climates).name;
               return p == climates + lights ? std::string("Settings") : std::string("Back");
             };
+            auto m = menu_window(id(entity_menu_index), count, ${settings_extra_rows}, entity_name);
             id(set_title) = "Entities";
-            id(set_prev2) = ${settings_extra_rows} && count >= 5 ? entity_name(position - 2) : "";
-            id(set_prev) = count > 1 ? entity_name(position - 1) : "";
-            id(set_cur) = entity_name(position);
-            id(set_next) = count > 1 ? entity_name(position + 1) : "";
-            id(set_next2) = ${settings_extra_rows} && count >= 5 ? entity_name(position + 2) : "";
-            snprintf(buf, sizeof(buf), "%d / %d", position + 1, count);
-            id(set_value) = buf;
+            id(set_prev2) = m.prev2;
+            id(set_prev) = m.prev;
+            id(set_cur) = m.cur;
+            id(set_next) = m.next;
+            id(set_next2) = m.next2;
+            id(set_value) = m.value;
           } else if (id(ui_context) == 2) {
-            int position = settings_root_wrap(id(menu_index));
+            auto m = menu_window(id(menu_index), SETTINGS_ROOT_COUNT, false,
+                                  [](int p) -> std::string { return settings_root_name(p); });
             id(set_title) = "Settings";
-            id(set_prev2) = "";
-            id(set_prev) = settings_root_name(position - 1);
-            id(set_cur) = settings_root_name(position);
-            id(set_next) = settings_root_name(position + 1);
-            id(set_next2) = "";
-            snprintf(buf, sizeof(buf), "%d / %d", position + 1, SETTINGS_ROOT_COUNT);
-            id(set_value) = buf;
+            id(set_prev2) = m.prev2;
+            id(set_prev) = m.prev;
+            id(set_cur) = m.cur;
+            id(set_next) = m.next;
+            id(set_next2) = m.next2;
+            id(set_value) = m.value;
           } else if (id(ui_context) == 3) {
             int group = settings_group_wrap(id(menu_index));
             int count = settings_group_entry_count(group);
@@ -2530,14 +2464,14 @@ script:
               int type = settings_group_entry_type_at(group, position);
               return type < 0 ? std::string("Back") : std::string(settings_menu_name(type, de));
             };
+            auto m = menu_window(id(group_item_index), count, ${settings_extra_rows}, entry_name);
             id(set_title) = SETTINGS_GROUP_NAMES[group];
-            id(set_prev2) = ${settings_extra_rows} && count >= 5
-                                ? entry_name(i - 2) : "";
-            id(set_prev) = count > 1 ? entry_name(i - 1) : "";
-            id(set_cur) = entry_name(i);
-            id(set_next) = count > 1 ? entry_name(i + 1) : "";
-            id(set_next2) = ${settings_extra_rows} && count >= 5
-                                ? entry_name(i + 2) : "";
+            id(set_prev2) = m.prev2;
+            id(set_prev) = m.prev;
+            id(set_cur) = m.cur;
+            id(set_next) = m.next;
+            id(set_next2) = m.next2;
+            id(set_value) = m.value;
             std::string val;
             switch (t) {
               case 0: val = ha_hvac_mode_label(id(current_hvac_raw), de); break;
@@ -2559,8 +2493,7 @@ script:
               case 17: val = id(led_enabled).state ? "On" : "Off"; break;
               case 18: snprintf(buf, sizeof(buf), "%d%%", (int) id(led_brightness_num).state); val = buf; break;
             }
-            snprintf(buf, sizeof(buf), "%d / %d", i + 1, count);
-            id(set_value) = buf;
+            (void) val;
           } else {
             int t = id(submenu_type);
             id(set_title) = settings_menu_name(t, de);
@@ -2585,20 +2518,21 @@ script:
                   vec = ha_filter_presets(id(preset_modes_raw));
                 }
                 id(submenu_count) = (int) vec.size();
-                int n = (int) vec.size();
-                if (n <= 0) {
+                if (vec.empty()) {
                   cur = t == 0 ? "No HVAC modes" : "No presets";
                   val = "Home Assistant unavailable";
                   break;
                 }
-                int idx = ((id(submenu_index) % n) + n) % n;
-                cur = (t == 0) ? ha_hvac_mode_label(vec[idx], de) : ha_preset_label(vec[idx], de);
-                if (n > 1) {
-                  id(set_prev) = (t == 0) ? ha_hvac_mode_label(vec[(idx+n-1)%n], de) : ha_preset_label(vec[(idx+n-1)%n], de);
-                  id(set_next) = (t == 0) ? ha_hvac_mode_label(vec[(idx+1)%n], de) : ha_preset_label(vec[(idx+1)%n], de);
-                }
-                snprintf(buf, sizeof(buf), "%d / %d", idx + 1, n);
-                val = buf;
+                auto option_name = [t, &vec, de](int p) -> std::string {
+                  int n = (int) vec.size();
+                  p = ((p % n) + n) % n;
+                  return t == 0 ? ha_hvac_mode_label(vec[p], de) : ha_preset_label(vec[p], de);
+                };
+                auto m = menu_window(id(submenu_index), (int) vec.size(), false, option_name);
+                cur = m.cur;
+                id(set_prev) = m.prev;
+                id(set_next) = m.next;
+                val = m.value;
                 break;
               }
               case 2: snprintf(buf, sizeof(buf), "%d%%", id(brightness_pct)); cur = buf; val = h_turn; break;
@@ -2614,10 +2548,12 @@ script:
               case 13: {
                 static const char *const opts[] = {"0.1", "0.2", "0.5", "1.0"};
                 id(submenu_count) = 4;
-                int idx = ((id(submenu_index) % 4) + 4) % 4;
-                cur = std::string(opts[idx]) + "°C";
-                id(set_prev) = std::string(opts[(idx + 3) % 4]) + "°C";
-                id(set_next) = std::string(opts[(idx + 1) % 4]) + "°C";
+                auto m = menu_window(id(submenu_index), 4, false, [](int p) -> std::string {
+                  return std::string(opts[((p % 4) + 4) % 4]) + "°C";
+                });
+                cur = m.cur;
+                id(set_prev) = m.prev;
+                id(set_next) = m.next;
                 val = h_save;
                 break;
               }

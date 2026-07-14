@@ -402,7 +402,7 @@ lvgl:
       # The CST826 coordinates are not swapped, so physical horizontal
       # gestures arrive on LVGL's native horizontal axis.
       on_swipe_left:
-        - script.execute: thermostat_next
+        - script.execute: open_settings
       on_swipe_right:
         - script.execute: open_entity_overview
       on_swipe_down:
@@ -697,7 +697,7 @@ lvgl:
     - id: screen_light_brightness
       bg_color: "0x000000"
       on_swipe_left:
-        - script.execute: light_next
+        - script.execute: open_settings
       on_swipe_right:
         - script.execute: open_entity_overview
       on_swipe_down:
@@ -716,135 +716,6 @@ lvgl:
             shadow_width: 0
             on_click:
               - script.execute: wake_display
-
-        - arc:
-            id: arc_light_track
-            align: CENTER
-            width: 472
-            height: 472
-            min_value: 0
-            max_value: 100
-            value: 0
-            start_angle: 135
-            end_angle: 45
-            arc_color: 0xDCE3E7
-            arc_width: 30
-            arc_rounded: true
-            adjustable: false
-            clickable: false
-            hidden: true
-            x: 0
-            y: 4
-            indicator:
-              arc_opa: TRANSP
-
-        # Full-ring color/Kelvin background, recolored by refresh_light.
-        - arc: &light_gradient_segment_480
-            id: arc_light_gradient_0
-            align: CENTER
-            width: 472
-            height: 472
-            min_value: 0
-            max_value: 100
-            value: 0
-            start_angle: 135
-            end_angle: 158
-            arc_color: 0xFFFFFF
-            arc_width: 30
-            arc_rounded: false
-            adjustable: false
-            clickable: false
-            hidden: true
-            x: 0
-            y: 4
-            indicator:
-              arc_opa: TRANSP
-        - arc:
-            <<: *light_gradient_segment_480
-            id: arc_light_gradient_1
-            start_angle: 158
-            end_angle: 180
-        - arc:
-            <<: *light_gradient_segment_480
-            id: arc_light_gradient_2
-            start_angle: 180
-            end_angle: 203
-        - arc:
-            <<: *light_gradient_segment_480
-            id: arc_light_gradient_3
-            start_angle: 203
-            end_angle: 225
-        - arc:
-            <<: *light_gradient_segment_480
-            id: arc_light_gradient_4
-            start_angle: 225
-            end_angle: 248
-        - arc:
-            <<: *light_gradient_segment_480
-            id: arc_light_gradient_5
-            start_angle: 248
-            end_angle: 270
-        - arc:
-            <<: *light_gradient_segment_480
-            id: arc_light_gradient_6
-            start_angle: 270
-            end_angle: 293
-        - arc:
-            <<: *light_gradient_segment_480
-            id: arc_light_gradient_7
-            start_angle: 293
-            end_angle: 315
-        - arc:
-            <<: *light_gradient_segment_480
-            id: arc_light_gradient_8
-            start_angle: 315
-            end_angle: 338
-        - arc:
-            <<: *light_gradient_segment_480
-            id: arc_light_gradient_9
-            start_angle: 338
-            end_angle: 360
-        - arc:
-            <<: *light_gradient_segment_480
-            id: arc_light_gradient_10
-            start_angle: 0
-            end_angle: 23
-        - arc:
-            <<: *light_gradient_segment_480
-            id: arc_light_gradient_11
-            start_angle: 23
-            end_angle: 45
-
-        - arc:
-            id: arc_light_control
-            align: CENTER
-            width: 472
-            height: 472
-            min_value: 0
-            max_value: 100
-            value: 50
-            start_angle: 135
-            end_angle: 45
-            arc_color: 0xDCE3E7
-            arc_opa: TRANSP
-            arc_width: 30
-            arc_rounded: true
-            adjustable: true
-            clickable: false
-            hidden: true
-            x: 0
-            y: 4
-            indicator:
-              arc_color: 0xF7FBFD
-              arc_width: 30
-              arc_rounded: true
-            knob:
-              bg_color: 0xF7FBFD
-              bg_opa: COVER
-              border_color: 0xA8B0B5
-              border_width: 5
-              radius: 100%
-              pad_all: 0
 
         - obj:
             id: light_brightness_scale
@@ -868,6 +739,9 @@ lvgl:
             width: 270
             text_align: CENTER
 
+        # Native rounded gradient fill instead of two clipped child rectangles:
+        # clip_corner masking a hard-edged gradient rectangle at the rounded
+        # cap left pale/washed-out pixels right at the curve on this panel.
         - obj:
             id: light_kelvin_scale
             align: CENTER
@@ -875,34 +749,14 @@ lvgl:
             width: 288
             height: 56
             radius: 28
-            clip_corner: true
-            bg_color: 0x08090A
+            bg_color: 0xFFAA32
+            bg_grad_color: 0x55B5E8
+            bg_grad_dir: HOR
             bg_opa: COVER
             border_color: 0x35383B
             border_width: 2
             shadow_width: 0
             hidden: true
-            widgets:
-              - obj:
-                  id: light_kelvin_gradient_warm
-                  align: LEFT_MID
-                  width: 145
-                  height: 56
-                  radius: 0
-                  bg_color: 0xFFAA32
-                  bg_grad_color: 0xF2EEE2
-                  bg_grad_dir: HOR
-                  border_width: 0
-              - obj:
-                  id: light_kelvin_gradient_cool
-                  align: RIGHT_MID
-                  width: 145
-                  height: 56
-                  radius: 0
-                  bg_color: 0xF2EEE2
-                  bg_grad_color: 0x55B5E8
-                  bg_grad_dir: HOR
-                  border_width: 0
         - obj:
             id: light_slider_knob
             align: CENTER
@@ -914,32 +768,6 @@ lvgl:
             bg_opa: COVER
             border_width: 0
             shadow_width: 0
-
-        - obj:
-            id: light_color_swatch
-            align: CENTER
-            y: 8
-            width: 96
-            height: 96
-            radius: 48
-            bg_color: 0xFF6655
-            bg_opa: COVER
-            border_color: 0xD7D7D7
-            border_width: 4
-            hidden: true
-        - obj:
-            id: light_color_knob
-            align: CENTER
-            y: -166
-            width: 38
-            height: 38
-            radius: 19
-            bg_color: 0xFF3333
-            bg_opa: COVER
-            border_color: 0xFFFFFF
-            border_width: 5
-            shadow_width: 0
-            hidden: true
 
         - label:
             id: label_light_name
@@ -1012,7 +840,7 @@ lvgl:
     - id: screen_light_temperature
       bg_color: "0x000000"
       on_swipe_left:
-        - script.execute: light_next
+        - script.execute: open_settings
       on_swipe_right:
         - script.execute: open_entity_overview
       on_swipe_down:
@@ -1034,7 +862,7 @@ lvgl:
     - id: screen_light_color
       bg_color: "0x000000"
       on_swipe_left:
-        - script.execute: light_next
+        - script.execute: open_settings
       on_swipe_right:
         - script.execute: open_entity_overview
       on_swipe_down:
@@ -1059,18 +887,50 @@ lvgl:
             text_color: 0x555555
             align: CENTER
             y: -110
+        # Center preview of the currently selected color preset.
+        - obj:
+            id: light_color_swatch
+            align: CENTER
+            y: 8
+            width: 96
+            height: 96
+            radius: 48
+            bg_color: 0xFF6655
+            bg_opa: COVER
+            border_color: 0xD7D7D7
+            border_width: 4
         - label:
             id: label_light_mode_color
             text: "Farbe"
             text_font: rajdhani_medium_24
             text_color: 0xB0B0B0
             align: CENTER
-            y: 110
+            y: 90
             width: 200
             text_align: CENTER
 
+        # Fixed color presets instead of a full hue ring: cycling a 96-segment
+        # arc every refresh was too slow on this panel, and a handful of
+        # favorite colors covers how the knob is actually used in practice.
+        - obj: &light_color_preset_480
+            id: light_color_preset_0
+            align: CENTER
+            x: -120
+            y: 140
+            width: 44
+            height: 44
+            radius: 22
+            bg_color: 0xFFFFFF
+            bg_opa: COVER
+            border_width: 0
+            shadow_width: 0
+        - obj: { <<: *light_color_preset_480, id: light_color_preset_1, x: -60 }
+        - obj: { <<: *light_color_preset_480, id: light_color_preset_2, x: 0 }
+        - obj: { <<: *light_color_preset_480, id: light_color_preset_3, x: 60 }
+        - obj: { <<: *light_color_preset_480, id: light_color_preset_4, x: 120 }
+
     # ================= Settings menu =================
-    - id: screen_settings
+    - id: screen_navigation
       bg_color: "0x000000"
       on_swipe_right:
         - script.execute: settings_swipe_back

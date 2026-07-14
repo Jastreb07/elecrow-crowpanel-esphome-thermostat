@@ -8,6 +8,9 @@
 #include <string>
 #include <vector>
 #include <cctype>
+#include <cstdio>
+#include <cmath>
+#include <functional>
 
 // Return live Home Assistant text once the configuration and entity state are
 // ready. Until then, callers choose the exact placeholder width per label.
@@ -150,6 +153,45 @@ inline int settings_group_entry_type_at(int group, int position) {
   return position == settings_count ? -1 : settings_group_type_at(group, position);
 }
 
+// ------------------------------------------------------------------
+// Shared list-menu behavior. Every scrollable menu (settings root, group
+// items, entity overview, and in-editor option lists) advances and renders
+// through these two functions, so the knob and the row layout behave
+// identically no matter which list is on screen.
+// ------------------------------------------------------------------
+
+// Clockwise (positive encoder delta) moves the selection up (toward
+// index - 1) and wraps around `count`. Only the sign of `delta` matters.
+inline int menu_scroll_index(int index, int delta, int count) {
+  if (count <= 0) return 0;
+  int d = delta > 0 ? -1 : 1;
+  return ((index + d) % count + count) % count;
+}
+
+struct MenuWindow {
+  std::string prev2, prev, cur, next, next2, value;
+};
+
+// Builds the prev2/prev/cur/next/next2 row texts and the "i / n" value
+// string around `index`, calling `name(position)` for each visible row.
+// `extra_rows` enables the outer prev2/next2 rows (only shown once the list
+// has at least 5 entries).
+inline MenuWindow menu_window(int index, int count, bool extra_rows,
+                               const std::function<std::string(int)> &name) {
+  MenuWindow m;
+  if (count <= 0 || !name) return m;
+  int i = ((index % count) + count) % count;
+  m.prev2 = (extra_rows && count >= 5) ? name(i - 2) : "";
+  m.prev = count > 1 ? name(i - 1) : "";
+  m.cur = name(i);
+  m.next = count > 1 ? name(i + 1) : "";
+  m.next2 = (extra_rows && count >= 5) ? name(i + 2) : "";
+  char buf[32];
+  snprintf(buf, sizeof(buf), "%d / %d", i + 1, count);
+  m.value = buf;
+  return m;
+}
+
 // Icon per better_thermostat preset.
 inline const char *ha_preset_icon(const std::string &p) {
   if (p == "eco") return "󰌪";       // mdi-leaf
@@ -217,6 +259,38 @@ inline LedColor hvac_led_color(const std::string &hvac, bool dual_setpoint, int 
   if (dual_setpoint) return adjust_target == 1 ? WHITE_BLUE : ORANGE;
   if (hvac == "cool" || hvac == "dry" || hvac == "fan_only") return WHITE_BLUE;
   return ORANGE;
+}
+
+// ------------------------------------------------------------------
+// Light color mode presets. A full continuous hue ring needed 96
+// individually recolored arc segments per refresh, which was too slow on
+// this panel; picking from a small fixed set of colors is both fast and
+// matches how the knob is actually used (favorite lamp colors, not a
+// precise color wheel).
+// ------------------------------------------------------------------
+struct ColorPreset { float hue; float saturation; };
+constexpr int LIGHT_COLOR_PRESET_COUNT = 5;
+static constexpr ColorPreset LIGHT_COLOR_PRESETS[LIGHT_COLOR_PRESET_COUNT] = {
+    {30.0f, 22.0f},   // warm white
+    {16.0f, 100.0f},  // orange
+    {50.0f, 100.0f},  // yellow
+    {214.0f, 85.0f},  // blue
+    {265.0f, 55.0f},  // purple
+};
+
+// Closest preset to a given HA hue, e.g. to highlight the right swatch when
+// a light's color was last set from Home Assistant instead of the knob.
+inline int nearest_color_preset(float hue) {
+  int best = 0;
+  float best_diff = 361.0f;
+  for (int i = 0; i < LIGHT_COLOR_PRESET_COUNT; i++) {
+    float diff = std::fabs(std::fmod(hue - LIGHT_COLOR_PRESETS[i].hue + 540.0f, 360.0f) - 180.0f);
+    if (diff < best_diff) {
+      best_diff = diff;
+      best = i;
+    }
+  }
+  return best;
 }
 
 // ------------------------------------------------------------------

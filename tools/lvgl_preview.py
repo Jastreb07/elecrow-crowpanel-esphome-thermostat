@@ -13,6 +13,7 @@
 #
 # Output: tools\preview.html
 
+import colorsys
 import copy
 import hashlib
 import os
@@ -42,6 +43,20 @@ BOARDS = [
     ("240x240", PROJECT / "thermostat_240.yaml", 240),
 ]
 WATCH_FILES = [COMMON_FILE] + [p for _, p, _ in BOARDS]
+
+# Mirrors LIGHT_COLOR_PRESETS in thermostat_helpers.h (hue, saturation).
+LIGHT_COLOR_PRESETS = [
+    (30.0, 22.0),   # warm white
+    (16.0, 100.0),  # orange
+    (50.0, 100.0),  # yellow
+    (214.0, 85.0),  # blue
+    (265.0, 55.0),  # purple
+]
+
+
+def hsv_int(hue, saturation, value=100.0):
+    r, g, b = colorsys.hsv_to_rgb(hue / 360.0, saturation / 100.0, value / 100.0)
+    return (round(r * 255) << 16) | (round(g * 255) << 8) | round(b * 255)
 
 
 # ---- Load ESPHome YAML. Unknown tags like !lambda/!secret are ignored,
@@ -369,10 +384,10 @@ def render_board(name, path, size):
 
     def runtime_widgets(pid, original):
         if pid not in {"screen_light_brightness", "screen_light_temperature", "screen_light_color",
-                       "screen_settings"}:
+                       "screen_navigation"}:
             return original
 
-        if pid == "screen_settings":
+        if pid == "screen_navigation":
             widgets = copy.deepcopy(original)
             text = {
                 "label_settings_title": "Entities",
@@ -400,11 +415,10 @@ def render_board(name, path, size):
                 if brightness else
                 {"light_kelvin_scale", "light_slider_knob", "label_light_kelvin_min",
                  "label_light_kelvin_max"} if temperature else
-                {"light_color_swatch", "light_color_knob"})
-        hide = ({"light_kelvin_scale", "label_light_kelvin_min", "label_light_kelvin_max",
-                 "light_color_swatch", "light_color_knob"} if brightness else
-                {"light_brightness_scale", "label_light_brightness_ticks",
-                 "light_color_swatch", "light_color_knob"} if temperature else
+                set())
+        hide = ({"light_kelvin_scale", "label_light_kelvin_min", "label_light_kelvin_max"}
+                if brightness else
+                {"light_brightness_scale", "label_light_brightness_ticks"} if temperature else
                 {"light_brightness_scale", "label_light_brightness_ticks",
                  "light_kelvin_scale", "light_slider_knob", "label_light_kelvin_min",
                  "label_light_kelvin_max", "label_light_value", "label_light_name",
@@ -425,6 +439,15 @@ def render_board(name, path, size):
             elif str(wid).startswith("light_mode_dot_"):
                 dot = int(str(wid).rsplit("_", 1)[-1])
                 cfg["bg_color"] = 0xFFFFFF if dot == active_dot else 0x292B2E
+            elif str(wid).startswith("light_color_preset_"):
+                preset = int(str(wid).rsplit("_", 1)[-1])
+                hue, sat = LIGHT_COLOR_PRESETS[preset]
+                cfg["bg_color"] = hsv_int(hue, sat)
+                cfg["border_width"] = 3 if preset == 1 else 0
+                cfg["border_color"] = 0xFFFFFF
+            elif wid == "light_color_swatch" and color:
+                hue, sat = LIGHT_COLOR_PRESETS[1]
+                cfg["bg_color"] = hsv_int(hue, sat)
         return widgets
 
     tiles = []
@@ -432,17 +455,6 @@ def render_board(name, path, size):
         pid = page.get("id", "?")
         entries = runtime_widgets(pid, page.get("widgets", []))
         widgets = "".join(render_widget(we, fonts, size) for we in entries)
-        if pid == "screen_light_color":
-            diameter = 236 if size == 240 else 472
-            width = 14 if size == 240 else 30
-            inset = (size - diameter) // 2
-            widgets = (
-                f'<div style="position:absolute;z-index:0;inset:{inset}px;border-radius:50%;'
-                'background:conic-gradient(#f22,#f2c,#72f,#04f,#0df,#0e8,#6e2,#ff0,#f80,#f22);'
-                f'-webkit-mask:radial-gradient(farthest-side,transparent calc(100% - {width}px),#000 0);'
-                f'mask:radial-gradient(farthest-side,transparent calc(100% - {width}px),#000 0)"></div>'
-                + widgets
-            )
         tiles.append(
             f'<div class="page"><h2>{pid}</h2>'
             f'<div class="screen" style="width:{size}px;height:{size}px">{widgets}</div></div>'
