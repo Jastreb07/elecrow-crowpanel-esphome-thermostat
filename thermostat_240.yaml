@@ -17,6 +17,18 @@ substitutions:
   settings_row_gap: "48"
   light_arc_size: "238"
   light_arc_y: "0"
+  light_color_ring_size: "236"
+  light_color_ring_width: "14"
+  light_color_ring_y: "0"
+  light_slider_range: "116"
+  light_slider_y: "55"
+  light_kelvin_scale_width: "144"
+  light_kelvin_scale_height: "32"
+  light_icon_y: "-70"
+  light_color_icon_y: "-35"
+  light_value_y: "-25"
+  light_mode_y: "15"
+  light_color_mode_y: "47"
 
 esphome:
   on_boot:
@@ -335,7 +347,12 @@ lvgl:
       on_swipe_down:
         - script.execute: thermostat_next
       on_swipe_up:
-        - script.execute: thermostat_previous
+        - script.execute: open_entity_overview
+      # On the rotated CST816, physical vertical gestures arrive as left/right.
+      on_swipe_left:
+        - script.execute: open_thermostat_quick
+      on_swipe_right:
+        - script.execute: open_thermostat_quick
       widgets:
         - button:
             id: button_thermostat_background
@@ -360,7 +377,7 @@ lvgl:
             start_angle: 135
             end_angle: 45
             rotation: 0
-            arc_color: 0xDCE3E7
+            arc_color: 0x1C1C1C
             arc_width: 16
             arc_rounded: true
             adjustable: false
@@ -609,13 +626,17 @@ lvgl:
             y: -12
 
     # ================= Light control =================
-    - id: screen_light
+    - id: screen_light_brightness
       bg_color: "0x000000"
       # With swap_xy, physical left/right arrive as up/down.
       on_swipe_down:
         - script.execute: light_next
       on_swipe_up:
-        - script.execute: light_previous
+        - script.execute: open_entity_overview
+      on_swipe_left:
+        - script.execute: cycle_light_mode
+      on_swipe_right:
+        - script.execute: cycle_light_mode
       widgets:
         - button:
             id: button_light_background
@@ -644,6 +665,7 @@ lvgl:
             arc_rounded: true
             adjustable: false
             clickable: false
+            hidden: true
             indicator:
               arc_opa: TRANSP
 
@@ -739,6 +761,7 @@ lvgl:
             arc_rounded: true
             adjustable: true
             clickable: false
+            hidden: true
             indicator:
               arc_color: 0xF7FBFD
               arc_width: 16
@@ -751,24 +774,142 @@ lvgl:
               radius: 100%
               pad_all: 0
 
+        # Brightness scale: slim outlined pill, subtle ticks and one white
+        # vertical position marker, matching the physical dial reference.
+        - obj:
+            id: light_brightness_scale
+            align: CENTER
+            y: 55
+            width: 150
+            height: 34
+            radius: 17
+            bg_color: 0x08090A
+            bg_opa: COVER
+            border_color: 0x35383B
+            border_width: 1
+            shadow_width: 0
+        - label:
+            id: label_light_brightness_ticks
+            text: "| | | | | | | | | | | | |"
+            text_font: rajdhani_medium_16
+            text_color: 0x34373A
+            align: CENTER
+            y: 55
+            width: 134
+            text_align: CENTER
+
+        # Kelvin scale. The adjacent blocks are deliberately narrow enough
+        # to read as one continuous warm-to-cool gradient on the round panel.
+        - obj:
+            id: light_kelvin_scale
+            align: CENTER
+            y: 55
+            width: 144
+            height: 32
+            radius: 16
+            clip_corner: true
+            bg_color: 0x08090A
+            bg_opa: COVER
+            border_color: 0x35383B
+            border_width: 1
+            shadow_width: 0
+            hidden: true
+            widgets:
+              - obj:
+                  id: light_kelvin_gradient_warm
+                  align: LEFT_MID
+                  width: 73
+                  height: 32
+                  radius: 0
+                  bg_color: 0xFFAA32
+                  bg_grad_color: 0xF2EEE2
+                  bg_grad_dir: HOR
+                  border_width: 0
+              - obj:
+                  id: light_kelvin_gradient_cool
+                  align: RIGHT_MID
+                  width: 73
+                  height: 32
+                  radius: 0
+                  bg_color: 0xF2EEE2
+                  bg_grad_color: 0x55B5E8
+                  bg_grad_dir: HOR
+                  border_width: 0
+        - obj:
+            id: light_slider_knob
+            align: CENTER
+            y: 55
+            width: 5
+            height: 28
+            radius: 3
+            bg_color: 0xFFFFFF
+            bg_opa: COVER
+            border_width: 0
+            shadow_width: 0
+        - label:
+            id: label_light_kelvin_min
+            text: "1800 K"
+            text_font: rajdhani_medium_16
+            text_color: 0xB0B0B0
+            align: CENTER
+            x: -52
+            y: 82
+            hidden: true
+        - label:
+            id: label_light_kelvin_max
+            text: "6500 K"
+            text_font: rajdhani_medium_16
+            text_color: 0xB0B0B0
+            align: CENTER
+            x: 52
+            y: 82
+            hidden: true
+
+        # Color mode center preview and the white-bordered knob on the hue ring.
+        - obj:
+            id: light_color_swatch
+            align: CENTER
+            y: 4
+            width: 48
+            height: 48
+            radius: 24
+            bg_color: 0xFF6655
+            bg_opa: COVER
+            border_color: 0xD7D7D7
+            border_width: 2
+            hidden: true
+        - obj:
+            id: light_color_knob
+            align: CENTER
+            y: -83
+            width: 20
+            height: 20
+            radius: 10
+            bg_color: 0xFF3333
+            bg_opa: COVER
+            border_color: 0xFFFFFF
+            border_width: 3
+            shadow_width: 0
+            hidden: true
+
         - label:
             id: label_light_name
             text: "Light"
             text_font: rajdhani_medium_16
             text_color: 0x9A9A9A
-            align: TOP_MID
-            y: 40
-            width: 100
+            align: CENTER
+            y: 20
+            width: 170
             text_align: CENTER
             long_mode: SCROLL_CIRCULAR
         - label:
             id: label_light_mode
-            text: "Helligkeit %"
+            text: "Helligkeit"
             text_font: rajdhani_medium_16
             text_color: 0xB0B0B0
             align: CENTER
-            y: -35
-            width: 180
+            y: 20
+            width: 100
             text_align: CENTER
             long_mode: SCROLL_CIRCULAR
         - label:
@@ -777,37 +918,100 @@ lvgl:
             text_font: rajdhani_semibold_46
             text_color: 0xFFFFFF
             align: CENTER
-            y: 0
             width: 180
             text_align: CENTER
         - label:
             id: label_light_icon
-            text: "\U000F0335"
+            text: "\U000F05A8"
             text_font: icons_38
             text_color: 0x555555
             align: CENTER
-            y: 46
+            y: -70
         - label:
             id: label_light_state
             text: "Loading..."
             text_font: rajdhani_medium_16
             text_color: 0x777777
             align: BOTTOM_MID
-            y: -28
+            y: -27
             width: 120
+            hidden: true
         - label:
             id: label_light_page
             text: "1 / 1"
             text_font: rajdhani_medium_16
             text_color: 0x555555
-            align: BOTTOM_MID
-            y: -12
+            align: TOP_RIGHT
+            x: -10
+            y: 8
+
+        - obj: &light_mode_dot_240
+            id: light_mode_dot_0
+            align: LEFT_MID
+            x: 15
+            y: -16
+            width: 7
+            height: 7
+            radius: 4
+            bg_color: 0xFFFFFF
+            bg_opa: COVER
+            border_width: 0
+        - obj: { <<: *light_mode_dot_240, id: light_mode_dot_1, y: 0, bg_color: 0x292B2E }
+        - obj: { <<: *light_mode_dot_240, id: light_mode_dot_2, y: 16, bg_color: 0x292B2E }
+
+    - id: screen_light_temperature
+      bg_color: "0x000000"
+      on_swipe_down:
+        - script.execute: light_next
+      on_swipe_up:
+        - script.execute: open_entity_overview
+      on_swipe_left:
+        - script.execute: cycle_light_mode
+      on_swipe_right:
+        - script.execute: cycle_light_mode
+      widgets:
+        - button:
+            align: CENTER
+            width: 238
+            height: 238
+            radius: 0
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            on_click:
+              - script.execute: wake_display
+
+    - id: screen_light_color
+      bg_color: "0x000000"
+      on_swipe_down:
+        - script.execute: light_next
+      on_swipe_up:
+        - script.execute: open_entity_overview
+      on_swipe_left:
+        - script.execute: cycle_light_mode
+      on_swipe_right:
+        - script.execute: cycle_light_mode
+      widgets:
+        - button:
+            align: CENTER
+            width: 238
+            height: 238
+            radius: 0
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            on_click:
+              - script.execute: wake_display
 
     # ================= Settings menu =================
     - id: screen_settings
       bg_color: "0x000000"
       on_swipe_up:
-        - script.execute: close_settings
+        - script.execute: settings_swipe_back
+      on_swipe_left:
+        - script.execute: cycle_thermostat_quick
+      on_swipe_right:
+        - script.execute: cycle_thermostat_quick
       widgets:
         - label:
             id: label_settings_title
@@ -930,6 +1134,7 @@ font:
     size: 18
     bpp: 4
     glyphs: &mdi_glyphs_all [
+        "\U000F05A8", "\U000F020A",
         "󰈸", "󰜗", "󰔢", "󰐥",
         "󰔏", "󰖎", "󰗖",
         "󰎓", "󰘮", "󰃞", "󰅐",
@@ -962,7 +1167,7 @@ font:
         "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
         "abcdefghijklmnopqrstuvwxyz",
         "äöüÄÖÜß",
-        " .,:%°·-/=()",
+        " .,:%°·-/=()|",
       ]
   - file: "assets/fonts/Rajdhani-SemiBold.ttf"
     id: rajdhani_semibold_20

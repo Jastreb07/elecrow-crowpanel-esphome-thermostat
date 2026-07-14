@@ -13,8 +13,12 @@
 #
 # Output: tools\preview.html
 
+import copy
+import hashlib
+import os
 import re
 import math
+import subprocess
 import sys
 import time
 import threading
@@ -121,6 +125,7 @@ def font_map(config):
 # thermostat_helpers.h, so the preview needs hints.
 ICON_HINTS = [
     (re.compile(r"loading_config_error"), "\U000F05D6"),  # mdi-alert-circle-outline
+    (re.compile(r"light_icon"), "\U000F05A8"),       # mdi-white-balance-sunny
     (re.compile(r"hum"), "\U000F058E"),            # mdi-water-percent
     (re.compile(r"thermo_current"), "\U000F050F"),  # mdi-thermometer
     (re.compile(r"mode"), "\U000F0238"),            # mdi-fire
@@ -129,6 +134,8 @@ ICON_HINTS = [
 
 
 def label_text(widget):
+    if "_preview_text" in widget:
+        return str(widget["_preview_text"])
     wid = widget.get("id", "")
     txt = str(widget.get("text", ""))
     if txt.startswith("<"):  # !lambda
@@ -147,10 +154,12 @@ def color_css(value, default="#FFFFFF"):
     s = str(value)
     if s.startswith("0x"):
         return "#" + s[2:].zfill(6)
-    if re.fullmatch(r"[0-9A-Fa-f]{6}", s):
-        return "#" + s
+    # PyYAML parses 0xRRGGBB as an integer. Handle decimal integers before
+    # treating six-character strings as already formatted hexadecimal colors.
     if s.isdigit():
         return f"#{int(s):06X}"
+    if re.fullmatch(r"[0-9A-Fa-f]{6}", s):
+        return "#" + s
     return default
 
 
@@ -165,7 +174,7 @@ def pos_css(widget, size):
     y = int(widget.get("y", 0) or 0)
     css, tx, ty = [], "0", "0"
     # Horizontal position.
-    if "MID" in align or align == "CENTER":
+    if align in {"TOP_MID", "BOTTOM_MID", "CENTER"}:
         css.append(f"left:{container_width // 2 + x}px")
         tx = "-50%"
     elif "RIGHT" in align:
@@ -188,8 +197,13 @@ def render_widget(widget_entry, fonts, size):
     (wtype, w), = widget_entry.items()
     wid = w.get("id", "?")
     hidden = w.get("hidden", False)
-    hid_css = "opacity:.35;outline:1px dashed #666;" if hidden else ""
-    title = f"{wid} ({wtype})" + (" [hidden]" if hidden else "")
+    # LVGL does not paint hidden objects at reduced opacity; it does not paint
+    # them at all. Showing them as debug outlines made several pages look as if
+    # incompatible modes were active simultaneously.
+    if hidden:
+        return ""
+    hid_css = ""
+    title = f"{wid} ({wtype})"
 
     if wtype == "label":
         fsize, weight, family = fonts.get(str(w.get("text_font", "")), (24, 400, "Rajdhani"))
@@ -266,11 +280,50 @@ def render_widget(widget_entry, fonts, size):
     if wtype == "obj":
         wd, ht = int(w.get("width", 10)), int(w.get("height", 10))
         bg = color_css(w.get("bg_color"), "#3A3A3A")
+        grad = w.get("bg_grad_color")
+        if grad is not None:
+            grad_color = color_css(grad, bg)
+            direction = str(w.get("bg_grad_dir", "HOR")).upper()
+            axis = "to bottom" if direction in {"VER", "VERTICAL"} else "to right"
+            bg = f"linear-gradient({axis},{bg},{grad_color})"
+        border_width = int(w.get("border_width", 0) or 0)
+        border_color = color_css(w.get("border_color"), "#FFFFFF")
         radius = w.get("radius", 0)
         radius_css = str(radius) if str(radius).endswith("%") else f"{int(radius)}px"
+        children = "".join(
+            render_widget(child, fonts, (wd, ht)) for child in w.get("widgets", [])
+        )
+        overflow = "overflow:hidden;" if w.get("clip_corner", False) else ""
         return (
             f'<div class="w" title="{title}" style="{pos_css(w, size)};width:{wd}px;'
-            f'height:{ht}px;background:{bg};border-radius:{radius_css};{hid_css}"></div>'
+            f'height:{ht}px;background:{bg};border:{border_width}px solid {border_color};'
+            f'box-sizing:border-box;border-radius:{radius_css};{overflow}{hid_css}">{children}</div>'
+        )
+    if wtype == "spinner":
+        diameter = int(w.get("width", w.get("height", 80)))
+        arc_width = int(w.get("arc_width", 6) or 6)
+        color = color_css(w.get("arc_color"), "#FFFFFF")
+        return (
+            f'<div class="w preview-spinner" title="{title}" style="{pos_css(w, size)};'
+            f'width:{diameter}px;height:{diameter}px;border:{arc_width}px solid #FFFFFF22;'
+            f'border-top-color:{color};border-radius:50%;box-sizing:border-box"></div>'
+        )
+    if wtype == "bar":
+        wd, ht = int(w.get("width", 100)), int(w.get("height", 10))
+        minimum = float(w.get("min_value", 0))
+        maximum = float(w.get("max_value", 100))
+        value = min(max(float(w.get("value", minimum)), minimum), maximum)
+        progress = 100 * (value - minimum) / (maximum - minimum) if maximum != minimum else 0
+        bg = color_css(w.get("bg_color"), "#292D31")
+        indicator = w.get("indicator") or {}
+        fill = color_css(indicator.get("bg_color"), "#FFFFFF")
+        radius = w.get("radius", 0)
+        radius_css = "9999px" if str(radius).endswith("%") else f"{int(radius or 0)}px"
+        return (
+            f'<div class="w preview-bar" title="{title}" style="{pos_css(w, size)};'
+            f'width:{wd}px;height:{ht}px;background:{bg};border-radius:{radius_css};'
+            f'overflow:hidden;{hid_css}"><div style="width:{progress:.1f}%;height:100%;'
+            f'background:{fill};border-radius:inherit;"></div></div>'
         )
     if wtype == "button":
         wd, ht = int(w.get("width", 100)), int(w.get("height", 50))
@@ -301,10 +354,102 @@ def render_board(name, path, size):
     fonts = font_map(config)
     pages = config.get("lvgl", {}).get("pages", [])
 
+    page_by_id = {page.get("id"): page for page in pages}
+    light_source = page_by_id.get("screen_light_brightness", {}).get("widgets", [])
+
+    def widget_configs(entries):
+        for entry in entries:
+            if not isinstance(entry, dict) or not entry:
+                continue
+            cfg = next(iter(entry.values()))
+            if not isinstance(cfg, dict):
+                continue
+            yield cfg
+            yield from widget_configs(cfg.get("widgets", []))
+
+    def runtime_widgets(pid, original):
+        if pid not in {"screen_light_brightness", "screen_light_temperature", "screen_light_color",
+                       "screen_settings"}:
+            return original
+
+        if pid == "screen_settings":
+            widgets = copy.deepcopy(original)
+            text = {
+                "label_settings_title": "Entities",
+                "label_menu_prev2": "Living Room",
+                "label_menu_prev": "Bedroom",
+                "label_menu_current": "Light",
+                "label_menu_next": "Kitchen Light",
+                "label_menu_next2": "Settings",
+                "label_menu_value": "3 / 6",
+            }
+            for cfg in widget_configs(widgets):
+                if cfg.get("id") in text:
+                    cfg["text"] = text[cfg["id"]]
+            return widgets
+
+        widgets = copy.deepcopy(light_source)
+        brightness = pid == "screen_light_brightness"
+        temperature = pid == "screen_light_temperature"
+        color = pid == "screen_light_color"
+        show = ({"light_brightness_scale", "label_light_brightness_ticks", "light_slider_knob"}
+                if brightness else
+                {"light_kelvin_scale", "light_slider_knob", "label_light_kelvin_min",
+                 "label_light_kelvin_max"} if temperature else
+                {"light_color_swatch", "light_color_knob"})
+        hide = ({"light_kelvin_scale", "label_light_kelvin_min", "label_light_kelvin_max",
+                 "light_color_swatch", "light_color_knob"} if brightness else
+                {"light_brightness_scale", "label_light_brightness_ticks",
+                 "light_color_swatch", "light_color_knob"} if temperature else
+                {"light_brightness_scale", "label_light_brightness_ticks",
+                 "light_kelvin_scale", "light_slider_knob", "label_light_kelvin_min",
+                 "label_light_kelvin_max", "label_light_value", "label_light_name",
+                 "label_light_page"})
+        substitutions = config.get("substitutions", {})
+        icon_y = int(substitutions.get("light_color_icon_y" if color else "light_icon_y",
+                                       -70 if size == 240 else -140))
+        value_y = int(substitutions.get("light_value_y", -25 if size == 240 else -54))
+        mode_y = int(substitutions.get("light_color_mode_y" if color else "light_mode_y",
+                                       47 if size == 240 else 22))
+        active_dot = 0 if brightness else 1 if temperature else 2
+        for cfg in widget_configs(widgets):
+            wid = cfg.get("id")
+            if wid in show:
+                cfg["hidden"] = False
+            elif wid in hide:
+                cfg["hidden"] = True
+            if wid == "label_light_mode":
+                cfg["text"] = "Helligkeit" if brightness else "Kelvin" if temperature else "Farbe"
+                cfg.update(align="CENTER", x=0, y=mode_y)
+            elif wid == "label_light_value" and temperature:
+                cfg["text"] = "3200K"
+            if wid == "label_light_value":
+                cfg.update(align="CENTER", x=0, y=value_y)
+            elif wid == "label_light_icon":
+                cfg.update(align="CENTER", x=0, y=icon_y)
+                cfg["_preview_text"] = ("\U000F0599" if brightness else
+                                        "\U000F050F" if temperature else "\U000F00DE")
+            elif str(wid).startswith("light_mode_dot_"):
+                dot = int(str(wid).rsplit("_", 1)[-1])
+                cfg["bg_color"] = 0xFFFFFF if dot == active_dot else 0x292B2E
+        return widgets
+
     tiles = []
     for page in pages:
         pid = page.get("id", "?")
-        widgets = "".join(render_widget(we, fonts, size) for we in page.get("widgets", []))
+        entries = runtime_widgets(pid, page.get("widgets", []))
+        widgets = "".join(render_widget(we, fonts, size) for we in entries)
+        if pid == "screen_light_color":
+            diameter = 236 if size == 240 else 472
+            width = 14 if size == 240 else 30
+            inset = (size - diameter) // 2
+            widgets = (
+                f'<div style="position:absolute;z-index:0;inset:{inset}px;border-radius:50%;'
+                'background:conic-gradient(#f22,#f2c,#72f,#04f,#0df,#0e8,#6e2,#ff0,#f80,#f22);'
+                f'-webkit-mask:radial-gradient(farthest-side,transparent calc(100% - {width}px),#000 0);'
+                f'mask:radial-gradient(farthest-side,transparent calc(100% - {width}px),#000 0)"></div>'
+                + widgets
+            )
         tiles.append(
             f'<div class="page"><h2>{pid}</h2>'
             f'<div class="screen" style="width:{size}px;height:{size}px">{widgets}</div></div>'
@@ -322,9 +467,7 @@ def generate():
     board_html = "".join(render_board(name, path, size) for name, path, size in BOARDS)
 
     version = str(time.time_ns())
-    VERSION_FILE.write_text(version, encoding="utf-8")
-    OUT_FILE.write_text(
-        f"""<!doctype html><html><head><meta charset="utf-8">
+    html = f"""<!doctype html><html><head><meta charset="utf-8">
 <title>LVGL Preview - thermostat_480 / thermostat_240</title>
 <style>
  @font-face{{font-family:'Rajdhani';font-weight:700;
@@ -347,6 +490,8 @@ def generate():
       border-radius:50%;overflow:hidden;box-shadow:0 0 0 6px #333}}
  .w{{position:absolute;white-space:nowrap;line-height:1}}
  .w:hover{{outline:1px solid #0f0}}
+ @keyframes preview-spin{{to{{transform:translate(-50%,-50%) rotate(360deg)}}}}
+ .preview-spinner{{animation:preview-spin .9s linear infinite}}
  #status{{position:fixed;right:12px;top:8px;font-size:13px;color:#6a6}}
  #mdi-panel{{position:fixed;z-index:10;top:0;right:0;width:350px;height:100vh;
       box-sizing:border-box;display:flex;flex-direction:column;background:#242424;
@@ -461,9 +606,14 @@ async function loadMdiIcons() {{
 
 async function poll() {{
   try {{
-    const r = await fetch("preview_version.txt", {{cache: "no-store"}});
+    const r = await fetch(`preview_version.txt?t=${{Date.now()}}`, {{cache: "no-store"}});
     const v = (await r.text()).trim();
-    if (v && v !== VERSION) location.reload();
+    if (v && v !== VERSION) {{
+      const next = new URL(location.href);
+      next.searchParams.set("preview", v);
+      location.replace(next);
+      return;
+    }}
     document.getElementById("status").style.color = "#6a6";
   }} catch (e) {{
     document.getElementById("status").style.color = "#a66";
@@ -472,15 +622,40 @@ async function poll() {{
 }}
 loadMdiIcons();
 poll();
-</script></body></html>""",
-        encoding="utf-8",
-    )
+</script></body></html>"""
+
+    # Never expose a half-written HTML document to the browser. Publish the
+    # completed page first and the version marker last, so a detected version
+    # always points to a fully available preview.
+    atomic_write(OUT_FILE, html)
+    atomic_write(VERSION_FILE, version)
     print(f"[{time.strftime('%H:%M:%S')}] preview.html updated")
+
+
+def atomic_write(path, content):
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(content, encoding="utf-8")
+        os.replace(temporary, path)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
 
 
 class QuietHandler(SimpleHTTPRequestHandler):
     def log_message(self, *args):
         pass  # Keep request logs out of the console.
+
+    def end_headers(self):
+        # This is a development-only server. Disable caching globally so a
+        # browser can never combine a new version marker with stale HTML,
+        # fonts or other preview assets.
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
+        super().end_headers()
 
 
 def serve():
@@ -491,30 +666,100 @@ def serve():
     return httpd
 
 
+def stop_existing_watchers():
+    """Stop older instances of this preview watcher before binding the port."""
+    if os.name != "nt":
+        return
+
+    # Restrict termination to Python processes running lvgl_preview.py. This
+    # also catches older instances started with a relative script path. The
+    # current process and unrelated Python applications are never touched.
+    script_path = str(Path(__file__).resolve())
+    environment = os.environ.copy()
+    environment["LVGL_PREVIEW_CURRENT_PID"] = str(os.getpid())
+    environment["LVGL_PREVIEW_SCRIPT"] = script_path
+    powershell = r"""
+$currentPid = [int]$env:LVGL_PREVIEW_CURRENT_PID
+$scriptPath = $env:LVGL_PREVIEW_SCRIPT
+$scriptPattern = [regex]::Escape($scriptPath)
+$targets = @(Get-CimInstance Win32_Process | Where-Object {
+    $_.ProcessId -ne $currentPid -and
+    $_.Name -match '^python(w)?\.exe$' -and
+    ($_.CommandLine -match $scriptPattern -or $_.CommandLine -match 'lvgl_preview\.py')
+})
+foreach ($target in $targets) {
+    Stop-Process -Id $target.ProcessId -Force -ErrorAction SilentlyContinue
+}
+foreach ($target in $targets) {
+    Wait-Process -Id $target.ProcessId -Timeout 3 -ErrorAction SilentlyContinue
+    Write-Output $target.ProcessId
+}
+"""
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", powershell],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=8,
+            env=environment,
+        )
+        stopped = [pid for pid in result.stdout.splitlines() if pid.strip().isdigit()]
+        if stopped:
+            print(f"Stopped previous preview watcher(s): {', '.join(stopped)}")
+    except (OSError, subprocess.SubprocessError) as error:
+        print(f"Could not check for an older preview watcher: {error}")
+
+
 def watch():
+    stop_existing_watchers()
     generate()
     serve()
     url = f"http://localhost:{PORT}/tools/preview.html"
     print(f"Watcher running: {url}  (Ctrl+C stops it)")
-    webbrowser.open(url)
-    last = {p: p.stat().st_mtime_ns for p in WATCH_FILES}
+    if "--no-browser" not in sys.argv:
+        webbrowser.open(url)
+    observed = watch_snapshot()
+    render_at = None
     try:
         while True:
-            time.sleep(0.5)
-            changed = False
-            for p in WATCH_FILES:
-                mtime = p.stat().st_mtime_ns
-                if mtime != last[p]:
-                    last[p] = mtime
-                    changed = True
-            if changed:
-                time.sleep(0.2)  # The editor may still be writing.
+            time.sleep(0.1)
+            current = watch_snapshot()
+            if current != observed:
+                observed = current
+                # Debounce safe-write/formatting sequences from the editor.
+                render_at = time.monotonic() + 0.35
+
+            if render_at is not None and time.monotonic() >= render_at:
+                stable = watch_snapshot()
+                if stable != observed:
+                    observed = stable
+                    render_at = time.monotonic() + 0.35
+                    continue
                 try:
                     generate()
-                except yaml.YAMLError as e:
-                    print(f"[{time.strftime('%H:%M:%S')}] YAML error: {e}")
+                    render_at = None
+                except (OSError, UnicodeError, yaml.YAMLError) as e:
+                    # Do not consume the event. A file can be temporarily
+                    # incomplete while PhpStorm replaces or formats it.
+                    print(f"[{time.strftime('%H:%M:%S')}] Preview retry: {e}")
+                    render_at = time.monotonic() + 0.5
     except KeyboardInterrupt:
         print("\nWatcher stopped.")
+
+
+def watch_snapshot():
+    """Content-aware snapshot; also survives an editor's atomic file replace."""
+    snapshot = {}
+    for path in WATCH_FILES:
+        try:
+            data = path.read_bytes()
+            stat = path.stat()
+            digest = hashlib.blake2b(data, digest_size=8).digest()
+            snapshot[path] = (stat.st_mtime_ns, stat.st_size, digest)
+        except OSError:
+            snapshot[path] = None
+    return snapshot
 
 
 if __name__ == "__main__":

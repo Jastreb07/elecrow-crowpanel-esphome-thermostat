@@ -164,12 +164,10 @@ class HALightController : public Component {
       float high = std::max(light.min_color_temp_kelvin, light.max_color_temp_kelvin);
       light.color_temp_kelvin = clamp_(light.color_temp_kelvin + delta * 100.0f, low, high);
     } else {
-      // The visible color selector is a 270° arc, not a full hue wheel.
-      // Move along its actual magenta -> red -> green -> blue scale and stop
-      // at both physical ends instead of wrapping around.
-      float position = hue_to_arc_position_(light.hue);
-      position = clamp_(position + delta * 0.02f, 0.0f, 1.0f);
-      light.hue = arc_position_to_hue_(position);
+      // The full hue ring is drawn counter-clockwise from the top. Invert the
+      // encoder delta so a clockwise knob turn also moves the marker clockwise.
+      light.hue = std::fmod(light.hue - delta * 5.0f, 360.0f);
+      if (light.hue < 0.0f) light.hue += 360.0f;
       // Kelvin/white modes commonly report a very low saturation. Never
       // carry that value into color control or the selected color is washed
       // out. The color arc always represents fully saturated colors.
@@ -192,7 +190,7 @@ class HALightController : public Component {
       if (high <= low) return 0;
       return (int) std::lround((light.color_temp_kelvin - low) / (high - low) * 100.0f);
     }
-    return (int) std::lround(hue_to_arc_position_(light.hue) * 100.0f);
+    return (int) std::lround(light.hue / 360.0f * 100.0f);
   }
 
  protected:

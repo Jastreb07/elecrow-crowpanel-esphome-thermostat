@@ -48,6 +48,8 @@ static const char *const ICON_SNOW = "󰜗";          // mdi-snowflake
 static const char *const ICON_TOGGLE_OFF = "󰔢";    // mdi-toggle-switch-off
 static const char *const ICON_POWER = "󰐥";         // mdi-power
 static const char *const ICON_THERMO_HIGH = "󰔏";   // mdi-thermometer
+static const char *const ICON_SUN = "\U000F05A8";           // mdi-white-balance-sunny
+static const char *const ICON_EYEDROPPER = "\U000F020A";    // mdi-eyedropper
 static const char *const ICON_DROPLET_HALF = "󰖎";  // mdi-water-percent
 static const char *const ICON_BACK = "󰁍";          // mdi-arrow-left
 
@@ -126,6 +128,15 @@ inline const char *settings_root_name(int position) {
 inline const char *settings_root_icon(int position) {
   position = settings_root_wrap(position);
   return position == SETTINGS_GROUP_COUNT ? ICON_BACK : SETTINGS_GROUP_ICONS[position];
+}
+
+inline const char *entity_menu_icon(int position, int climate_count, int light_count) {
+  int count = climate_count + light_count + 2;  // Settings + Back
+  if (count <= 0) return ICON_BACK;
+  position = ((position % count) + count) % count;
+  if (position < climate_count) return MENU_ICONS[0];
+  if (position < climate_count + light_count) return MENU_ICONS[17];
+  return position == climate_count + light_count ? MENU_ICONS[12] : ICON_BACK;
 }
 
 inline int settings_group_entry_count(int group) {

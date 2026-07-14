@@ -17,10 +17,11 @@
 #   Home:        rotate or short-press -> thermostat screen
 #   Thermostat:  rotate -> target temperature +/- configured step
 #                short-press -> switch TRV/AC target
-#   Light:       rotate -> selected light value, short-press -> next available
-#                brightness / color-temperature / color mode
+#                vertical swipe -> HVAC, then preset quick selector
+#   Light:       rotate -> selected light value, short-press -> light.toggle
+#                vertical swipe -> next brightness/temperature/color mode
 #   Settings:    rotate = scroll/change value, short-press = select/OK
-#   Everywhere:  1 s press -> back, 3 s press -> HVAC/preset submenu
+#   Everywhere:  hold knob for 800 ms -> back
 #                Idle -> dim display and return home after configured delays
 #
 # Home Assistant must allow this ESPHome device to perform Home Assistant
@@ -55,6 +56,18 @@ substitutions:
   settings_extra_rows: "false"  # 480x480 overrides this to show five rows
   light_arc_size: "472"
   light_arc_y: "4"
+  light_color_ring_size: "472"
+  light_color_ring_width: "30"
+  light_color_ring_y: "0"
+  light_slider_range: "230"
+  light_slider_y: "105"
+  light_kelvin_scale_width: "288"
+  light_kelvin_scale_height: "56"
+  light_icon_y: "-140"
+  light_color_icon_y: "-70"
+  light_value_y: "-54"
+  light_mode_y: "22"
+  light_color_mode_y: "95"
 
 # Local components load variable-length climate/light lists from the JSON
 # attributes of the Home Assistant configuration entity.
@@ -241,7 +254,7 @@ globals:
   # unreliable on the full-screen button, so the board files feed raw touch
   # start/end coordinates into handle_swipe_release.
   # UI navigation: 0 Home, 1 Thermostat, 2 groups, 3 group items, 4 editor,
-  # 5 one of the configured light pages.
+  # 5 one of the configured light pages, 6 entity overview.
   - id: ui_context
     type: int
     restore_value: false
@@ -257,12 +270,28 @@ globals:
     restore_value: false
     initial_value: "0"
 
-  - id: settings_scroll_dir
+  - id: submenu_type
     type: int
     restore_value: false
     initial_value: "0"
 
-  - id: submenu_type
+  - id: entity_menu_index
+    type: int
+    restore_value: false
+    initial_value: "0"
+
+  - id: entity_return_kind
+    type: int
+    restore_value: false
+    initial_value: "1"
+
+  - id: entity_return_index
+    type: int
+    restore_value: false
+    initial_value: "0"
+
+  # Quick thermostat selector: 0 normal settings, 1 HVAC, 2 presets.
+  - id: thermostat_quick_stage
     type: int
     restore_value: false
     initial_value: "0"
@@ -651,26 +680,10 @@ binary_sensor:
           then:
             - button.press: restart_btn
       - script.execute: wake_display
-      - if:
-          condition:
-            lambda: 'return id(ui_context) == 1;'
-          then:
-            - script.execute: hvac_hold_toggle
-      - if:
-          condition:
-            lambda: 'return id(ui_context) == 5;'
-          then:
-            - script.execute: light_hold_toggle
-      - if:
-          condition:
-            lambda: 'return id(ui_context) >= 2 && id(ui_context) <= 4;'
-          then:
-            - script.execute: settings_hold_back
+      - script.execute: global_hold_back
     on_release:
-      # Releasing before 800 ms cancels the action for the active context.
-      - script.stop: hvac_hold_toggle
-      - script.stop: light_hold_toggle
-      - script.stop: settings_hold_back
+      # Releasing before 800 ms keeps the press as a normal click.
+      - script.stop: global_hold_back
     on_multi_click:
       # Double click keeps the quick jump to the thermostat. A press while the
       # thermostat is already open also selects the other TRV/AC target.
@@ -682,15 +695,21 @@ binary_sensor:
         then:
           - if:
               condition:
-                lambda: 'return id(ui_context) != 1;'
+                lambda: 'return id(ui_context) == 5;'
               then:
-                - lambda: |-
-                    id(climate_index) = 0;
-                    id(ui_context) = 1;
-                - script.execute: load_active_climate
-                - lvgl.page.show: screen_thermostat
+                - script.execute: toggle_active_light
               else:
-                - script.execute: toggle_adjust_target
+                - if:
+                    condition:
+                      lambda: 'return id(ui_context) != 1;'
+                    then:
+                      - lambda: |-
+                          id(climate_index) = 0;
+                          id(ui_context) = 1;
+                      - script.execute: load_active_climate
+                      - lvgl.page.show: screen_thermostat
+                    else:
+                      - script.execute: toggle_adjust_target
       # Single click: enter/select inside settings. On the thermostat it now
       # switches directly between the TRV and AC/cool target.
       - timing:
@@ -717,35 +736,41 @@ binary_sensor:
                           condition:
                             lambda: 'return id(ui_context) == 5;'
                           then:
-                            - script.execute: cycle_light_mode
+                            - script.execute: toggle_active_light
                           else:
                             - if:
                                 condition:
-                                  lambda: 'return id(ui_context) == 2;'
+                                  lambda: 'return id(ui_context) == 6;'
                                 then:
-                                  - if:
-                                      condition:
-                                        lambda: 'return id(menu_index) == SETTINGS_GROUP_COUNT;'
-                                      then:
-                                        - script.execute: close_settings
-                                      else:
-                                        - script.execute: group_enter
+                                  - script.execute: entity_menu_enter
                                 else:
                                   - if:
                                       condition:
-                                        lambda: 'return id(ui_context) == 3;'
+                                        lambda: 'return id(ui_context) == 2;'
                                       then:
                                         - if:
                                             condition:
-                                              lambda: |-
-                                                return id(group_item_index) == settings_group_count(id(menu_index));
+                                              lambda: 'return id(menu_index) == SETTINGS_GROUP_COUNT;'
                                             then:
-                                              - lambda: 'id(ui_context) = 2;'
-                                              - script.execute: update_settings_labels
+                                              - script.execute: close_settings
                                             else:
-                                              - script.execute: menu_enter
+                                              - script.execute: group_enter
                                       else:
-                                        - script.execute: submenu_apply
+                                        - if:
+                                            condition:
+                                              lambda: 'return id(ui_context) == 3;'
+                                            then:
+                                              - if:
+                                                  condition:
+                                                    lambda: |-
+                                                      return id(group_item_index) == settings_group_count(id(menu_index));
+                                                  then:
+                                                    - lambda: 'id(ui_context) = 2;'
+                                                    - script.execute: update_settings_labels
+                                                  else:
+                                                    - script.execute: menu_enter
+                                            else:
+                                              - script.execute: submenu_apply
 # ------------------------------------------------------------------
 # Rotary encoder. Pins are swapped to fix rotation direction.
 # ------------------------------------------------------------------
@@ -844,8 +869,16 @@ sensor:
               - lambda: |-
                   int d = id(encoder_delta) > 0 ? 1 : -1;
                   id(menu_index) = (id(menu_index) + d + SETTINGS_ROOT_COUNT) % SETTINGS_ROOT_COUNT;
-                  id(settings_scroll_dir) = d;
-              - script.execute: animate_settings_scroll
+              - script.execute: update_settings_labels
+        - if:
+            condition:
+              lambda: 'return id(encoder_delta) != 0 && id(ui_context) == 6;'
+            then:
+              - lambda: |-
+                  int d = id(encoder_delta) > 0 ? 1 : -1;
+                  int count = (int) id(ha_climates).size() + (int) id(ha_lights).size() + 2;
+                  id(entity_menu_index) = (id(entity_menu_index) + d + count) % count;
+              - script.execute: update_settings_labels
         - if:
             condition:
               lambda: 'return id(encoder_delta) != 0 && id(ui_context) == 3;'
@@ -855,8 +888,7 @@ sensor:
                   int count = settings_group_entry_count(id(menu_index));
                   if (count > 0)
                     id(group_item_index) = (id(group_item_index) + d + count) % count;
-                  id(settings_scroll_dir) = d;
-              - script.execute: animate_settings_scroll
+              - script.execute: update_settings_labels
         - if:
             condition:
               lambda: 'return id(encoder_delta) != 0 && id(ui_context) == 4;'
@@ -1094,99 +1126,112 @@ script:
                 brightness: !lambda 'return id(brightness_pct) / 100.0f;'
             - script.execute: update_status_led
 
-  # Toggle the selected Home Assistant light while the knob is still held.
-  # on_release stops this script when the user releases before 800 ms.
-  - id: light_hold_toggle
-    mode: restart
+  # A short press on a light now toggles it directly. Mode changes are handled
+  # exclusively by vertical swipe gestures.
+  - id: toggle_active_light
     then:
-      - delay: 800ms
       - if:
           condition:
             lambda: |-
-              return id(ui_context) == 5 && id(encoder_button).state &&
-                     id(light_index) >= 0 &&
+              return id(ui_context) == 5 && id(light_index) >= 0 &&
                      id(light_index) < (int) id(ha_lights).size();
           then:
-            - lvgl.label.update:
-                id: label_light_state
-                text: "Switching..."
             - homeassistant.action:
                 action: light.toggle
                 data:
                   entity_id: !lambda 'return id(ha_lights).get(id(light_index)).entity_id;'
 
-  # Thermostat equivalent of light_hold_toggle. Holding for 800 ms switches
-  # HVAC off or restores the most recently active supported HVAC mode.
-  - id: hvac_hold_toggle
+  # Holding the knob for 800 ms is the same Back action in every screen.
+  - id: global_hold_back
     mode: restart
     then:
       - delay: 800ms
       - if:
           condition:
-            lambda: 'return id(ui_context) == 1 && id(encoder_button).state;'
-          then:
-            - lvgl.label.update:
-                id: label_hvac_mode
-                text: "Switching..."
-            - homeassistant.action:
-                action: climate.set_hvac_mode
-                data:
-                  entity_id: !lambda 'return id(ha_climates).get(id(climate_index)).entity_id;'
-                  hvac_mode: !lambda |-
-                    if (id(current_hvac_raw) != "off") {
-                      if (!id(current_hvac_raw).empty() && id(current_hvac_raw) != "unknown" &&
-                          id(current_hvac_raw) != "unavailable") {
-                        id(last_hvac_mode) = id(current_hvac_raw);
-                        id(ha_climates).get_mutable(id(climate_index)).last_hvac_mode = id(current_hvac_raw);
-                      }
-                      return std::string("off");
-                    }
-
-                    auto modes = ha_parse_list(id(hvac_modes_raw));
-                    auto supported = [&modes](const std::string &candidate) {
-                      if (candidate.empty() || candidate == "off") return false;
-                      for (const auto &mode : modes)
-                        if (mode == candidate) return true;
-                      return false;
-                    };
-                    if (supported(id(last_hvac_mode))) return id(last_hvac_mode);
-                    static const char *const preferred[] =
-                        {"heat", "heat_cool", "cool", "auto", "dry", "fan_only"};
-                    for (const char *candidate : preferred)
-                      if (supported(candidate)) return std::string(candidate);
-                    return std::string("heat");
-
-  # Go back exactly one level while the knob is still held. This is started
-  # only for contexts that live on screen_settings (groups/items/editor).
-  - id: settings_hold_back
-    mode: restart
-    then:
-      - delay: 800ms
-      - if:
-          condition:
-            lambda: |-
-              return id(encoder_button).state && id(ui_context) >= 2 && id(ui_context) <= 4;
+            lambda: 'return id(encoder_button).state;'
           then:
             - if:
                 condition:
-                  lambda: 'return id(ui_context) == 4;'
+                  lambda: 'return id(thermostat_quick_stage) != 0;'
                 then:
-                  - lambda: 'id(ui_context) = 3;'
-                  - script.execute: update_settings_labels
+                  - lambda: |-
+                      id(thermostat_quick_stage) = 0;
+                      id(ui_context) = 1;
+                  - script.execute: load_active_climate
+                  - lvgl.page.show: screen_thermostat
                 else:
                   - if:
                       condition:
-                        lambda: 'return id(ui_context) == 3;'
+                        lambda: 'return id(ui_context) == 4;'
                       then:
-                        - lambda: 'id(ui_context) = 2;'
+                        - lambda: 'id(ui_context) = 3;'
                         - script.execute: update_settings_labels
                       else:
-                        - script.execute: close_settings
+                        - if:
+                            condition:
+                              lambda: 'return id(ui_context) == 3;'
+                            then:
+                              - lambda: 'id(ui_context) = 2;'
+                              - script.execute: update_settings_labels
+                            else:
+                              - if:
+                                  condition:
+                                    lambda: 'return id(ui_context) == 2;'
+                                  then:
+                                    - script.execute: close_settings
+                                  else:
+                                    - if:
+                                        condition:
+                                          lambda: 'return id(ui_context) == 6;'
+                                        then:
+                                          - script.execute: close_entity_overview
+                                        else:
+                                          - if:
+                                              condition:
+                                                lambda: 'return id(ui_context) == 5;'
+                                              then:
+                                                - lambda: 'id(ui_context) = 1;'
+                                                - script.execute: load_active_climate
+                                                - lvgl.page.show: screen_thermostat
+                                              else:
+                                                - if:
+                                                    condition:
+                                                      lambda: 'return id(ui_context) == 1;'
+                                                    then:
+                                                      - lambda: 'id(ui_context) = 0;'
+                                                      - lvgl.page.show: screen_home
 
   # Target for the native LVGL swipe handlers on the settings page.
+  - id: show_active_light_screen
+    then:
+      - if:
+          condition:
+            lambda: |-
+              return id(ha_lights).ensure_mode(id(light_index)) ==
+                     esphome::ha_light_controller::LIGHT_TEMPERATURE;
+          then:
+            - lvgl.page.show:
+                id: screen_light_temperature
+                animation: NONE
+          else:
+            - if:
+                condition:
+                  lambda: |-
+                    return id(ha_lights).ensure_mode(id(light_index)) ==
+                           esphome::ha_light_controller::LIGHT_COLOR;
+                then:
+                  - lvgl.page.show:
+                      id: screen_light_color
+                      animation: NONE
+                else:
+                  - lvgl.page.show:
+                      id: screen_light_brightness
+                      animation: NONE
+
   - id: close_settings
     then:
       - script.execute: wake_display
+      - lambda: 'id(thermostat_quick_stage) = 0;'
       - if:
           condition:
             lambda: 'return !id(ha_lights).empty();'
@@ -1195,8 +1240,7 @@ script:
                 id(light_index) = (int) id(ha_lights).size() - 1;
                 id(ui_context) = 5;
             - script.execute: refresh_light
-            - lvgl.page.show:
-                id: screen_light
+            - script.execute: show_active_light_screen
           else:
             - lambda: |-
                 id(climate_index) = (int) id(ha_climates).size() - 1;
@@ -1256,8 +1300,7 @@ script:
                 id(light_index) = 0;
                 id(ui_context) = 5;
             - script.execute: refresh_light
-            - lvgl.page.show:
-                id: screen_light
+            - script.execute: show_active_light_screen
           else:
             - script.execute: open_settings
 
@@ -1272,6 +1315,7 @@ script:
           then:
             - lambda: 'id(light_index)++;'
             - script.execute: refresh_light
+            - script.execute: show_active_light_screen
           else:
             - script.execute: open_settings
 
@@ -1285,6 +1329,7 @@ script:
           then:
             - lambda: 'id(light_index)--;'
             - script.execute: refresh_light
+            - script.execute: show_active_light_screen
           else:
             - lambda: |-
                 id(climate_index) = (int) id(ha_climates).size() - 1;
@@ -1299,6 +1344,166 @@ script:
       - lambda: 'id(pending_light_change) = false;'
       - lambda: 'id(ha_lights).cycle_mode(id(light_index));'
       - script.execute: refresh_light
+      - script.execute: show_active_light_screen
+
+  # Shared overview on screen_settings. It lists every configured climate and
+  # light, followed by Settings and Back. Pressing an entity opens it directly.
+  - id: open_entity_overview
+    then:
+      - script.execute: wake_display
+      - lambda: |-
+          if (id(ui_context) == 1) {
+            id(entity_return_kind) = 1;
+            id(entity_return_index) = id(climate_index);
+            id(entity_menu_index) = id(climate_index);
+          } else if (id(ui_context) == 5) {
+            id(entity_return_kind) = 2;
+            id(entity_return_index) = id(light_index);
+            id(entity_menu_index) = (int) id(ha_climates).size() + id(light_index);
+          }
+          id(thermostat_quick_stage) = 0;
+          id(ui_context) = 6;
+      - script.execute: update_settings_labels
+      - lvgl.page.show:
+          id: screen_settings
+          animation: NONE
+
+  - id: close_entity_overview
+    then:
+      - if:
+          condition:
+            lambda: 'return id(entity_return_kind) == 2 && !id(ha_lights).empty();'
+          then:
+            - lambda: |-
+                id(light_index) = clamp(id(entity_return_index), 0, (int) id(ha_lights).size() - 1);
+                id(ui_context) = 5;
+            - script.execute: refresh_light
+            - script.execute: show_active_light_screen
+          else:
+            - lambda: |-
+                id(climate_index) = clamp(id(entity_return_index), 0, (int) id(ha_climates).size() - 1);
+                id(ui_context) = 1;
+            - script.execute: load_active_climate
+            - lvgl.page.show:
+                id: screen_thermostat
+                animation: NONE
+
+  - id: settings_swipe_back
+    then:
+      - if:
+          condition:
+            lambda: 'return id(thermostat_quick_stage) != 0;'
+          then:
+            - lambda: |-
+                id(thermostat_quick_stage) = 0;
+                id(ui_context) = 1;
+            - script.execute: load_active_climate
+            - lvgl.page.show:
+                id: screen_thermostat
+                animation: NONE
+          else:
+            - if:
+                condition:
+                  lambda: 'return id(ui_context) == 6;'
+                then:
+                  - script.execute: close_entity_overview
+                else:
+                  - script.execute: close_settings
+
+  - id: entity_menu_enter
+    then:
+      - lambda: |-
+          int climates = (int) id(ha_climates).size();
+          int lights = (int) id(ha_lights).size();
+          int total = climates + lights + 2;
+          id(entity_menu_index) = ((id(entity_menu_index) % total) + total) % total;
+      - if:
+          condition:
+            lambda: 'return id(entity_menu_index) < (int) id(ha_climates).size();'
+          then:
+            - lambda: |-
+                id(climate_index) = id(entity_menu_index);
+                id(ui_context) = 1;
+            - script.execute: load_active_climate
+            - lvgl.page.show: screen_thermostat
+          else:
+            - if:
+                condition:
+                  lambda: |-
+                    int i = id(entity_menu_index) - (int) id(ha_climates).size();
+                    return i >= 0 && i < (int) id(ha_lights).size();
+                then:
+                  - lambda: |-
+                      id(light_index) = id(entity_menu_index) - (int) id(ha_climates).size();
+                      id(ui_context) = 5;
+                  - script.execute: refresh_light
+                  - script.execute: show_active_light_screen
+                else:
+                  - if:
+                      condition:
+                        lambda: |-
+                          return id(entity_menu_index) ==
+                                 (int) id(ha_climates).size() + (int) id(ha_lights).size();
+                      then:
+                        - script.execute: open_settings
+                      else:
+                        - script.execute: close_entity_overview
+
+  # First vertical thermostat swipe opens HVAC. The following vertical swipe
+  # changes the same quick selector to presets without creating another page.
+  - id: open_thermostat_quick
+    then:
+      - script.execute: wake_display
+      - lambda: |-
+          auto page_obj = [](esphome::lvgl::LvPageType *page) { return page->obj; };
+          lv_obj_t *target = page_obj(screen_settings);
+          lv_obj_t *widgets[] = {
+              id(label_settings_title), id(label_menu_icon_prev2), id(label_menu_icon_prev),
+              id(label_menu_icon), id(label_menu_icon_next), id(label_menu_icon_next2),
+              id(label_menu_prev2), id(label_menu_prev), id(label_menu_current),
+              id(label_menu_next), id(label_menu_next2), id(label_menu_value)};
+          for (lv_obj_t *widget : widgets)
+            if (lv_obj_get_parent(widget) != target) lv_obj_set_parent(widget, target);
+          id(thermostat_quick_stage) = 1;
+          id(submenu_type) = 0;
+          id(submenu_index) = 0;
+          auto vec = ha_filter_modes(id(hvac_modes_raw), false);
+          id(submenu_count) = (int) vec.size();
+          for (size_t i = 0; i < vec.size(); i++)
+            if (vec[i] == id(current_hvac_raw)) { id(submenu_index) = (int) i; break; }
+          id(ui_context) = 4;
+      - script.execute: update_settings_labels
+      - lvgl.page.show:
+          id: screen_settings
+          animation: NONE
+
+  - id: cycle_thermostat_quick
+    then:
+      - if:
+          condition:
+            lambda: 'return id(thermostat_quick_stage) != 0;'
+          then:
+            - if:
+                condition:
+                  lambda: 'return id(thermostat_quick_stage) == 2;'
+                then:
+                  - lambda: |-
+                      id(thermostat_quick_stage) = 0;
+                      id(ui_context) = 1;
+                  - script.execute: load_active_climate
+                  - lvgl.page.show:
+                      id: screen_thermostat
+                      animation: NONE
+                else:
+                  - lambda: |-
+                      id(thermostat_quick_stage) = 2;
+                      id(submenu_type) = 1;
+                      id(submenu_index) = 0;
+                      auto vec = ha_filter_presets(id(preset_modes_raw));
+                      id(submenu_count) = (int) vec.size();
+                      for (size_t i = 0; i < vec.size(); i++)
+                        if (vec[i] == id(current_preset_raw)) { id(submenu_index) = (int) i; break; }
+                  - script.execute: update_settings_labels
 
   - id: send_light_update
     mode: restart
@@ -1369,9 +1574,9 @@ script:
           id: label_light_mode
           text: !lambda |-
             int mode = id(ha_lights).ensure_mode(id(light_index));
-            std::string text = "Helligkeit %";
-            if (mode == esphome::ha_light_controller::LIGHT_TEMPERATURE) text = "Licht Temperatur";
-            else if (mode == esphome::ha_light_controller::LIGHT_COLOR) text = "Farben";
+            std::string text = "Helligkeit";
+            if (mode == esphome::ha_light_controller::LIGHT_TEMPERATURE) text = "Kelvin";
+            else if (mode == esphome::ha_light_controller::LIGHT_COLOR) text = "Farbe";
             return ha_text_or_placeholder(id(connection_ready), text, 8);
       - lvgl.label.update:
           id: label_light_value
@@ -1389,11 +1594,20 @@ script:
             else
               snprintf(value, sizeof(value), "%.0f%%", light.brightness);
             return std::string(value);
+      - lvgl.label.update:
+          id: label_light_icon
+          text: !lambda |-
+            int mode = id(ha_lights).ensure_mode(id(light_index));
+            if (mode == esphome::ha_light_controller::LIGHT_TEMPERATURE)
+              return std::string(ICON_THERMO_HIGH);
+            if (mode == esphome::ha_light_controller::LIGHT_COLOR)
+              return std::string(ICON_EYEDROPPER);
+            return std::string(ICON_SUN);
       - lvgl.widget.update:
           id: label_light_icon
           text_color: !lambda |-
             return id(ha_lights).get(id(light_index)).state == "on"
-                       ? lv_color_hex(0xF5B942)
+                       ? lv_color_hex(0xE8E8E8)
                        : lv_color_hex(0x555555);
       - lvgl.label.update:
           id: label_light_state
@@ -1450,37 +1664,48 @@ script:
                 return lv_color_hex(0xC89054);
               return lv_color_hex(0xA8B0B5);
       - lambda: |-
-          // Color and Kelvin use a fully colored background ring. The control
-          // arc's indicator is transparent in those modes, leaving one knob.
+          // The reference UI has three deliberately different controls:
+          // brightness uses a tick scale, Kelvin a warm/cold scale and color
+          // a complete 360-degree hue ring.
+          int mode = id(ha_lights).ensure_mode(id(light_index));
+          auto page_obj = [](esphome::lvgl::LvPageType *page) { return page->obj; };
+          lv_obj_t *target_page = mode == esphome::ha_light_controller::LIGHT_TEMPERATURE
+              ? page_obj(screen_light_temperature)
+              : mode == esphome::ha_light_controller::LIGHT_COLOR
+                    ? page_obj(screen_light_color)
+                    : page_obj(screen_light_brightness);
+          lv_obj_t *shared_widgets[] = {
+              id(arc_light_track), id(arc_light_gradient_0), id(arc_light_gradient_1),
+              id(arc_light_gradient_2), id(arc_light_gradient_3), id(arc_light_gradient_4),
+              id(arc_light_gradient_5), id(arc_light_gradient_6), id(arc_light_gradient_7),
+              id(arc_light_gradient_8), id(arc_light_gradient_9), id(arc_light_gradient_10),
+              id(arc_light_gradient_11), id(arc_light_control), id(light_brightness_scale),
+              id(label_light_brightness_ticks), id(light_kelvin_scale), id(light_slider_knob),
+              id(label_light_kelvin_min), id(label_light_kelvin_max), id(light_color_swatch),
+              id(light_color_knob), id(label_light_name), id(label_light_mode),
+              id(label_light_value), id(label_light_icon), id(label_light_state),
+              id(label_light_page), id(light_mode_dot_0), id(light_mode_dot_1),
+              id(light_mode_dot_2)};
+          for (lv_obj_t *widget : shared_widgets)
+            if (lv_obj_get_parent(widget) != target_page) lv_obj_set_parent(widget, target_page);
+
           static std::vector<lv_obj_t *> segments;
-          constexpr int SEGMENT_COUNT = 48;
+          constexpr int SEGMENT_COUNT = 96;
           if (segments.empty()) {
             lv_obj_t *track = id(arc_light_track);
             lv_obj_t *parent = lv_obj_get_parent(track);
             segments.reserve(SEGMENT_COUNT);
             for (int i = 0; i < SEGMENT_COUNT; i++) {
               lv_obj_t *segment = lv_arc_create(parent);
-              // Hidden LVGL pages are not laid out yet when refresh_light is
-              // first called. Use board dimensions instead of reading zeros.
-              lv_obj_set_size(segment, ${light_arc_size}, ${light_arc_size});
-              lv_obj_align(segment, LV_ALIGN_CENTER, 0, ${light_arc_y});
-
-              float raw_start = 135.0f + 270.0f * i / SEGMENT_COUNT;
-              float raw_end = 135.0f + 270.0f * (i + 1) / SEGMENT_COUNT;
-              float start = raw_start >= 360.0f ? raw_start - 360.0f : raw_start;
-              float end = raw_end > 360.0f ? raw_end - 360.0f : raw_end;
+              lv_obj_set_size(segment, ${light_color_ring_size}, ${light_color_ring_size});
+              lv_obj_align(segment, LV_ALIGN_CENTER, 0, ${light_color_ring_y});
+              float start = fmodf(270.0f + 360.0f * i / SEGMENT_COUNT, 360.0f);
+              float end = fmodf(270.0f + 360.0f * (i + 1) / SEGMENT_COUNT, 360.0f);
               lv_arc_set_bg_angles(segment, start, end);
               lv_arc_set_range(segment, 0, 100);
               lv_arc_set_value(segment, 0);
-
-              lv_obj_set_style_arc_width(segment,
-                                         lv_obj_get_style_arc_width(track, LV_PART_MAIN),
-                                         LV_PART_MAIN);
-              // Only the two physical ends are rounded. Their colored caps
-              // cover the rounded neutral track underneath; inner joins stay
-              // square so the 48-piece gradient remains continuous.
-              lv_obj_set_style_arc_rounded(
-                  segment, i == 0 || i == SEGMENT_COUNT - 1, LV_PART_MAIN);
+              lv_obj_set_style_arc_width(segment, ${light_color_ring_width}, LV_PART_MAIN);
+              lv_obj_set_style_arc_rounded(segment, false, LV_PART_MAIN);
               lv_obj_set_style_arc_opa(segment, LV_OPA_COVER, LV_PART_MAIN);
               lv_obj_set_style_arc_opa(segment, LV_OPA_TRANSP, LV_PART_INDICATOR);
               lv_obj_set_style_bg_opa(segment, LV_OPA_TRANSP, LV_PART_KNOB);
@@ -1488,77 +1713,98 @@ script:
               lv_obj_add_flag(segment, LV_OBJ_FLAG_HIDDEN);
               segments.push_back(segment);
             }
-            // The gradient objects are created after the YAML widgets. Keep
-            // the transparent control arc above them so its single knob wins.
-            lv_obj_move_foreground(id(arc_light_control));
           }
-          int mode = id(ha_lights).ensure_mode(id(light_index));
-          bool gradient_visible = mode == esphome::ha_light_controller::LIGHT_COLOR ||
-                                  mode == esphome::ha_light_controller::LIGHT_TEMPERATURE;
 
-          auto blend_rgb = [](uint32_t from, uint32_t to, float amount) {
-            amount = clamp(amount, 0.0f, 1.0f);
-            uint8_t r = (uint8_t) roundf(((from >> 16) & 0xFF) * (1.0f - amount) +
-                                         ((to >> 16) & 0xFF) * amount);
-            uint8_t g = (uint8_t) roundf(((from >> 8) & 0xFF) * (1.0f - amount) +
-                                         ((to >> 8) & 0xFF) * amount);
-            uint8_t b = (uint8_t) roundf((from & 0xFF) * (1.0f - amount) +
-                                         (to & 0xFF) * amount);
-            return lv_color_make(r, g, b);
+          const auto &light = id(ha_lights).get(id(light_index));
+          bool on = id(connection_ready) && light.state == "on";
+          bool brightness = mode == esphome::ha_light_controller::LIGHT_BRIGHTNESS;
+          bool temperature = mode == esphome::ha_light_controller::LIGHT_TEMPERATURE;
+          bool color = mode == esphome::ha_light_controller::LIGHT_COLOR;
+
+          auto visible = [](lv_obj_t *obj, bool show) {
+            if (show) lv_obj_remove_flag(obj, LV_OBJ_FLAG_HIDDEN);
+            else lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
           };
 
-          auto color_at = [&blend_rgb](const float *positions, const uint32_t *colors,
-                                      int count, float p) {
-            if (p <= positions[0]) return lv_color_hex(colors[0]);
-            for (int i = 1; i < count; i++) {
-              if (p <= positions[i]) {
-                float local = (p - positions[i - 1]) / (positions[i] - positions[i - 1]);
-                return blend_rgb(colors[i - 1], colors[i], local);
-              }
-            }
-            return lv_color_hex(colors[count - 1]);
-          };
+          visible(id(light_brightness_scale), brightness);
+          visible(id(label_light_brightness_ticks), brightness);
+          visible(id(light_kelvin_scale), temperature);
+          visible(id(label_light_kelvin_min), temperature);
+          visible(id(label_light_kelvin_max), temperature);
+          visible(id(light_slider_knob), on && (brightness || temperature));
+          visible(id(light_color_swatch), color);
+          visible(id(light_color_knob), on && color);
+          visible(id(label_light_value), !color);
+          visible(id(label_light_name), !color);
+          visible(id(label_light_page), !color);
 
-          static constexpr float KELVIN_POS[] = {0.00f, 0.30f, 0.58f, 1.00f};
-          static constexpr uint32_t KELVIN_RGB[] =
-              {0xFFAE68, 0xFFDDC1, 0xF7F2EE, 0xC8D8EE};
+          lv_obj_align(id(label_light_icon), LV_ALIGN_CENTER, 0,
+                       color ? ${light_color_icon_y} : ${light_icon_y});
+          lv_obj_align(id(label_light_value), LV_ALIGN_CENTER, 0, ${light_value_y});
+          lv_obj_align(id(label_light_mode), LV_ALIGN_CENTER, 0,
+                       color ? ${light_color_mode_y} : ${light_mode_y});
+
+          float normalized = on
+              ? clamp(id(ha_lights).normalized_value(id(light_index)) / 100.0f, 0.0f, 1.0f)
+              : 0.0f;
+          int slider_x = (int) roundf((normalized - 0.5f) * ${light_slider_range});
+          lv_obj_align(id(light_slider_knob), LV_ALIGN_CENTER, slider_x, ${light_slider_y});
+
+          char minimum[20], maximum[20];
+          snprintf(minimum, sizeof(minimum), "%.0f K", light.min_color_temp_kelvin);
+          snprintf(maximum, sizeof(maximum), "%.0f K", light.max_color_temp_kelvin);
+          lv_label_set_text(id(label_light_kelvin_min), minimum);
+          lv_label_set_text(id(label_light_kelvin_max), maximum);
+
+          lv_obj_t *dots[] = {id(light_mode_dot_0), id(light_mode_dot_1), id(light_mode_dot_2)};
+          for (int i = 0; i < 3; i++) {
+            bool supported = i == 0 ? id(ha_lights).supports_brightness(id(light_index))
+                            : i == 1 ? id(ha_lights).supports_temperature(id(light_index))
+                                     : id(ha_lights).supports_color(id(light_index));
+            lv_obj_set_style_bg_color(dots[i],
+                lv_color_hex(i == mode ? 0xFFFFFF : supported ? 0x292B2E : 0x111214),
+                LV_PART_MAIN);
+          }
 
           for (int i = 0; i < SEGMENT_COUNT; i++) {
-            if (!gradient_visible) {
+            if (lv_obj_get_parent(segments[i]) != target_page)
+              lv_obj_set_parent(segments[i], target_page);
+            if (!color) {
               lv_obj_add_flag(segments[i], LV_OBJ_FLAG_HIDDEN);
               continue;
             }
             float p = (i + 0.5f) / SEGMENT_COUNT;
-            lv_color_t color;
-            if (mode == esphome::ha_light_controller::LIGHT_COLOR) {
-              // The 270° physical arc represents hue 315° -> 240° through
-              // red/yellow/green/cyan. It deliberately omits violet.
-              float hue = fmodf(315.0f + p * 285.0f, 360.0f);
-              color = lv_color_hsv_to_rgb((uint16_t) roundf(hue), 100, 100);
-            } else {
-              color = color_at(KELVIN_POS, KELVIN_RGB, 4, p);
-            }
-            lv_obj_set_style_arc_color(segments[i], color, LV_PART_MAIN);
+            // Red at twelve o'clock, then magenta/blue/cyan/green/yellow
+            // clockwise, exactly like the provided full color wheel.
+            float hue = fmodf(360.0f - p * 360.0f, 360.0f);
+            lv_obj_set_style_arc_color(
+                segments[i], lv_color_hsv_to_rgb((uint16_t) roundf(hue), 100, 100),
+                LV_PART_MAIN);
             lv_obj_remove_flag(segments[i], LV_OBJ_FLAG_HIDDEN);
           }
 
-          lv_obj_t *arc = id(arc_light_control);
-          int32_t target = clamp((int32_t) id(ha_lights).normalized_value(id(light_index)),
-                                 (int32_t) 0, (int32_t) 100);
-          int32_t current = lv_arc_get_value(arc);
-          lv_anim_delete(arc, nullptr);
-          if (current != target) {
-            lv_anim_t anim;
-            lv_anim_init(&anim);
-            lv_anim_set_var(&anim, arc);
-            lv_anim_set_values(&anim, current, target);
-            lv_anim_set_time(&anim, 160);
-            lv_anim_set_path_cb(&anim, lv_anim_path_ease_out);
-            lv_anim_set_exec_cb(&anim, [](void *var, int32_t value) {
-              lv_arc_set_value(static_cast<lv_obj_t *>(var), value);
-            });
-            lv_anim_start(&anim);
-          }
+          lv_color_t selected = on
+              ? lv_color_hsv_to_rgb((uint16_t) roundf(light.hue), 100, 100)
+              : lv_color_hex(0x333333);
+          lv_obj_set_style_bg_color(id(light_color_swatch), selected, LV_PART_MAIN);
+          lv_obj_set_style_bg_color(id(light_color_knob), selected, LV_PART_MAIN);
+          float radians = (270.0f - light.hue) * 3.14159265f / 180.0f;
+          float radius = (${light_color_ring_size} - ${light_color_ring_width}) * 0.5f;
+          int knob_x = (int) roundf(cosf(radians) * radius);
+          int knob_y = ${light_color_ring_y} + (int) roundf(sinf(radians) * radius);
+          lv_obj_align(id(light_color_knob), LV_ALIGN_CENTER, knob_x, knob_y);
+
+          // Dynamic ring objects are created last, so restore the intended
+          // foreground order for the knob, center preview and labels.
+          lv_obj_move_foreground(id(light_color_knob));
+          lv_obj_move_foreground(id(light_color_swatch));
+          lv_obj_move_foreground(id(label_light_icon));
+          lv_obj_move_foreground(id(label_light_mode));
+          lv_obj_move_foreground(id(label_light_name));
+          lv_obj_move_foreground(id(label_light_page));
+          lv_obj_move_foreground(id(light_mode_dot_0));
+          lv_obj_move_foreground(id(light_mode_dot_1));
+          lv_obj_move_foreground(id(light_mode_dot_2));
 
   - id: toggle_adjust_target
     then:
@@ -2033,6 +2279,16 @@ script:
   - id: open_settings
     then:
       - lambda: |-
+          auto page_obj = [](esphome::lvgl::LvPageType *page) { return page->obj; };
+          lv_obj_t *target = page_obj(screen_settings);
+          lv_obj_t *widgets[] = {
+              id(label_settings_title), id(label_menu_icon_prev2), id(label_menu_icon_prev),
+              id(label_menu_icon), id(label_menu_icon_next), id(label_menu_icon_next2),
+              id(label_menu_prev2), id(label_menu_prev), id(label_menu_current),
+              id(label_menu_next), id(label_menu_next2), id(label_menu_value)};
+          for (lv_obj_t *widget : widgets)
+            if (lv_obj_get_parent(widget) != target) lv_obj_set_parent(widget, target);
+          id(thermostat_quick_stage) = 0;
           id(ui_context) = 2;
           id(menu_index) = 0;
           id(group_item_index) = 0;
@@ -2054,7 +2310,10 @@ script:
           id(submenu_index) = 0;
           switch (id(submenu_type)) {
             case 0: {
-              auto vec = ha_filter_modes(id(hvac_modes_raw), id(knob_hvac_modes).current_option() != "All");
+              auto vec = ha_filter_modes(
+                  id(hvac_modes_raw),
+                  id(thermostat_quick_stage) == 0 &&
+                      id(knob_hvac_modes).current_option() != "All");
               id(submenu_count) = (int) vec.size();
               for (size_t i = 0; i < vec.size(); i++)
                 if (vec[i] == id(current_hvac_raw)) { id(submenu_index) = (int) i; break; }
@@ -2100,7 +2359,10 @@ script:
           id(apply_service) = 0;
           switch (id(submenu_type)) {
             case 0: {
-              auto vec = ha_filter_modes(id(hvac_modes_raw), id(knob_hvac_modes).current_option() != "All");
+              auto vec = ha_filter_modes(
+                  id(hvac_modes_raw),
+                  id(thermostat_quick_stage) == 0 &&
+                      id(knob_hvac_modes).current_option() != "All");
               int n = (int) vec.size();
               if (n <= 0) break;
               int idx = ((id(submenu_index) % n) + n) % n;
@@ -2138,7 +2400,7 @@ script:
             case 18: id(apply_service) = 24; break;
             default: break;
           }
-          id(ui_context) = 3;
+          id(ui_context) = id(thermostat_quick_stage) != 0 ? 1 : 3;
       - if:
           condition: {lambda: 'return id(apply_service) == 1;'}
           then:
@@ -2218,48 +2480,43 @@ script:
       - if:
           condition: {lambda: 'return id(apply_service) == 24;'}
           then: [{number.set: {id: led_brightness_num, value: !lambda 'return id(num_preview);'}}]
-      - script.execute: update_settings_labels
-
-  # Slide the newly selected settings row into the fixed center selection.
-  # Labels and icons have no background objects, matching the round list UI.
-  - id: animate_settings_scroll
-    mode: restart
-    then:
-      - script.execute: update_settings_labels
-      - lambda: |-
-          int32_t from = id(settings_scroll_dir) * ${settings_row_gap};
-          auto animate_translate_y = [from](lv_obj_t *obj) {
-            lv_anim_del(obj, nullptr);
-            lv_obj_set_style_translate_y(obj, from, LV_PART_MAIN);
-            lv_anim_t anim;
-            lv_anim_init(&anim);
-            lv_anim_set_var(&anim, obj);
-            lv_anim_set_values(&anim, from, 0);
-            lv_anim_set_time(&anim, 180);
-            lv_anim_set_path_cb(&anim, lv_anim_path_ease_out);
-            lv_anim_set_exec_cb(&anim, [](void *var, int32_t value) {
-              lv_obj_set_style_translate_y(static_cast<lv_obj_t *>(var), value, LV_PART_MAIN);
-            });
-            lv_anim_start(&anim);
-          };
-          animate_translate_y(id(label_menu_icon_prev));
-          animate_translate_y(id(label_menu_icon));
-          animate_translate_y(id(label_menu_icon_next));
-          animate_translate_y(id(label_menu_icon_prev2));
-          animate_translate_y(id(label_menu_icon_next2));
-          animate_translate_y(id(label_menu_prev));
-          animate_translate_y(id(label_menu_current));
-          animate_translate_y(id(label_menu_next));
-          animate_translate_y(id(label_menu_prev2));
-          animate_translate_y(id(label_menu_next2));
-          id(settings_scroll_dir) = 0;
+      - if:
+          condition:
+            lambda: 'return id(thermostat_quick_stage) != 0;'
+          then:
+            - lambda: 'id(thermostat_quick_stage) = 0;'
+            - script.execute: load_active_climate
+            - lvgl.page.show:
+                id: screen_thermostat
+                animation: NONE
+          else:
+            - script.execute: update_settings_labels
 
   - id: update_settings_labels
     then:
       - lambda: |-
           bool de = false;
           char buf[64];
-          if (id(ui_context) == 2) {
+          if (id(ui_context) == 6) {
+            int climates = (int) id(ha_climates).size();
+            int lights = (int) id(ha_lights).size();
+            int count = climates + lights + 2;
+            int position = ((id(entity_menu_index) % count) + count) % count;
+            auto entity_name = [climates, lights, count](int p) -> std::string {
+              p = ((p % count) + count) % count;
+              if (p < climates) return id(ha_climates).get(p).name;
+              if (p < climates + lights) return id(ha_lights).get(p - climates).name;
+              return p == climates + lights ? std::string("Settings") : std::string("Back");
+            };
+            id(set_title) = "Entities";
+            id(set_prev2) = ${settings_extra_rows} && count >= 5 ? entity_name(position - 2) : "";
+            id(set_prev) = count > 1 ? entity_name(position - 1) : "";
+            id(set_cur) = entity_name(position);
+            id(set_next) = count > 1 ? entity_name(position + 1) : "";
+            id(set_next2) = ${settings_extra_rows} && count >= 5 ? entity_name(position + 2) : "";
+            snprintf(buf, sizeof(buf), "%d / %d", position + 1, count);
+            id(set_value) = buf;
+          } else if (id(ui_context) == 2) {
             int position = settings_root_wrap(id(menu_index));
             id(set_title) = "Settings";
             id(set_prev2) = "";
@@ -2267,12 +2524,8 @@ script:
             id(set_cur) = settings_root_name(position);
             id(set_next) = settings_root_name(position + 1);
             id(set_next2) = "";
-            if (position == SETTINGS_GROUP_COUNT) {
-              id(set_value) = "Press = back";
-            } else {
-              snprintf(buf, sizeof(buf), "%d settings", settings_group_count(position));
-              id(set_value) = buf;
-            }
+            snprintf(buf, sizeof(buf), "%d / %d", position + 1, SETTINGS_ROOT_COUNT);
+            id(set_value) = buf;
           } else if (id(ui_context) == 3) {
             int group = settings_group_wrap(id(menu_index));
             int count = settings_group_entry_count(group);
@@ -2290,7 +2543,7 @@ script:
             id(set_next) = count > 1 ? entry_name(i + 1) : "";
             id(set_next2) = ${settings_extra_rows} && count >= 5
                                 ? entry_name(i + 2) : "";
-            std::string val = t < 0 ? "Press = back" : "";
+            std::string val;
             switch (t) {
               case 0: val = ha_hvac_mode_label(id(current_hvac_raw), de); break;
               case 1: val = ha_preset_label(id(current_preset_raw), de); break;
@@ -2311,7 +2564,8 @@ script:
               case 17: val = id(led_enabled).state ? "On" : "Off"; break;
               case 18: snprintf(buf, sizeof(buf), "%d%%", (int) id(led_brightness_num).state); val = buf; break;
             }
-            id(set_value) = val;
+            snprintf(buf, sizeof(buf), "%d / %d", i + 1, count);
+            id(set_value) = buf;
           } else {
             int t = id(submenu_type);
             id(set_title) = settings_menu_name(t, de);
@@ -2328,7 +2582,10 @@ script:
               case 1: {
                 std::vector<std::string> vec;
                 if (t == 0) {
-                  vec = ha_filter_modes(id(hvac_modes_raw), id(knob_hvac_modes).current_option() != "All");
+                  vec = ha_filter_modes(
+                      id(hvac_modes_raw),
+                      id(thermostat_quick_stage) == 0 &&
+                          id(knob_hvac_modes).current_option() != "All");
                 } else {
                   vec = ha_filter_presets(id(preset_modes_raw));
                 }
@@ -2345,7 +2602,8 @@ script:
                   id(set_prev) = (t == 0) ? ha_hvac_mode_label(vec[(idx+n-1)%n], de) : ha_preset_label(vec[(idx+n-1)%n], de);
                   id(set_next) = (t == 0) ? ha_hvac_mode_label(vec[(idx+1)%n], de) : ha_preset_label(vec[(idx+1)%n], de);
                 }
-                val = h_apply;
+                snprintf(buf, sizeof(buf), "%d / %d", idx + 1, n);
+                val = buf;
                 break;
               }
               case 2: snprintf(buf, sizeof(buf), "%d%%", id(brightness_pct)); cur = buf; val = h_turn; break;
@@ -2379,6 +2637,12 @@ script:
               case 18: snprintf(buf, sizeof(buf), "%d%%", id(num_preview)); cur = buf; val = h_save; break;
             }
             id(set_cur) = cur;
+            if (t != 0 && t != 1) {
+              int count = id(submenu_count) > 0 ? id(submenu_count) : 1;
+              int position = ((id(submenu_index) % count) + count) % count;
+              snprintf(buf, sizeof(buf), "%d / %d", position + 1, count);
+              val = buf;
+            }
             id(set_value) = val;
           }
       - lvgl.label.update:
@@ -2387,6 +2651,9 @@ script:
       - lvgl.label.update:
           id: label_menu_icon_prev2
           text: !lambda |-
+            if (id(ui_context) == 6)
+              return std::string(entity_menu_icon(id(entity_menu_index) - 2,
+                  (int) id(ha_climates).size(), (int) id(ha_lights).size()));
             if (id(ui_context) == 2)
               return std::string(settings_root_icon(id(menu_index) - 2));
             if (id(ui_context) == 3) {
@@ -2397,6 +2664,9 @@ script:
       - lvgl.label.update:
           id: label_menu_icon_prev
           text: !lambda |-
+            if (id(ui_context) == 6)
+              return std::string(entity_menu_icon(id(entity_menu_index) - 1,
+                  (int) id(ha_climates).size(), (int) id(ha_lights).size()));
             if (id(ui_context) == 2)
               return std::string(settings_root_icon(id(menu_index) - 1));
             if (id(ui_context) == 3) {
@@ -2407,6 +2677,9 @@ script:
       - lvgl.label.update:
           id: label_menu_icon
           text: !lambda |-
+            if (id(ui_context) == 6)
+              return std::string(entity_menu_icon(id(entity_menu_index),
+                  (int) id(ha_climates).size(), (int) id(ha_lights).size()));
             if (id(ui_context) == 2)
               return std::string(settings_root_icon(id(menu_index)));
             if (id(ui_context) == 3) {
@@ -2417,6 +2690,9 @@ script:
       - lvgl.label.update:
           id: label_menu_icon_next
           text: !lambda |-
+            if (id(ui_context) == 6)
+              return std::string(entity_menu_icon(id(entity_menu_index) + 1,
+                  (int) id(ha_climates).size(), (int) id(ha_lights).size()));
             if (id(ui_context) == 2)
               return std::string(settings_root_icon(id(menu_index) + 1));
             if (id(ui_context) == 3) {
@@ -2427,6 +2703,9 @@ script:
       - lvgl.label.update:
           id: label_menu_icon_next2
           text: !lambda |-
+            if (id(ui_context) == 6)
+              return std::string(entity_menu_icon(id(entity_menu_index) + 2,
+                  (int) id(ha_climates).size(), (int) id(ha_lights).size()));
             if (id(ui_context) == 2)
               return std::string(settings_root_icon(id(menu_index) + 2));
             if (id(ui_context) == 3) {
