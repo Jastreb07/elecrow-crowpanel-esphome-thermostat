@@ -63,11 +63,6 @@ substitutions:
   light_slider_y: "105"
   light_kelvin_scale_width: "288"
   light_kelvin_scale_height: "56"
-  light_icon_y: "-140"
-  light_color_icon_y: "-70"
-  light_value_y: "-54"
-  light_mode_y: "22"
-  light_color_mode_y: "95"
 
 # Local components load variable-length climate/light lists from the JSON
 # attributes of the Home Assistant configuration entity.
@@ -1609,6 +1604,12 @@ script:
             return id(ha_lights).get(id(light_index)).state == "on"
                        ? lv_color_hex(0xE8E8E8)
                        : lv_color_hex(0x555555);
+      - lvgl.widget.update:
+          id: label_light_icon_color
+          text_color: !lambda |-
+            return id(ha_lights).get(id(light_index)).state == "on"
+                       ? lv_color_hex(0xE8E8E8)
+                       : lv_color_hex(0x555555);
       - lvgl.label.update:
           id: label_light_state
           text: !lambda |-
@@ -1737,12 +1738,11 @@ script:
           visible(id(label_light_value), !color);
           visible(id(label_light_name), !color);
           visible(id(label_light_page), !color);
-
-          lv_obj_align(id(label_light_icon), LV_ALIGN_CENTER, 0,
-                       color ? ${light_color_icon_y} : ${light_icon_y});
-          lv_obj_align(id(label_light_value), LV_ALIGN_CENTER, 0, ${light_value_y});
-          lv_obj_align(id(label_light_mode), LV_ALIGN_CENTER, 0,
-                       color ? ${light_color_mode_y} : ${light_mode_y});
+          // The color page has its own statically positioned labels
+          // (label_light_icon_color / label_light_mode_color), so the shared
+          // icon and mode label stay at their widget-definition positions.
+          visible(id(label_light_icon), !color);
+          visible(id(label_light_mode), !color);
 
           float normalized = on
               ? clamp(id(ha_lights).normalized_value(id(light_index)) / 100.0f, 0.0f, 1.0f)
@@ -1798,8 +1798,8 @@ script:
           // foreground order for the knob, center preview and labels.
           lv_obj_move_foreground(id(light_color_knob));
           lv_obj_move_foreground(id(light_color_swatch));
-          lv_obj_move_foreground(id(label_light_icon));
-          lv_obj_move_foreground(id(label_light_mode));
+          lv_obj_move_foreground(id(label_light_icon_color));
+          lv_obj_move_foreground(id(label_light_mode_color));
           lv_obj_move_foreground(id(label_light_name));
           lv_obj_move_foreground(id(label_light_page));
           lv_obj_move_foreground(id(light_mode_dot_0));

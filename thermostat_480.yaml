@@ -974,8 +974,8 @@ lvgl:
             text: "Helligkeit"
             text_font: rajdhani_medium_24
             text_color: 0xB0B0B0
-            align: BOTTOM_MID
-            y: -60
+            align: CENTER
+            y: 22
             width: 200
             text_align: CENTER
             long_mode: SCROLL_CIRCULAR
@@ -985,6 +985,7 @@ lvgl:
             text_font: rajdhani_semibold_74
             text_color: 0xFFFFFF
             align: CENTER
+            y: -54
             width: 330
             text_align: CENTER
         - label:
@@ -1069,6 +1070,22 @@ lvgl:
             shadow_width: 0
             on_click:
               - script.execute: wake_display
+        - label:
+            id: label_light_icon_color
+            text: "\U000F020A"
+            text_font: icons_70
+            text_color: 0x555555
+            align: CENTER
+            y: -110
+        - label:
+            id: label_light_mode_color
+            text: "Farbe"
+            text_font: rajdhani_medium_24
+            text_color: 0xB0B0B0
+            align: CENTER
+            y: 110
+            width: 200
+            text_align: CENTER
 
     # ================= Settings menu =================
     - id: screen_settings

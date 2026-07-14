@@ -392,6 +392,10 @@ def render_board(name, path, size):
         brightness = pid == "screen_light_brightness"
         temperature = pid == "screen_light_temperature"
         color = pid == "screen_light_color"
+        if color:
+            # The color page owns its own statically positioned labels
+            # (label_light_icon_color / label_light_mode_color).
+            widgets += copy.deepcopy(original)
         show = ({"light_brightness_scale", "label_light_brightness_ticks", "light_slider_knob"}
                 if brightness else
                 {"light_kelvin_scale", "light_slider_knob", "label_light_kelvin_min",
@@ -404,13 +408,7 @@ def render_board(name, path, size):
                 {"light_brightness_scale", "label_light_brightness_ticks",
                  "light_kelvin_scale", "light_slider_knob", "label_light_kelvin_min",
                  "label_light_kelvin_max", "label_light_value", "label_light_name",
-                 "label_light_page"})
-        substitutions = config.get("substitutions", {})
-        icon_y = int(substitutions.get("light_color_icon_y" if color else "light_icon_y",
-                                       -70 if size == 240 else -140))
-        value_y = int(substitutions.get("light_value_y", -25 if size == 240 else -54))
-        mode_y = int(substitutions.get("light_color_mode_y" if color else "light_mode_y",
-                                       47 if size == 240 else 22))
+                 "label_light_page", "label_light_mode", "label_light_icon"})
         active_dot = 0 if brightness else 1 if temperature else 2
         for cfg in widget_configs(widgets):
             wid = cfg.get("id")
@@ -419,16 +417,11 @@ def render_board(name, path, size):
             elif wid in hide:
                 cfg["hidden"] = True
             if wid == "label_light_mode":
-                cfg["text"] = "Helligkeit" if brightness else "Kelvin" if temperature else "Farbe"
-                cfg.update(align="CENTER", x=0, y=mode_y)
+                cfg["text"] = "Helligkeit" if brightness else "Kelvin"
             elif wid == "label_light_value" and temperature:
                 cfg["text"] = "3200K"
-            if wid == "label_light_value":
-                cfg.update(align="CENTER", x=0, y=value_y)
             elif wid == "label_light_icon":
-                cfg.update(align="CENTER", x=0, y=icon_y)
-                cfg["_preview_text"] = ("\U000F0599" if brightness else
-                                        "\U000F050F" if temperature else "\U000F00DE")
+                cfg["_preview_text"] = "\U000F0599" if brightness else "\U000F050F"
             elif str(wid).startswith("light_mode_dot_"):
                 dot = int(str(wid).rsplit("_", 1)[-1])
                 cfg["bg_color"] = 0xFFFFFF if dot == active_dot else 0x292B2E
@@ -519,9 +512,9 @@ def generate():
   <div id="mdi-results"><div id="mdi-grid"></div><div id="mdi-sentinel"></div></div>
 </aside>
 <div id="status">live \N{BLACK CIRCLE}</div>
-{board_html}
+<main id="boards">{board_html}</main>
 <script>
-const VERSION = "{version}";
+let VERSION = "{version}";
 const MDI_META_URL = "https://cdn.jsdelivr.net/npm/@mdi/svg@7.4.47/meta.json";
 const MDI_BATCH_SIZE = 160;
 let mdiIcons = [];
@@ -604,15 +597,27 @@ async function loadMdiIcons() {{
   }}
 }}
 
+async function refreshBoards(v) {{
+  // Swap only the rendered screens in place instead of reloading the page.
+  // This keeps scroll position, the MDI panel state and the loaded fonts.
+  const r = await fetch(`preview.html?t=${{Date.now()}}`, {{cache: "no-store"}});
+  const doc = new DOMParser().parseFromString(await r.text(), "text/html");
+  const next = doc.getElementById("boards");
+  if (!next) {{
+    // Unexpected document layout (e.g. an older watcher build): hard reload.
+    location.reload();
+    return;
+  }}
+  document.getElementById("boards").replaceChildren(...next.childNodes);
+  VERSION = v;
+}}
+
 async function poll() {{
   try {{
     const r = await fetch(`preview_version.txt?t=${{Date.now()}}`, {{cache: "no-store"}});
     const v = (await r.text()).trim();
     if (v && v !== VERSION) {{
-      const next = new URL(location.href);
-      next.searchParams.set("preview", v);
-      location.replace(next);
-      return;
+      await refreshBoards(v);
     }}
     document.getElementById("status").style.color = "#6a6";
   }} catch (e) {{

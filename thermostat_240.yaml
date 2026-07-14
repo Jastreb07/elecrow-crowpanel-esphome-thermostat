@@ -24,11 +24,6 @@ substitutions:
   light_slider_y: "55"
   light_kelvin_scale_width: "144"
   light_kelvin_scale_height: "32"
-  light_icon_y: "-70"
-  light_color_icon_y: "-35"
-  light_value_y: "-25"
-  light_mode_y: "15"
-  light_color_mode_y: "47"
 
 esphome:
   on_boot:
@@ -908,7 +903,7 @@ lvgl:
             text_font: rajdhani_medium_16
             text_color: 0xB0B0B0
             align: CENTER
-            y: 20
+            y: 5
             width: 100
             text_align: CENTER
             long_mode: SCROLL_CIRCULAR
@@ -918,6 +913,7 @@ lvgl:
             text_font: rajdhani_semibold_46
             text_color: 0xFFFFFF
             align: CENTER
+            y: -25
             width: 180
             text_align: CENTER
         - label:
@@ -1002,6 +998,22 @@ lvgl:
             shadow_width: 0
             on_click:
               - script.execute: wake_display
+        - label:
+            id: label_light_icon_color
+            text: "\U000F020A"
+            text_font: icons_38
+            text_color: 0x555555
+            align: CENTER
+            y: -47
+        - label:
+            id: label_light_mode_color
+            text: "Farbe"
+            text_font: rajdhani_medium_16
+            text_color: 0xB0B0B0
+            align: CENTER
+            y: 47
+            width: 100
+            text_align: CENTER
 
     # ================= Settings menu =================
     - id: screen_settings
