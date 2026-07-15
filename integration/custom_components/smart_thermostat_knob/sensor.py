@@ -12,8 +12,10 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
     ATTR_CLIMATES,
+    ATTR_COVERS,
     ATTR_LIGHTS,
     CONF_CLIMATES,
+    CONF_COVERS,
     CONF_LIGHTS,
     DOMAIN,
 )
@@ -34,7 +36,7 @@ class SmartKnobConfigSensor(SensorEntity):
     _attr_has_entity_name = True
     _attr_icon = "mdi:tune-variant"
     _attr_should_poll = False
-    _unrecorded_attributes = frozenset({ATTR_CLIMATES, ATTR_LIGHTS})
+    _unrecorded_attributes = frozenset({ATTR_CLIMATES, ATTR_LIGHTS, ATTR_COVERS})
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         """Initialize the configuration sensor."""
@@ -60,12 +62,13 @@ class SmartKnobConfigSensor(SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, str]:
-        """Return ESP-compatible JSON strings for both controller types."""
+        """Return ESP-compatible JSON strings for all controller types."""
         values = dict(self._entry.data)
         values.update(self._entry.options)
         return {
             ATTR_CLIMATES: self._json_attribute(values.get(CONF_CLIMATES, [])),
             ATTR_LIGHTS: self._json_attribute(values.get(CONF_LIGHTS, [])),
+            ATTR_COVERS: self._json_attribute(values.get(CONF_COVERS, [])),
         }
 
     def _json_attribute(self, entity_ids: list[str]) -> str:

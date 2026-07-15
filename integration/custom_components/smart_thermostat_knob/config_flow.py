@@ -8,6 +8,7 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.components.climate import DOMAIN as CLIMATE_DOMAIN
+from homeassistant.components.cover import DOMAIN as COVER_DOMAIN
 from homeassistant.components.light import DOMAIN as LIGHT_DOMAIN
 from homeassistant.components.text import DOMAIN as TEXT_DOMAIN
 from homeassistant.config_entries import ConfigFlowResult
@@ -16,6 +17,7 @@ from homeassistant.helpers import selector
 
 from .const import (
     CONF_CLIMATES,
+    CONF_COVERS,
     CONF_ESPHOME_CONFIG_ENTITY,
     CONF_LIGHTS,
     DATA_FORCE_RESTART,
@@ -45,6 +47,15 @@ def _config_schema(values: dict[str, Any]) -> vol.Schema:
         ): selector.EntitySelector(
             selector.EntitySelectorConfig(
                 domain=LIGHT_DOMAIN,
+                multiple=True,
+            )
+        ),
+        vol.Optional(
+            CONF_COVERS,
+            default=values.get(CONF_COVERS, []),
+        ): selector.EntitySelector(
+            selector.EntitySelectorConfig(
+                domain=COVER_DOMAIN,
                 multiple=True,
             )
         ),

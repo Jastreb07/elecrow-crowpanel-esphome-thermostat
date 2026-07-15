@@ -8,13 +8,15 @@
           "name": "Name des Smart Knobs",
           "climates": "Thermostate",
           "lights": "Lichter",
-          "esphome_config_entity": "ESPHome-Konfigurationsentität"
+          "esphome_config_entity": "ESPHome-Konfigurationsentität",
+          "covers": "Rollos & Gardinen"
         },
         "data_description": {
           "name": "Ein eindeutiger, gut erkennbarer Name für diesen Smart Knob.",
           "climates": "Wähle eine oder mehrere Climate-Entitäten aus.",
           "lights": "Wähle eine oder mehrere Light-Entitäten aus.",
-          "esphome_config_entity": "Wähle die ESPHome-Textentität Home Assistant Config Entity dieses Knobs. Der zugehörige Neustart-Button wird automatisch erkannt."
+          "esphome_config_entity": "Wähle die ESPHome-Textentität Home Assistant Config Entity dieses Knobs. Der zugehörige Neustart-Button wird automatisch erkannt.",
+          "covers": "Wähle eine oder mehrere Cover-Entitäten aus (Rollos, Jalousien, Gardinen)."
         }
       },
       "reconfigure": {
@@ -24,13 +26,15 @@
           "name": "Name des Smart Knobs",
           "climates": "Thermostate",
           "lights": "Lichter",
-          "esphome_config_entity": "ESPHome-Konfigurationsentität"
+          "esphome_config_entity": "ESPHome-Konfigurationsentität",
+          "covers": "Rollos & Gardinen"
         },
         "data_description": {
           "name": "Ein eindeutiger, gut erkennbarer Name für diesen Smart Knob.",
           "climates": "Wähle eine oder mehrere Climate-Entitäten aus.",
           "lights": "Wähle eine oder mehrere Light-Entitäten aus.",
-          "esphome_config_entity": "Wähle die ESPHome-Textentität Home Assistant Config Entity dieses Knobs. Der zugehörige Neustart-Button wird automatisch erkannt."
+          "esphome_config_entity": "Wähle die ESPHome-Textentität Home Assistant Config Entity dieses Knobs. Der zugehörige Neustart-Button wird automatisch erkannt.",
+          "covers": "Wähle eine oder mehrere Cover-Entitäten aus (Rollos, Jalousien, Gardinen)."
         }
       }
     },
@@ -50,13 +54,15 @@
           "name": "Name des Smart Knobs",
           "climates": "Thermostate",
           "lights": "Lichter",
-          "esphome_config_entity": "ESPHome-Konfigurationsentität"
+          "esphome_config_entity": "ESPHome-Konfigurationsentität",
+          "covers": "Rollos & Gardinen"
         },
         "data_description": {
           "name": "Ein eindeutiger, gut erkennbarer Name für diesen Smart Knob.",
           "climates": "Wähle eine oder mehrere Climate-Entitäten aus.",
           "lights": "Wähle eine oder mehrere Light-Entitäten aus.",
-          "esphome_config_entity": "Wähle die ESPHome-Textentität Home Assistant Config Entity dieses Knobs. Der zugehörige Neustart-Button wird automatisch erkannt."
+          "esphome_config_entity": "Wähle die ESPHome-Textentität Home Assistant Config Entity dieses Knobs. Der zugehörige Neustart-Button wird automatisch erkannt.",
+          "covers": "Wähle eine oder mehrere Cover-Entitäten aus (Rollos, Jalousien, Gardinen)."
         }
       }
     },

@@ -143,7 +143,7 @@ Both produce the same `sensor.smart_knob_config` interface. Do not enable both
 with the same entity ID at the same time.
 
 Create one template sensor in Home Assistant's `configuration.yaml`. Users only
-edit `entity_id` and `name` inside the two lists:
+edit `entity_id` and `name` inside the lists:
 
 ```yaml
 template:
@@ -173,6 +173,18 @@ template:
                 "name": "Lampe hinter der Couch"
               }
             ] | to_json) }}
+
+          covers: >-
+            {{ "json:" ~ ([
+              {
+                "entity_id": "cover.rollladen_wohnzimmer",
+                "name": "Rollladen Wohnzimmer"
+              },
+              {
+                "entity_id": "cover.gardine_schlafzimmer",
+                "name": "Gardine Schlafzimmer"
+              }
+            ] | to_json) }}
 ```
 
 The `json:` prefix deliberately keeps Home Assistant from converting the JSON
@@ -196,6 +208,13 @@ empty.
 The controller reads each entity's `supported_color_modes` attribute. A short
 press therefore cycles only through controls supported by that light:
 brightness, color temperature, and color.
+
+Cover pages (shutters, blinds, curtains) show position 0–100 % on the same
+pill scale as brightness; turning the knob moves the target position, a short
+press stops the cover mid-move, and swiping fully opens or closes it. Covers
+that only support open/close/stop (no `set_cover_position`) still work: the
+knob nudges an internal position estimate and the direction of the last
+nudge decides between `cover.open_cover` and `cover.close_cover`.
 
 ## Controls
 

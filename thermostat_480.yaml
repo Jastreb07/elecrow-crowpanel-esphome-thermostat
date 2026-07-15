@@ -941,6 +941,111 @@ lvgl:
         - obj: { <<: *light_color_preset_480, id: light_color_preset_16, x: -134, y: -159 }
         - obj: { <<: *light_color_preset_480, id: light_color_preset_17, x: -71, y: -195 }
 
+    # ================= Cover control (Rollos/Gardinen) =================
+    - id: screen_cover
+      bg_color: "0x000000"
+      on_swipe_left:
+        - script.execute: open_settings
+      on_swipe_right:
+        - script.execute: open_entity_overview
+      on_swipe_down:
+        - script.execute: cover_open_full
+      on_swipe_up:
+        - script.execute: cover_close_full
+      widgets:
+        - button:
+            id: button_cover_background
+            align: CENTER
+            width: 480
+            height: 480
+            radius: 0
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            on_click:
+              - script.execute: wake_display
+
+        # Same pill scale as the light brightness page: 0 % on the left
+        # (closed), 100 % on the right (open).
+        - obj:
+            id: cover_position_scale
+            align: CENTER
+            y: 145
+            width: 300
+            height: 68
+            radius: 34
+            bg_color: 0x08090A
+            bg_opa: COVER
+            border_color: 0x35383B
+            border_width: 2
+            shadow_width: 0
+            transform_angle: 180
+        - label:
+            id: label_cover_ticks
+            text: "| | | | | | | | | | | | |"
+            text_font: rajdhani_medium_24
+            text_color: 0x34373A
+            align: CENTER
+            y: 145
+            width: 270
+            text_align: CENTER
+        - obj:
+            id: cover_slider_knob
+            align: CENTER
+            y: 145
+            width: 9
+            height: 54
+            radius: 5
+            bg_color: 0xFFFFFF
+            bg_opa: COVER
+            border_width: 0
+            shadow_width: 0
+
+        - label:
+            id: label_cover_name
+            text: "Cover"
+            text_font: rajdhani_medium_40
+            text_color: 0x9A9A9A
+            align: CENTER
+            y: -75
+            width: 300
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+        - label:
+            id: label_cover_mode
+            text: "Rollo"
+            text_font: rajdhani_medium_24
+            text_color: 0xB0B0B0
+            align: CENTER
+            y: 65
+            width: 300
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+        - label:
+            id: label_cover_value
+            text: "50%"
+            text_font: rajdhani_semibold_74
+            text_color: 0xFFFFFF
+            align: CENTER
+            y: 0
+            width: 300
+            text_align: CENTER
+        - label:
+            id: label_cover_icon
+            text: "\U000F111C"
+            text_font: icons_70
+            text_color: 0x555555
+            align: CENTER
+            y: -165
+        - label:
+            id: label_cover_page
+            text: "1 / 1"
+            text_font: rajdhani_medium_22
+            text_color: 0x555555
+            align: TOP_RIGHT
+            x: -24
+            y: 18
+
     # ================= Settings menu =================
     - id: screen_navigation
       bg_color: "0x000000"
@@ -1170,7 +1275,7 @@ font:
         "󰔟", "󰃜", "󰏰", "󰇣",
         "󰔡", "󰑧", "󰖩", "󰋽",
         "󰜉", "󰌵", "󰃟", "󰁍",
-        "\U000F18D7",
+        "\U000F18D7", "\U000F111C",
       ]
   - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
     id: menu_icons_24

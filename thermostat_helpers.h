@@ -59,6 +59,7 @@ static const char *const ICON_BACK = "󰁍";          // mdi-arrow-left
 static const char *const ICON_BRIGHTNESS_6 = "\U000F00DF";           // mdi-brightness-6
 static const char *const ICON_SUN_THERMOMETER_OUTLINE = "\U000F18D7";  // mdi-sun-thermometer-outline
 static const char *const ICON_PALETTE = "\U000F03D8";                // mdi-palette
+static const char *const ICON_WINDOW_SHUTTER = "\U000F111C";         // mdi-window-shutter
 
 // Menu icons. Index matches the settings menu item.
 static const char *const MENU_ICONS[] = {
@@ -137,13 +138,15 @@ inline const char *settings_root_icon(int position) {
   return position == SETTINGS_GROUP_COUNT ? ICON_BACK : SETTINGS_GROUP_ICONS[position];
 }
 
-inline const char *entity_menu_icon(int position, int climate_count, int light_count) {
-  int count = climate_count + light_count + 2;  // Settings + Back
+inline const char *entity_menu_icon(int position, int climate_count, int light_count,
+                                     int cover_count) {
+  int count = climate_count + light_count + cover_count + 2;  // Settings + Back
   if (count <= 0) return ICON_BACK;
   position = ((position % count) + count) % count;
   if (position < climate_count) return MENU_ICONS[0];
   if (position < climate_count + light_count) return MENU_ICONS[17];
-  return position == climate_count + light_count ? MENU_ICONS[12] : ICON_BACK;
+  if (position < climate_count + light_count + cover_count) return ICON_WINDOW_SHUTTER;
+  return position == climate_count + light_count + cover_count ? MENU_ICONS[12] : ICON_BACK;
 }
 
 inline int settings_group_entry_count(int group) {

@@ -58,6 +58,7 @@ substitutions:
   light_slider_range: "230"
   light_kelvin_scale_width: "288"
   light_kelvin_scale_height: "56"
+  cover_slider_range: "230"
 
 # Local components load variable-length climate/light lists from the JSON
 # attributes of the Home Assistant configuration entity.
@@ -65,7 +66,7 @@ external_components:
   - source:
       type: local
       path: components
-    components: [ha_climate_controller, ha_light_controller]
+    components: [ha_climate_controller, ha_light_controller, ha_cover_controller]
 
 ha_climate_controller:
   id: ha_climates
@@ -76,6 +77,11 @@ ha_light_controller:
   id: ha_lights
   config_entity_id: ${ha_config_entity_id}
   config_attribute: lights
+
+ha_cover_controller:
+  id: ha_covers
+  config_entity_id: ${ha_config_entity_id}
+  config_attribute: covers
 
 esphome:
   name: ${device_name}
@@ -244,7 +250,7 @@ globals:
   # unreliable on the full-screen button, so the board files feed raw touch
   # start/end coordinates into handle_swipe_release.
   # UI navigation: 0 Home, 1 Thermostat, 2 groups, 3 group items, 4 editor,
-  # 5 one of the configured light pages, 6 entity overview.
+  # 5 one of the configured light pages, 6 entity overview, 7 cover.
   - id: ui_context
     type: int
     restore_value: false
@@ -311,6 +317,11 @@ globals:
     restore_value: false
     initial_value: "0"
 
+  - id: cover_index
+    type: int
+    restore_value: false
+    initial_value: "0"
+
   - id: climate_index
     type: int
     restore_value: false
@@ -325,6 +336,16 @@ globals:
     type: bool
     restore_value: false
     initial_value: "false"
+
+  - id: pending_cover_change
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+  - id: pending_cover_index
+    type: int
+    restore_value: false
+    initial_value: "0"
 
   - id: brightness_pct
     type: int
@@ -730,37 +751,43 @@ binary_sensor:
                           else:
                             - if:
                                 condition:
-                                  lambda: 'return id(ui_context) == 6;'
+                                  lambda: 'return id(ui_context) == 7;'
                                 then:
-                                  - script.execute: entity_menu_enter
+                                  - script.execute: cover_stop
                                 else:
                                   - if:
                                       condition:
-                                        lambda: 'return id(ui_context) == 2;'
+                                        lambda: 'return id(ui_context) == 6;'
                                       then:
-                                        - if:
-                                            condition:
-                                              lambda: 'return id(menu_index) == SETTINGS_GROUP_COUNT;'
-                                            then:
-                                              - script.execute: close_settings
-                                            else:
-                                              - script.execute: group_enter
+                                        - script.execute: entity_menu_enter
                                       else:
                                         - if:
                                             condition:
-                                              lambda: 'return id(ui_context) == 3;'
+                                              lambda: 'return id(ui_context) == 2;'
                                             then:
                                               - if:
                                                   condition:
-                                                    lambda: |-
-                                                      return id(group_item_index) == settings_group_count(id(menu_index));
+                                                    lambda: 'return id(menu_index) == SETTINGS_GROUP_COUNT;'
                                                   then:
-                                                    - lambda: 'id(ui_context) = 2;'
-                                                    - script.execute: update_settings_labels
+                                                    - script.execute: close_settings
                                                   else:
-                                                    - script.execute: menu_enter
+                                                    - script.execute: group_enter
                                             else:
-                                              - script.execute: submenu_apply
+                                              - if:
+                                                  condition:
+                                                    lambda: 'return id(ui_context) == 3;'
+                                                  then:
+                                                    - if:
+                                                        condition:
+                                                          lambda: |-
+                                                            return id(group_item_index) == settings_group_count(id(menu_index));
+                                                        then:
+                                                          - lambda: 'id(ui_context) = 2;'
+                                                          - script.execute: update_settings_labels
+                                                        else:
+                                                          - script.execute: menu_enter
+                                                  else:
+                                                    - script.execute: submenu_apply
 # ------------------------------------------------------------------
 # Rotary encoder. Pins are swapped to fix rotation direction.
 # ------------------------------------------------------------------
@@ -865,6 +892,16 @@ sensor:
               - script.execute: send_light_update
         - if:
             condition:
+              lambda: 'return id(encoder_delta) != 0 && id(ui_context) == 7;'
+            then:
+              - lambda: |-
+                  id(ha_covers).adjust(id(cover_index), id(encoder_delta));
+                  id(pending_cover_change) = true;
+                  id(pending_cover_index) = id(cover_index);
+              - script.execute: refresh_cover
+              - script.execute: send_cover_update
+        - if:
+            condition:
               lambda: 'return id(encoder_delta) != 0 && id(ui_context) == 2;'
             then:
               - lambda: |-
@@ -875,7 +912,8 @@ sensor:
               lambda: 'return id(encoder_delta) != 0 && id(ui_context) == 6;'
             then:
               - lambda: |-
-                  int count = (int) id(ha_climates).size() + (int) id(ha_lights).size() + 2;
+                  int count = (int) id(ha_climates).size() + (int) id(ha_lights).size() +
+                              (int) id(ha_covers).size() + 2;
                   id(entity_menu_index) = menu_scroll_index(id(entity_menu_index), id(encoder_delta), count);
               - script.execute: update_settings_labels
         - if:
@@ -1192,10 +1230,18 @@ script:
                                               else:
                                                 - if:
                                                     condition:
-                                                      lambda: 'return id(ui_context) == 1;'
+                                                      lambda: 'return id(ui_context) == 7;'
                                                     then:
-                                                      - lambda: 'id(ui_context) = 0;'
-                                                      - lvgl.page.show: screen_home
+                                                      - lambda: 'id(ui_context) = 1;'
+                                                      - script.execute: load_active_climate
+                                                      - lvgl.page.show: screen_thermostat
+                                                    else:
+                                                      - if:
+                                                          condition:
+                                                            lambda: 'return id(ui_context) == 1;'
+                                                          then:
+                                                            - lambda: 'id(ui_context) = 0;'
+                                                            - lvgl.page.show: screen_home
 
   # Target for the native LVGL swipe handlers on the settings page.
   - id: show_active_light_screen
@@ -1348,6 +1394,11 @@ script:
             id(entity_return_kind) = 2;
             id(entity_return_index) = id(light_index);
             id(entity_menu_index) = (int) id(ha_climates).size() + id(light_index);
+          } else if (id(ui_context) == 7) {
+            id(entity_return_kind) = 3;
+            id(entity_return_index) = id(cover_index);
+            id(entity_menu_index) =
+                (int) id(ha_climates).size() + (int) id(ha_lights).size() + id(cover_index);
           }
           id(thermostat_quick_stage) = 0;
           id(ui_context) = 6;
@@ -1368,13 +1419,25 @@ script:
             - script.execute: refresh_light
             - script.execute: show_active_light_screen
           else:
-            - lambda: |-
-                id(climate_index) = clamp(id(entity_return_index), 0, (int) id(ha_climates).size() - 1);
-                id(ui_context) = 1;
-            - script.execute: load_active_climate
-            - lvgl.page.show:
-                id: screen_thermostat
-                animation: NONE
+            - if:
+                condition:
+                  lambda: 'return id(entity_return_kind) == 3 && !id(ha_covers).empty();'
+                then:
+                  - lambda: |-
+                      id(cover_index) = clamp(id(entity_return_index), 0, (int) id(ha_covers).size() - 1);
+                      id(ui_context) = 7;
+                  - script.execute: refresh_cover
+                  - lvgl.page.show:
+                      id: screen_cover
+                      animation: NONE
+                else:
+                  - lambda: |-
+                      id(climate_index) = clamp(id(entity_return_index), 0, (int) id(ha_climates).size() - 1);
+                      id(ui_context) = 1;
+                  - script.execute: load_active_climate
+                  - lvgl.page.show:
+                      id: screen_thermostat
+                      animation: NONE
 
   - id: settings_swipe_back
     then:
@@ -1403,7 +1466,8 @@ script:
       - lambda: |-
           int climates = (int) id(ha_climates).size();
           int lights = (int) id(ha_lights).size();
-          int total = climates + lights + 2;
+          int covers = (int) id(ha_covers).size();
+          int total = climates + lights + covers + 2;
           id(entity_menu_index) = ((id(entity_menu_index) % total) + total) % total;
       - if:
           condition:
@@ -1430,12 +1494,26 @@ script:
                   - if:
                       condition:
                         lambda: |-
-                          return id(entity_menu_index) ==
-                                 (int) id(ha_climates).size() + (int) id(ha_lights).size();
+                          int i = id(entity_menu_index) -
+                                  (int) id(ha_climates).size() - (int) id(ha_lights).size();
+                          return i >= 0 && i < (int) id(ha_covers).size();
                       then:
-                        - script.execute: open_settings
+                        - lambda: |-
+                            id(cover_index) = id(entity_menu_index) -
+                                (int) id(ha_climates).size() - (int) id(ha_lights).size();
+                            id(ui_context) = 7;
+                        - script.execute: refresh_cover
+                        - lvgl.page.show: screen_cover
                       else:
-                        - script.execute: close_entity_overview
+                        - if:
+                            condition:
+                              lambda: |-
+                                return id(entity_menu_index) == (int) id(ha_climates).size() +
+                                       (int) id(ha_lights).size() + (int) id(ha_covers).size();
+                            then:
+                              - script.execute: open_settings
+                            else:
+                              - script.execute: close_entity_overview
 
   # First vertical thermostat swipe opens HVAC. The following vertical swipe
   # changes the same quick selector to presets without creating another page.
@@ -1716,6 +1794,134 @@ script:
           lv_obj_move_foreground(id(light_mode_dot_0));
           lv_obj_move_foreground(id(light_mode_dot_1));
           lv_obj_move_foreground(id(light_mode_dot_2));
+
+  # Same debounce pattern as send_light_update; uses pending_cover_index
+  # (frozen at the last encoder tick) instead of the live cover_index in
+  # case the user already swiped to a different cover before this fires.
+  - id: send_cover_update
+    mode: restart
+    then:
+      - delay: 500ms
+      - if:
+          condition:
+            lambda: 'return id(pending_cover_change);'
+          then:
+            - if:
+                condition:
+                  lambda: 'return id(ha_covers).supports_position(id(pending_cover_index));'
+                then:
+                  - homeassistant.action:
+                      action: cover.set_cover_position
+                      data:
+                        entity_id: !lambda 'return id(ha_covers).get(id(pending_cover_index)).entity_id;'
+                        position: !lambda |-
+                          return to_string(
+                              (int) roundf(id(ha_covers).get(id(pending_cover_index)).position));
+                else:
+                  # No SET_POSITION support: the locally tracked position is
+                  # only used to decide which direction the last nudge meant.
+                  - if:
+                      condition:
+                        lambda: 'return id(ha_covers).get(id(pending_cover_index)).position >= 50.0f;'
+                      then:
+                        - homeassistant.action:
+                            action: cover.open_cover
+                            data:
+                              entity_id: !lambda 'return id(ha_covers).get(id(pending_cover_index)).entity_id;'
+                      else:
+                        - homeassistant.action:
+                            action: cover.close_cover
+                            data:
+                              entity_id: !lambda 'return id(ha_covers).get(id(pending_cover_index)).entity_id;'
+            - lambda: 'id(pending_cover_change) = false;'
+
+  - id: refresh_cover
+    then:
+      - lvgl.label.update:
+          id: label_cover_name
+          text: !lambda |-
+            return ha_text_or_placeholder(id(connection_ready),
+                                          id(ha_covers).get(id(cover_index)).name, 10);
+      - lambda: |-
+          lv_label_set_long_mode(id(label_cover_name), LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
+          lv_obj_update_layout(id(label_cover_name));
+      - lvgl.label.update:
+          id: label_cover_mode
+          text: !lambda |-
+            if (!id(connection_ready)) return ha_text_or_placeholder(false, std::string(), 8);
+            const std::string &state = id(ha_covers).get(id(cover_index)).state;
+            if (state == "opening") return std::string("Öffnet");
+            if (state == "closing") return std::string("Schließt");
+            if (state == "open") return std::string("Offen");
+            if (state == "closed") return std::string("Geschlossen");
+            return std::string("Rollo");
+      - lvgl.label.update:
+          id: label_cover_value
+          text: !lambda |-
+            if (!id(connection_ready)) return ha_text_or_placeholder(false, std::string(), 3);
+            char value[8];
+            snprintf(value, sizeof(value), "%.0f%%", id(ha_covers).get(id(cover_index)).position);
+            return std::string(value);
+      # The cover screen has one static icon glyph (see thermostat_240/480
+      # .yaml); only its availability tint needs a runtime update.
+      - lambda: |-
+          bool available = id(connection_ready) &&
+                            id(ha_covers).get(id(cover_index)).state != "unavailable";
+          lv_obj_set_style_text_color(id(label_cover_icon),
+              available ? lv_color_hex(0xE8E8E8) : lv_color_hex(0x555555), LV_PART_MAIN);
+      - lvgl.label.update:
+          id: label_cover_page
+          text: !lambda |-
+            if (!id(connection_ready)) return ha_text_or_placeholder(false, std::string(), 5);
+            char page[20];
+            snprintf(page, sizeof(page), "%d / %d", id(cover_index) + 1, (int) id(ha_covers).size());
+            return std::string(page);
+      - lambda: |-
+          float normalized = id(connection_ready)
+              ? clamp(id(ha_covers).normalized_value(id(cover_index)) / 100.0f, 0.0f, 1.0f)
+              : 0.0f;
+          int slider_x = (int) roundf((normalized - 0.5f) * ${cover_slider_range});
+          lv_obj_align(id(cover_slider_knob), LV_ALIGN_CENTER, slider_x,
+                       lv_obj_get_y_aligned(id(cover_slider_knob)));
+
+  # Knob press on the cover screen: stop is the one action rotating the
+  # encoder can't already achieve (rotating reaches 0/100 exactly).
+  - id: cover_stop
+    then:
+      - if:
+          condition:
+            lambda: |-
+              return id(ui_context) == 7 && id(cover_index) >= 0 &&
+                     id(cover_index) < (int) id(ha_covers).size();
+          then:
+            - homeassistant.action:
+                action: cover.stop_cover
+                data:
+                  entity_id: !lambda 'return id(ha_covers).get(id(cover_index)).entity_id;'
+
+  # Swipe shortcuts for fully open/closed; optimistic position update so the
+  # pill/knob react immediately instead of waiting for the next HA push.
+  - id: cover_open_full
+    then:
+      - script.execute: wake_display
+      - lambda: |-
+          id(ha_covers).get_mutable(id(cover_index)).position = 100.0f;
+      - script.execute: refresh_cover
+      - homeassistant.action:
+          action: cover.open_cover
+          data:
+            entity_id: !lambda 'return id(ha_covers).get(id(cover_index)).entity_id;'
+
+  - id: cover_close_full
+    then:
+      - script.execute: wake_display
+      - lambda: |-
+          id(ha_covers).get_mutable(id(cover_index)).position = 0.0f;
+      - script.execute: refresh_cover
+      - homeassistant.action:
+          action: cover.close_cover
+          data:
+            entity_id: !lambda 'return id(ha_covers).get(id(cover_index)).entity_id;'
 
   - id: toggle_adjust_target
     then:
@@ -2078,10 +2284,19 @@ script:
                       ? "HA connecting..." : "HA unreachable";
                   return;
                 }
-                if (id(ha_climates).config_error() || id(ha_lights).config_error()) {
+                if (id(ha_climates).config_error() || id(ha_lights).config_error() ||
+                    id(ha_covers).config_error()) {
+                  // Only fires if a "covers" attribute exists and is malformed;
+                  // installations without one never call apply_config_() for
+                  // it, so config_error() stays false here, never blocking.
                   id(connection_message) = "Smart Knob config JSON error";
                   return;
                 }
+                // Covers are intentionally excluded from this check: unlike
+                // climates/lights, an installation that hasn't added a
+                // "covers" attribute to its template sensor yet would
+                // otherwise never leave this loading state, since HA never
+                // pushes a value for an attribute the entity doesn't define.
                 if (!id(ha_climates).config_loaded() || !id(ha_lights).config_loaded()) {
                   uint32_t connected_for = millis() - id(ha_connected_since_ms);
                   id(connection_message) = connected_for < 10000
@@ -2209,6 +2424,9 @@ script:
           } else if (id(ui_context) == 5) {
             id(entity_return_kind) = 2;
             id(entity_return_index) = id(light_index);
+          } else if (id(ui_context) == 7) {
+            id(entity_return_kind) = 3;
+            id(entity_return_index) = id(cover_index);
           }
           id(thermostat_quick_stage) = 0;
           id(ui_context) = 2;
@@ -2422,12 +2640,14 @@ script:
           if (id(ui_context) == 6) {
             int climates = (int) id(ha_climates).size();
             int lights = (int) id(ha_lights).size();
-            int count = climates + lights + 2;
-            auto entity_name = [climates, lights, count](int p) -> std::string {
+            int covers = (int) id(ha_covers).size();
+            int count = climates + lights + covers + 2;
+            auto entity_name = [climates, lights, covers, count](int p) -> std::string {
               p = ((p % count) + count) % count;
               if (p < climates) return id(ha_climates).get(p).name;
               if (p < climates + lights) return id(ha_lights).get(p - climates).name;
-              return p == climates + lights ? std::string("Settings") : std::string("Back");
+              if (p < climates + lights + covers) return id(ha_covers).get(p - climates - lights).name;
+              return p == climates + lights + covers ? std::string("Settings") : std::string("Back");
             };
             auto m = menu_window(id(entity_menu_index), count, ${settings_extra_rows}, entity_name);
             id(set_title) = "Entities";
@@ -2576,7 +2796,7 @@ script:
           text: !lambda |-
             if (id(ui_context) == 6)
               return std::string(entity_menu_icon(id(entity_menu_index) - 2,
-                  (int) id(ha_climates).size(), (int) id(ha_lights).size()));
+                  (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size()));
             if (id(ui_context) == 2)
               return std::string(settings_root_icon(id(menu_index) - 2));
             if (id(ui_context) == 3) {
@@ -2589,7 +2809,7 @@ script:
           text: !lambda |-
             if (id(ui_context) == 6)
               return std::string(entity_menu_icon(id(entity_menu_index) - 1,
-                  (int) id(ha_climates).size(), (int) id(ha_lights).size()));
+                  (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size()));
             if (id(ui_context) == 2)
               return std::string(settings_root_icon(id(menu_index) - 1));
             if (id(ui_context) == 3) {
@@ -2602,7 +2822,7 @@ script:
           text: !lambda |-
             if (id(ui_context) == 6)
               return std::string(entity_menu_icon(id(entity_menu_index),
-                  (int) id(ha_climates).size(), (int) id(ha_lights).size()));
+                  (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size()));
             if (id(ui_context) == 2)
               return std::string(settings_root_icon(id(menu_index)));
             if (id(ui_context) == 3) {
@@ -2615,7 +2835,7 @@ script:
           text: !lambda |-
             if (id(ui_context) == 6)
               return std::string(entity_menu_icon(id(entity_menu_index) + 1,
-                  (int) id(ha_climates).size(), (int) id(ha_lights).size()));
+                  (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size()));
             if (id(ui_context) == 2)
               return std::string(settings_root_icon(id(menu_index) + 1));
             if (id(ui_context) == 3) {
@@ -2628,7 +2848,7 @@ script:
           text: !lambda |-
             if (id(ui_context) == 6)
               return std::string(entity_menu_icon(id(entity_menu_index) + 2,
-                  (int) id(ha_climates).size(), (int) id(ha_lights).size()));
+                  (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size()));
             if (id(ui_context) == 2)
               return std::string(settings_root_icon(id(menu_index) + 2));
             if (id(ui_context) == 3) {

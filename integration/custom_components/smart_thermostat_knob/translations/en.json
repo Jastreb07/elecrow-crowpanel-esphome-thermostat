@@ -8,13 +8,15 @@
           "name": "Smart Knob name",
           "climates": "Thermostats",
           "lights": "Lights",
-          "esphome_config_entity": "ESPHome config entity"
+          "esphome_config_entity": "ESPHome config entity",
+          "covers": "Covers"
         },
         "data_description": {
           "name": "A unique, recognizable name for this physical Smart Knob.",
           "climates": "Select one or more climate entities.",
           "lights": "Select one or more light entities.",
-          "esphome_config_entity": "Select this knob's ESPHome text entity named Home Assistant Config Entity. The matching restart button is detected automatically."
+          "esphome_config_entity": "Select this knob's ESPHome text entity named Home Assistant Config Entity. The matching restart button is detected automatically.",
+          "covers": "Select one or more cover entities (shutters, blinds, curtains)."
         }
       },
       "reconfigure": {
@@ -24,13 +26,15 @@
           "name": "Smart Knob name",
           "climates": "Thermostats",
           "lights": "Lights",
-          "esphome_config_entity": "ESPHome config entity"
+          "esphome_config_entity": "ESPHome config entity",
+          "covers": "Covers"
         },
         "data_description": {
           "name": "A unique, recognizable name for this physical Smart Knob.",
           "climates": "Select one or more climate entities.",
           "lights": "Select one or more light entities.",
-          "esphome_config_entity": "Select this knob's ESPHome text entity named Home Assistant Config Entity. The matching restart button is detected automatically."
+          "esphome_config_entity": "Select this knob's ESPHome text entity named Home Assistant Config Entity. The matching restart button is detected automatically.",
+          "covers": "Select one or more cover entities (shutters, blinds, curtains)."
         }
       }
     },
@@ -50,13 +54,15 @@
           "name": "Smart Knob name",
           "climates": "Thermostats",
           "lights": "Lights",
-          "esphome_config_entity": "ESPHome config entity"
+          "esphome_config_entity": "ESPHome config entity",
+          "covers": "Covers"
         },
         "data_description": {
           "name": "A unique, recognizable name for this physical Smart Knob.",
           "climates": "Select one or more climate entities.",
           "lights": "Select one or more light entities.",
-          "esphome_config_entity": "Select this knob's ESPHome text entity named Home Assistant Config Entity. The matching restart button is detected automatically."
+          "esphome_config_entity": "Select this knob's ESPHome text entity named Home Assistant Config Entity. The matching restart button is detected automatically.",
+          "covers": "Select one or more cover entities (shutters, blinds, curtains)."
         }
       }
     },
