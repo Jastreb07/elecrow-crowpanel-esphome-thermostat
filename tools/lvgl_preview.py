@@ -149,12 +149,21 @@ def label_text(widget):
     txt = str(widget.get("text", ""))
     if txt.startswith("<"):  # !lambda
         txt = "(lambda)"
-    if "icon" in wid:
+    # Icon widgets with real static glyph text (e.g. the per-mode light/cover
+    # icons) render as-is; only the ones left blank/lambda-driven in their
+    # static definition (filled in later via a separate update action) need
+    # an ICON_HINTS guess.
+    if "icon" in wid and txt in ("", "(lambda)"):
         for rx, repl in ICON_HINTS:
             if rx.search(wid):
                 return repl
         return "\U000F02D6"  # mdi-help-circle
-    return txt if txt else "(empty)"
+    if not txt:
+        return "(empty)"
+    # The .w class sets white-space:nowrap, which collapses literal "\n"
+    # like any other whitespace; turn multi-line label text (e.g. stacked
+    # tick marks) into explicit line breaks so it renders as LVGL shows it.
+    return txt.replace("\n", "<br>")
 
 
 def color_css(value, default="#FFFFFF"):
@@ -198,7 +207,9 @@ def pos_css(widget, size):
     else:  # CENTER / LEFT_MID / RIGHT_MID
         css.append(f"top:{container_height // 2 + y}px")
         ty = "-50%"
-    css.append(f"transform:translate({tx},{ty})")
+    angle = float(widget.get("transform_angle", 0) or 0)
+    rotate = f" rotate({angle}deg)" if angle else ""
+    css.append(f"transform:translate({tx},{ty}){rotate}")
     return ";".join(css)
 
 
@@ -447,9 +458,11 @@ def render_board(name, path, size):
         pid = page.get("id", "?")
         entries = runtime_widgets(pid, page.get("widgets", []))
         widgets = "".join(render_widget(we, fonts, size) for we in entries)
+        bg = color_css(page.get("bg_color"), "#000000")
         tiles.append(
             f'<div class="page"><h2>{pid}</h2>'
-            f'<div class="screen" style="width:{size}px;height:{size}px">{widgets}</div></div>'
+            f'<div class="screen" style="width:{size}px;height:{size}px;background:{bg}">'
+            f'{widgets}</div></div>'
         )
 
     return (

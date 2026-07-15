@@ -58,7 +58,8 @@ substitutions:
   light_slider_range: "230"
   light_kelvin_scale_width: "288"
   light_kelvin_scale_height: "56"
-  cover_slider_range: "230"
+  cover_fill_max: "480"
+  cover_knob_margin: "28"       # Keeps the knob off the very top/bottom edges
 
 # Local components load variable-length climate/light lists from the JSON
 # attributes of the Home Assistant configuration entity.
@@ -1010,8 +1011,10 @@ text:
         - lambda: |-
             id(ha_climates).set_config_entity_id(x);
             id(ha_lights).set_config_entity_id(x);
+            id(ha_covers).set_config_entity_id(x);
             id(climate_index) = 0;
             id(light_index) = 0;
+            id(cover_index) = 0;
         - script.execute: refresh_connection
 
 # ------------------------------------------------------------------
@@ -1852,7 +1855,7 @@ script:
             const std::string &state = id(ha_covers).get(id(cover_index)).state;
             if (state == "opening") return std::string("Öffnet");
             if (state == "closing") return std::string("Schließt");
-            if (state == "open") return std::string("Offen");
+            if (state == "open") return std::string("Geöffnet");
             if (state == "closed") return std::string("Geschlossen");
             return std::string("Rollo");
       - lvgl.label.update:
@@ -1868,7 +1871,7 @@ script:
           bool available = id(connection_ready) &&
                             id(ha_covers).get(id(cover_index)).state != "unavailable";
           lv_obj_set_style_text_color(id(label_cover_icon),
-              available ? lv_color_hex(0xE8E8E8) : lv_color_hex(0x555555), LV_PART_MAIN);
+              available ? lv_color_hex(0xFFFFFF) : lv_color_hex(0x4A3A73), LV_PART_MAIN);
       - lvgl.label.update:
           id: label_cover_page
           text: !lambda |-
@@ -1877,12 +1880,22 @@ script:
             snprintf(page, sizeof(page), "%d / %d", id(cover_index) + 1, (int) id(ha_covers).size());
             return std::string(page);
       - lambda: |-
+          // The whole screen is the slider: cover_fill grows down from the
+          // top edge, and cover_fill_knob rides inside it, staying a fixed
+          // gap above its bottom edge. At 0 % there is no fill to sit in,
+          // so the knob hides along with it.
           float normalized = id(connection_ready)
               ? clamp(id(ha_covers).normalized_value(id(cover_index)) / 100.0f, 0.0f, 1.0f)
               : 0.0f;
-          int slider_x = (int) roundf((normalized - 0.5f) * ${cover_slider_range});
-          lv_obj_align(id(cover_slider_knob), LV_ALIGN_CENTER, slider_x,
-                       lv_obj_get_y_aligned(id(cover_slider_knob)));
+          int fill_height = (int) roundf(normalized * ${cover_fill_max});
+          lv_obj_set_height(id(cover_fill), fill_height);
+          if (fill_height <= 0) {
+            lv_obj_add_flag(id(cover_fill_knob), LV_OBJ_FLAG_HIDDEN);
+          } else {
+            lv_obj_clear_flag(id(cover_fill_knob), LV_OBJ_FLAG_HIDDEN);
+            int knob_y = std::max(0, fill_height - ${cover_knob_margin});
+            lv_obj_align(id(cover_fill_knob), LV_ALIGN_TOP_MID, 0, knob_y);
+          }
 
   # Knob press on the cover screen: stop is the one action rotating the
   # encoder can't already achieve (rotating reaches 0/100 exactly).

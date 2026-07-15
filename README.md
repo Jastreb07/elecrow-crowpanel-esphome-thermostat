@@ -209,9 +209,10 @@ The controller reads each entity's `supported_color_modes` attribute. A short
 press therefore cycles only through controls supported by that light:
 brightness, color temperature, and color.
 
-Cover pages (shutters, blinds, curtains) show position 0–100 % on the same
-pill scale as brightness; turning the knob moves the target position, a short
-press stops the cover mid-move, and swiping fully opens or closes it. Covers
+Cover pages (shutters, blinds, curtains) show position 0–100 % as a
+liquid-fill gauge that rises from the bottom of the screen; turning the knob
+moves the target position, a short press stops the cover mid-move, and
+swiping fully opens or closes it. Covers
 that only support open/close/stop (no `set_cover_position`) still work: the
 knob nudges an internal position estimate and the direction of the last
 nudge decides between `cover.open_cover` and `cover.close_cover`.

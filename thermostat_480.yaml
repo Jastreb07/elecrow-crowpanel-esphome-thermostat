@@ -943,7 +943,7 @@ lvgl:
 
     # ================= Cover control (Rollos/Gardinen) =================
     - id: screen_cover
-      bg_color: "0x000000"
+      bg_color: "0x241B3D"
       on_swipe_left:
         - script.execute: open_settings
       on_swipe_right:
@@ -965,83 +965,92 @@ lvgl:
             on_click:
               - script.execute: wake_display
 
-        # Same pill scale as the light brightness page: 0 % on the left
-        # (closed), 100 % on the right (open).
+        # Liquid-fill gauge: grows up from the bottom edge with the cover
+        # position, so the colored area itself is the slider.
         - obj:
-            id: cover_position_scale
-            align: CENTER
-            y: 145
-            width: 300
-            height: 68
-            radius: 34
-            bg_color: 0x08090A
-            bg_opa: COVER
-            border_color: 0x35383B
-            border_width: 2
-            shadow_width: 0
-            transform_angle: 180
-        - label:
-            id: label_cover_ticks
-            text: "| | | | | | | | | | | | |"
-            text_font: rajdhani_medium_24
-            text_color: 0x34373A
-            align: CENTER
-            y: 145
-            width: 270
-            text_align: CENTER
-        - obj:
-            id: cover_slider_knob
-            align: CENTER
-            y: 145
-            width: 9
-            height: 54
-            radius: 5
-            bg_color: 0xFFFFFF
+            id: cover_fill
+            align: TOP_MID
+            width: 480
+            height: 0
+            radius: 0
+            bg_color: 0x6E4FBD
             bg_opa: COVER
             border_width: 0
             shadow_width: 0
 
+        # Handle riding the bottom edge of cover_fill.
+        - obj:
+            id: cover_fill_knob
+            align: TOP_MID
+            y: 100
+            width: 100
+            height: 10
+            radius: 5
+            bg_color: 0xFFFFFF
+            bg_opa: COVER
+            border_color: 0x9A9A9A
+            border_width: 2
+            shadow_width: 0
+
+        # Direction hints: up = open, down = close.
         - label:
-            id: label_cover_name
-            text: "Cover"
-            text_font: rajdhani_medium_40
-            text_color: 0x9A9A9A
-            align: CENTER
-            y: -75
-            width: 300
-            text_align: CENTER
-            long_mode: SCROLL_CIRCULAR
+            id: label_cover_arrow_up
+            text: "\U000F0143"
+            text_font: icons_70
+            text_color: 0xCDBEEC
+            align: TOP_MID
+            y: 34
         - label:
-            id: label_cover_mode
-            text: "Rollo"
-            text_font: rajdhani_medium_24
-            text_color: 0xB0B0B0
+            id: label_cover_arrow_down
+            text: "\U000F0140"
+            text_font: icons_70
+            text_color: 0xCDBEEC
+            align: BOTTOM_MID
+            y: -34
+
+        - label:
+            id: label_cover_icon
+            text: "\U000F111C"
+            text_font: icons_70
+            text_color: 0xFFFFFF
             align: CENTER
-            y: 65
-            width: 300
-            text_align: CENTER
-            long_mode: SCROLL_CIRCULAR
+            y: -90
+
         - label:
             id: label_cover_value
             text: "50%"
             text_font: rajdhani_semibold_74
             text_color: 0xFFFFFF
             align: CENTER
-            y: 0
             width: 300
             text_align: CENTER
+
         - label:
-            id: label_cover_icon
-            text: "\U000F111C"
-            text_font: icons_70
-            text_color: 0x555555
+            id: label_cover_name
+            text: "Cover"
+            text_font: rajdhani_medium_24
+            text_color: 0xF0EDFB
             align: CENTER
-            y: -165
+            y: 65
+            width: 300
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+        - label:
+            id: label_cover_mode
+            text: "Rollo"
+            text_font: rajdhani_medium_22
+            text_color: 0xCDBEEC
+            align: CENTER
+            y: 92
+            width: 300
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+
         - label:
             id: label_cover_page
             text: "1 / 1"
             text_font: rajdhani_medium_22
-            text_color: 0x555555
+            text_color: 0xCDBEEC
             align: TOP_RIGHT
             x: -24
             y: 18
@@ -1276,6 +1285,7 @@ font:
         "󰔡", "󰑧", "󰖩", "󰋽",
         "󰜉", "󰌵", "󰃟", "󰁍",
         "\U000F18D7", "\U000F111C",
+        "\U000F0143", "\U000F0140",
       ]
   - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
     id: menu_icons_24
