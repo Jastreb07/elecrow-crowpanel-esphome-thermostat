@@ -6,7 +6,7 @@
   <title>Smart Thermostat Knob &middot; Web Flasher</title>
   <meta name="description" content="Flash the Smart Thermostat Knob firmware for CrowPanel ESP32-S3 rotary displays directly from the browser." />
   <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
-  <link rel="icon" href="data:," />
+  <link rel="icon" type="image/png" href="images/favicon.png" />
   <style>
     :root {
       color-scheme: dark;
@@ -39,6 +39,13 @@
       text-align: center;
       max-width: 640px;
       margin-bottom: 40px;
+    }
+
+    header .logo {
+      display: block;
+      margin: 0 auto 16px;
+      border-radius: 22px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
     }
 
     header h1 {
@@ -234,6 +241,7 @@
 </head>
 <body>
   <header>
+    <img class="logo" src="images/logo.png" alt="Smart Thermostat Knob logo" width="88" height="88" />
     <h1>Smart Thermostat Knob</h1>
     <p>
       Flash the ESPHome firmware for your CrowPanel rotary display directly
