@@ -205,12 +205,10 @@ git push
 ```
 
 `build.ps1` compiles both boards and copies each board's
-`firmware.factory.bin` into `web-flasher/firmware/<board>/`.
-[`.github/workflows/deploy-web-flasher.yml`](.github/workflows/deploy-web-flasher.yml)
-separately publishes `index.html` and the manifests (but not the firmware
-binary) to GitHub Pages whenever those files change. See
-[`web-flasher/README.md`](web-flasher/README.md) for the one-time GitHub
-Pages/DNS setup.
+`firmware.factory.bin` into `web-flasher/firmware/<board>/`. The page
+itself (`index.html` + manifests) is hosted on our own web space, not
+GitHub Pages — see [`web-flasher/README.md`](web-flasher/README.md) for
+the upload steps.
 
 ## LVGL Preview
 
@@ -383,14 +381,11 @@ thermostat/
 |-- 3D Print/                # Printable knob/enclosure STL files, per board
 |-- integration/
 |   `-- README.md            # Pointer to the integration's own repository
-|-- web-flasher/             # Browser-based flasher (ESP Web Tools), published via GitHub Pages
+|-- web-flasher/             # Browser-based flasher (ESP Web Tools), hosted on our own web space
 |   |-- index.html
 |   |-- manifest_240.json
 |   |-- manifest_480.json
 |   `-- firmware/            # Flashable .bin parts per board (see web-flasher/README.md)
-|-- .github/
-|   `-- workflows/
-|       `-- deploy-web-flasher.yml # Publishes web-flasher/ to GitHub Pages
 `-- components/
     |-- cst826/                 # Local CST826 touch component
     |-- ha_climate_controller/  # Variable-length Home Assistant climate list

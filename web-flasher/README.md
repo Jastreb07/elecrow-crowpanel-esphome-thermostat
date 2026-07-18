@@ -71,8 +71,7 @@ The repo's `.gitignore` blocks `*.bin` everywhere except under
 `web-flasher/firmware/` (see the `!web-flasher/firmware/**/*.bin`
 exception). Once this lands on `master`, the manifests'
 `raw.githubusercontent.com` URLs serve the new binaries immediately — no
-separate publish step, and the deploy workflow below does not need to run
-again for a firmware-only update.
+separate publish step needed for a firmware-only update (see step 4).
 
 ## 3. Preview the page locally
 
@@ -90,23 +89,18 @@ already pushed to `master`.
 
 ## 4. Publish the page
 
-`.github/workflows/deploy-web-flasher.yml` publishes `index.html` and the
-two manifests to GitHub Pages on every push to `master` that touches those
-files — it deliberately does not upload `web-flasher/firmware/` as part of
-the Pages site, since the manifests fetch that binary from GitHub directly.
-One-time setup on GitHub (not something this repo can do for you):
+`https://smart-knob.vexur-software.com` is hosted on our own web space, not
+GitHub Pages. Because firmware comes straight from GitHub (see above),
+publishing is just copying static files — no build step, no GitHub Pages
+setup, no DNS changes tied to GitHub:
 
-1. **Settings > Pages > Build and deployment > Source**: choose
-   **GitHub Actions**.
-2. **Settings > Pages > Custom domain**: enter
-   `smart-knob.vexur-software.com` (this repo already ships the matching
-   `web-flasher/CNAME` file, so GitHub picks it up automatically once Pages
-   is enabled).
-3. At your DNS provider, add a `CNAME` record for `smart-knob` pointing to
-   `jastreb07.github.io`.
-
-After DNS propagates and the workflow runs once, the page is live at
-`https://smart-knob.vexur-software.com`. Because firmware comes straight
-from GitHub, `index.html` can also be copied to any other static web space
-(including a plain webspace/FTP host) without also uploading the `.bin`
-file there — it will still fetch the current firmware from this repo.
+1. Upload `index.html`, `manifest_240.json`, `manifest_480.json`, and the
+   `images/` folder from this directory to the web space (FTP, your
+   existing deploy pipeline, whatever you already use for
+   vexur-software.com).
+2. Do **not** upload `web-flasher/firmware/` — the manifests fetch those
+   binaries from `raw.githubusercontent.com` regardless of where
+   `index.html` lives, so there's nothing to sync there.
+3. Repeat step 1 whenever `index.html` or a manifest changes. A
+   firmware-only update (new binaries pushed to `master`) needs no
+   re-upload at all — the page picks it up automatically on next load.
