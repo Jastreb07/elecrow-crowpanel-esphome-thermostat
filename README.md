@@ -19,17 +19,7 @@ configuration.
 
 ## Screens
 
-| Loading | Home | Thermostat |
-|---|---|---|
-| ![Loading screen](images/screen_loading.png) | ![Home screen](images/screen_home.png) | ![Thermostat screen](images/screen_thermostat.png) |
-
-| Light brightness | Light temperature | Light color |
-|---|---|---|
-| ![Light brightness screen](images/screen_light_brightness.png) | ![Light temperature screen](images/screen_light_temperature.png) | ![Light color screen](images/screen_light_color.png) |
-
-| Cover | Entity navigation |
-|---|---|
-| ![Cover screen](images/screen_cover.png) | ![Navigation screen](images/screen_navigation.png) |
+![All screens: loading, home, thermostat, light brightness/temperature/color, cover, and entity navigation](images/screens_demo.png)
 
 ## Features
 
