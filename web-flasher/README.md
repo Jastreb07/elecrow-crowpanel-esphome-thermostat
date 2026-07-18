@@ -22,6 +22,12 @@ where `index.html` itself is hosted. Nothing under `web-flasher/firmware/`
 needs to be uploaded anywhere separately — pushing it to `master` is the
 whole deployment step for firmware.
 
+`web-flasher/images/` holds the two board product photos shown on the
+cards (copies of `images/Elecrow-CrowPanel-240x240.png` and
+`-480x480.png` from the repo root) so the page is self-contained — both the
+local preview and the deployed site load them from `images/` relative to
+`index.html`, with no dependency on GitHub raw URLs for these.
+
 ## 1. Build and export firmware
 
 ```powershell

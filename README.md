@@ -57,6 +57,10 @@ ESPHome API.
 
 ## Hardware
 
+| CrowPanel 1.28" (240x240) | CrowPanel 2.1" (480x480) |
+|---|---|
+| [![Elecrow CrowPanel 1.28" 240x240 rotary display](images/Elecrow-CrowPanel-240x240.png)](https://www.elecrow.com/crowpanel-1-28inch-hmi-esp32-rotary-display-240-240-ips-round-touch-knob-screen.html) | [![Elecrow CrowPanel 2.1" 480x480 rotary display](images/Elecrow-CrowPanel-480x480.png)](https://www.elecrow.com/crowpanel-2-1inch-hmi-esp32-rotary-display-480-480-ips-round-touch-knob-screen.html) |
+
 - [Elecrow CrowPanel 2.1" HMI ESP32-S3 rotary display, 480x480](https://www.elecrow.com/crowpanel-2-1inch-hmi-esp32-rotary-display-480-480-ips-round-touch-knob-screen.html)
 - [Elecrow CrowPanel 1.28" HMI ESP32-S3 rotary display, 240x240](https://www.elecrow.com/crowpanel-1-28inch-hmi-esp32-rotary-display-240-240-ips-round-touch-knob-screen.html)
 - Built-in rotary encoder with push button

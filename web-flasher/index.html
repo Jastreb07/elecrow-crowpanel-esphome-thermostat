@@ -77,16 +77,17 @@
       gap: 16px;
     }
 
-    .card .badge {
-      width: 96px;
-      height: 96px;
-      border-radius: 50%;
-      background: radial-gradient(circle at 35% 30%, var(--accent-bright), var(--accent) 70%);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-weight: 600;
-      font-size: 0.85rem;
+    .card a:has(> .board-photo) {
+      display: inline-block;
+      line-height: 0;
+    }
+
+    .card .board-photo {
+      width: 100%;
+      max-width: 220px;
+      height: auto;
+      border-radius: 16px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
     }
 
     .card h2 {
@@ -245,9 +246,14 @@
 
   <section class="cards">
     <div class="card">
-      <div class="badge">1.28&Prime;<br />240&times;240</div>
+      <a href="https://www.elecrow.com/crowpanel-1-28inch-hmi-esp32-rotary-display-240-240-ips-round-touch-knob-screen.html" target="_blank" rel="noopener">
+        <img class="board-photo" src="images/Elecrow-CrowPanel-240x240.png" alt="Elecrow CrowPanel 1.28 inch 240x240 rotary display" />
+      </a>
       <h2>CrowPanel 1.28&Prime;</h2>
-      <p>Round rotary display, 240&times;240, GC9A01A panel.</p>
+      <p>
+        Round rotary display, 240&times;240, GC9A01A panel.
+        <a href="https://www.elecrow.com/crowpanel-1-28inch-hmi-esp32-rotary-display-240-240-ips-round-touch-knob-screen.html" target="_blank" rel="noopener">Product page</a>.
+      </p>
       <esp-web-install-button manifest="manifest_240.json">
         <button slot="activate">Connect and Install</button>
         <span slot="unsupported">
@@ -261,9 +267,14 @@
     </div>
 
     <div class="card">
-      <div class="badge">2.1&Prime;<br />480&times;480</div>
+      <a href="https://www.elecrow.com/crowpanel-2-1inch-hmi-esp32-rotary-display-480-480-ips-round-touch-knob-screen.html" target="_blank" rel="noopener">
+        <img class="board-photo" src="images/Elecrow-CrowPanel-480x480.png" alt="Elecrow CrowPanel 2.1 inch 480x480 rotary display" />
+      </a>
       <h2>CrowPanel 2.1&Prime;</h2>
-      <p>Round rotary display, 480&times;480, ST7701S panel.</p>
+      <p>
+        Round rotary display, 480&times;480, ST7701S panel.
+        <a href="https://www.elecrow.com/crowpanel-2-1inch-hmi-esp32-rotary-display-480-480-ips-round-touch-knob-screen.html" target="_blank" rel="noopener">Product page</a>.
+      </p>
       <esp-web-install-button manifest="manifest_480.json">
         <button slot="activate">Connect and Install</button>
         <span slot="unsupported">

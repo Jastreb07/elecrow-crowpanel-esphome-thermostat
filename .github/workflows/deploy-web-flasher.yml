@@ -15,6 +15,7 @@ on:
       - "web-flasher/index.html"
       - "web-flasher/manifest_*.json"
       - "web-flasher/CNAME"
+      - "web-flasher/images/**"
   workflow_dispatch:
 
 permissions:
@@ -39,6 +40,7 @@ jobs:
           mkdir -p dist
           cp web-flasher/index.html web-flasher/manifest_240.json web-flasher/manifest_480.json dist/
           cp web-flasher/CNAME dist/ 2>/dev/null || true
+          cp -r web-flasher/images dist/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
