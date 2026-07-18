@@ -1,6 +1,7 @@
 secrets.yaml
 .esphome
 *.bin
+!web-flasher/firmware/**/*.bin
 .venv
 .idea
 .claude

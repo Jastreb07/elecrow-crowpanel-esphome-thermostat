@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Smart Thermostat Knob &middot; Web Flasher</title>
+  <meta name="description" content="Flash the Smart Thermostat Knob firmware for CrowPanel ESP32-S3 rotary displays directly from the browser." />
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+  <link rel="icon" href="data:," />
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0c0912;
+      --panel: #17121f;
+      --panel-border: #2c2340;
+      --accent: #6e4fbd;
+      --accent-bright: #9c7ff0;
+      --text: #f0edfb;
+      --text-dim: #b7add6;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(circle at 50% -10%, #241b3d 0%, var(--bg) 55%);
+      color: var(--text);
+      font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 48px 20px 80px;
+    }
+
+    header {
+      text-align: center;
+      max-width: 640px;
+      margin-bottom: 40px;
+    }
+
+    header h1 {
+      font-size: 2rem;
+      margin: 0 0 8px;
+      letter-spacing: 0.02em;
+    }
+
+    header p {
+      color: var(--text-dim);
+      line-height: 1.5;
+      margin: 0;
+    }
+
+    header a {
+      color: var(--accent-bright);
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 24px;
+      width: 100%;
+      max-width: 720px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-radius: 20px;
+      padding: 28px 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      gap: 16px;
+    }
+
+    .card .badge {
+      width: 96px;
+      height: 96px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 30%, var(--accent-bright), var(--accent) 70%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      font-size: 0.85rem;
+    }
+
+    .card h2 {
+      margin: 0;
+      font-size: 1.2rem;
+    }
+
+    .card p {
+      margin: 0;
+      color: var(--text-dim);
+      font-size: 0.9rem;
+      line-height: 1.4;
+    }
+
+    esp-web-install-button {
+      --esp-tools-button-color: #fff;
+      --esp-tools-button-background-color: var(--accent);
+    }
+
+    esp-web-install-button button {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 999px;
+      padding: 12px 28px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    esp-web-install-button button:hover {
+      background: var(--accent-bright);
+    }
+
+    esp-web-install-button [slot="unsupported"],
+    esp-web-install-button [slot="not-allowed"] {
+      color: var(--text-dim);
+      font-size: 0.85rem;
+      line-height: 1.4;
+    }
+
+    .steps {
+      margin-top: 48px;
+      max-width: 640px;
+      width: 100%;
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-radius: 20px;
+      padding: 24px 28px;
+    }
+
+    .steps h2 {
+      margin-top: 0;
+      font-size: 1.1rem;
+    }
+
+    .steps ol {
+      color: var(--text-dim);
+      line-height: 1.6;
+      padding-left: 20px;
+    }
+
+    .steps code {
+      background: #0c0912;
+      border: 1px solid var(--panel-border);
+      border-radius: 4px;
+      padding: 1px 6px;
+      color: var(--text);
+    }
+
+    footer {
+      margin-top: 40px;
+      color: var(--text-dim);
+      font-size: 0.85rem;
+      text-align: center;
+    }
+
+    footer a {
+      color: var(--accent-bright);
+    }
+
+    .legal-links {
+      margin-top: 12px;
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .legal-links a {
+      color: var(--text-dim);
+    }
+
+    #cookie-banner {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 100;
+      background: var(--panel);
+      border-top: 1px solid var(--panel-border);
+      padding: 16px 20px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.4);
+    }
+
+    #cookie-banner[hidden] {
+      display: none;
+    }
+
+    #cookie-banner p {
+      margin: 0;
+      max-width: 560px;
+      color: var(--text-dim);
+      font-size: 0.85rem;
+      line-height: 1.5;
+      text-align: center;
+    }
+
+    #cookie-banner a {
+      color: var(--accent-bright);
+    }
+
+    #cookie-banner-accept {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 999px;
+      padding: 10px 24px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    #cookie-banner-accept:hover {
+      background: var(--accent-bright);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Smart Thermostat Knob</h1>
+    <p>
+      Flash the ESPHome firmware for your CrowPanel rotary display directly
+      from Chrome or Edge over USB &mdash; no software install required.
+      After flashing, configure Wi-Fi right here in the browser.
+      Source and documentation:
+      <a href="https://github.com/Jastreb07/elecrow-crowpanel-esphome-thermostat" target="_blank" rel="noopener">GitHub</a>.
+    </p>
+  </header>
+
+  <section class="cards">
+    <div class="card">
+      <div class="badge">1.28&Prime;<br />240&times;240</div>
+      <h2>CrowPanel 1.28&Prime;</h2>
+      <p>Round rotary display, 240&times;240, GC9A01A panel.</p>
+      <esp-web-install-button manifest="manifest_240.json">
+        <button slot="activate">Connect and Install</button>
+        <span slot="unsupported">
+          Your browser does not support Web Serial. Use Chrome or Edge on
+          desktop.
+        </span>
+        <span slot="not-allowed">
+          Web Serial is only available on secure (HTTPS) origins.
+        </span>
+      </esp-web-install-button>
+    </div>
+
+    <div class="card">
+      <div class="badge">2.1&Prime;<br />480&times;480</div>
+      <h2>CrowPanel 2.1&Prime;</h2>
+      <p>Round rotary display, 480&times;480, ST7701S panel.</p>
+      <esp-web-install-button manifest="manifest_480.json">
+        <button slot="activate">Connect and Install</button>
+        <span slot="unsupported">
+          Your browser does not support Web Serial. Use Chrome or Edge on
+          desktop.
+        </span>
+        <span slot="not-allowed">
+          Web Serial is only available on secure (HTTPS) origins.
+        </span>
+      </esp-web-install-button>
+    </div>
+  </section>
+
+  <section class="steps">
+    <h2>How it works</h2>
+    <ol>
+      <li>Connect the board to your computer with a USB cable.</li>
+      <li>Click <strong>Connect and Install</strong> for your board size and pick the serial port in the browser prompt.</li>
+      <li>Wait for the firmware to flash; the page shows progress.</li>
+      <li>Once flashing finishes, the installer offers a <strong>Configure Wi-Fi</strong> step (Improv Wi-Fi) &mdash; pick your network and enter the password without leaving the browser.</li>
+      <li>The device restarts, joins Wi-Fi, and shows up in Home Assistant. Continue with the <a href="https://github.com/Jastreb07/elecrow-crowpanel-esphome-thermostat#home-assistant-setup" target="_blank" rel="noopener">Home Assistant setup</a>.</li>
+    </ol>
+  </section>
+
+  <footer>
+    Smart Thermostat Knob is not affiliated with Elecrow or Home Assistant.
+    Firmware built with <a href="https://esphome.io" target="_blank" rel="noopener">ESPHome</a>,
+    flashing powered by <a href="https://esphome.github.io/esp-web-tools/" target="_blank" rel="noopener">ESP Web Tools</a>.
+    <nav class="legal-links">
+      <a href="https://vexur-software.com/legal-information/" target="_blank" rel="noopener">Legal Information</a>
+      <a href="https://vexur-software.com/privacy-policy/" target="_blank" rel="noopener">Privacy policy</a>
+      <a href="https://vexur-software.com/terms-conditions/" target="_blank" rel="noopener">Terms & conditions</a>
+    </nav>
+  </footer>
+
+  <div id="cookie-banner" hidden>
+    <p>
+      This site does not use tracking or advertising cookies. It only stores
+      a small entry in your browser's local storage to remember that you've
+      dismissed this notice, and to keep any settings from this page (for
+      example whether an install has already run). See our
+      <a href="https://vexur-software.com/privacy-policy/" target="_blank" rel="noopener">privacy policy</a>
+      for details.
+    </p>
+    <button id="cookie-banner-accept" type="button">Got it</button>
+  </div>
+  <script>
+    (function () {
+      var STORAGE_KEY = "cookie-consent-ack";
+      var banner = document.getElementById("cookie-banner");
+      var accept = document.getElementById("cookie-banner-accept");
+      try {
+        if (!localStorage.getItem(STORAGE_KEY)) {
+          banner.hidden = false;
+        }
+      } catch (err) {
+        // Local storage unavailable (private mode / disabled) - show once
+        // per page load, no persistence possible.
+        banner.hidden = false;
+      }
+      accept.addEventListener("click", function () {
+        banner.hidden = true;
+        try {
+          localStorage.setItem(STORAGE_KEY, "1");
+        } catch (err) {
+          // Ignore - nothing to persist.
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

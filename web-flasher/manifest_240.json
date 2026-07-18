@@ -1,0 +1,13 @@
+{
+  "name": "Smart Thermostat Knob (CrowPanel 1.28\" 240x240)",
+  "version": "1.0.0",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        { "path": "https://raw.githubusercontent.com/Jastreb07/elecrow-crowpanel-esphome-thermostat/master/web-flasher/firmware/thermostat_240/firmware.factory.bin", "offset": 0 }
+      ]
+    }
+  ]
+}

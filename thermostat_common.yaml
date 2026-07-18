@@ -142,6 +142,12 @@ wifi:
     ssid: "${friendly_name} Fallback"
     password: !secret wifi_ap_password
 
+# Lets the web flasher (web-flasher/) offer a "configure Wi-Fi" step over
+# USB-serial right after installing, the same way esphome.github.io/esp-web-tools
+# does for other devices. Independent of the compiled-in network above: Improv
+# just stores whatever network the browser sends and takes priority on connect.
+improv_serial:
+
 captive_portal:
 
 logger:
