@@ -238,9 +238,25 @@ python tools\lvgl_preview.py --once
 
 ## Home Assistant Setup
 
-The ESPHome integration in Home Assistant should discover the device after
-it joins Wi-Fi. Home Assistant asks for the API encryption key if one is
-defined in `secrets.yaml`.
+### Adding the device
+
+Once the ESP has joined Wi-Fi, Home Assistant's built-in **ESPHome**
+integration should discover it automatically and show a notification. If
+it doesn't, add it manually:
+
+1. Go to **Settings > Devices & services > Add integration**, search for
+   **ESPHome**, and select it.
+2. Enter the device's hostname or IP address (for example
+   `thermostat480.local` or `192.168.178.137`) and confirm.
+3. If `api.encryption.key` is set in `secrets.yaml`, Home Assistant asks
+   for that key on this step — paste it in.
+4. Home Assistant creates one device with the sensors, buttons, and other
+   entities the firmware exposes (Wi-Fi signal, backlight, restart button,
+   etc.).
+
+This is separate from the **Smart Thermostat Knob** custom integration
+below, which only configures *which* climate/light/cover entities show up
+as pages on the device — add the ESP itself first.
 
 The device itself does not know which climate, light, or cover entities to
 show. It reads that list from one Home Assistant sensor attribute

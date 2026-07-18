@@ -6,7 +6,8 @@ and press. Built on ESPHome for Elecrow's CrowPanel ESP32-S3 rotary
 displays.
 
 Flash it in the browser, point it at Home Assistant, and it's ready to use.
-See [SETUP.md](SETUP.md) for building, flashing, and Home Assistant
+See [SETUP.md](SETUP.md) for building, flashing, [adding the device via the
+ESPHome integration](SETUP.md#adding-the-device), and full Home Assistant
 configuration.
 
 ## Video Walkthrough
