@@ -1,7 +1,5 @@
 # Thermostat Knob - CrowPanel ESP32-S3 Rotary Displays
 
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Jastreb07&repository=elecrow-crowpanel-esphome-thermostat&category=integration)
-
 A round rotary smart display that controls your thermostat, lights, and
 covers straight from Home Assistant — no phone, no app, just a knob you turn
 and press. Built on ESPHome for Elecrow's CrowPanel ESP32-S3 rotary
@@ -15,7 +13,7 @@ configuration.
 
 | 1.28" (240x240) | 2.1" (480x480) |
 |---|---|
-| [![240x240 demo](https://img.youtube.com/vi/REPLACE_WITH_240_VIDEO_ID/0.jpg)](https://www.youtube.com/watch?v=REPLACE_WITH_240_VIDEO_ID) | [![480x480 demo](https://img.youtube.com/vi/REPLACE_WITH_480_VIDEO_ID/0.jpg)](https://www.youtube.com/watch?v=REPLACE_WITH_480_VIDEO_ID) |
+| [![240x240 demo](https://img.youtube.com/vi/F0mFrxt4jac/0.jpg)](https://www.youtube.com/watch?v=F0mFrxt4jac) | [![480x480 demo](https://img.youtube.com/vi/REPLACE_WITH_480_VIDEO_ID/0.jpg)](https://www.youtube.com/watch?v=REPLACE_WITH_480_VIDEO_ID) |
 
 Replace `REPLACE_WITH_240_VIDEO_ID` and `REPLACE_WITH_480_VIDEO_ID` with the
 actual YouTube video IDs once the walkthroughs are recorded.
@@ -68,9 +66,13 @@ ESPHome API.
 
 ## What the Integration Does
 
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Jastreb07&repository=elecrow-crowpanel-esphome-thermostat-integration&category=integration)
+
 The **Smart Thermostat Knob** custom integration is an optional,
 HACS-installable Home Assistant integration that picks which entities show
-up on the device — no manual entity IDs or JSON.
+up on the device — no manual entity IDs or JSON. It lives in its own
+repository so it can be installed and updated independently of the
+firmware: **[Jastreb07/elecrow-crowpanel-esphome-thermostat-integration](https://github.com/Jastreb07/elecrow-crowpanel-esphome-thermostat-integration)**.
 
 ![Home Assistant entity picker used by the Smart Thermostat Knob integration](images/ha-integration-helper.png)
 
@@ -89,7 +91,9 @@ With it installed you can, per physical Smart Knob:
 
 It's a configuration helper only — it doesn't add new entities to Home
 Assistant, doesn't talk to the ESP device over the network, and adds no
-extra automations. Installing and configuring it is covered in
+extra automations. Installation and the full config-flow walkthrough are in
+the [integration repo's README](https://github.com/Jastreb07/elecrow-crowpanel-esphome-thermostat-integration#readme);
+the manual Template-Entity alternative (no integration needed) is in
 [SETUP.md](SETUP.md#home-assistant-setup).
 
 ## Controls
@@ -135,8 +139,9 @@ Have a feature request? Open an issue with your use case.
 
 - [SETUP.md](SETUP.md) — toolchain install, building/flashing firmware, the
   Web Flasher, the LVGL preview tool, and Home Assistant configuration.
-- [integration/README.md](integration/README.md) — installing the custom
-  Home Assistant integration via HACS or manually.
+- [elecrow-crowpanel-esphome-thermostat-integration](https://github.com/Jastreb07/elecrow-crowpanel-esphome-thermostat-integration) —
+  the companion Home Assistant integration's own repository and README
+  (HACS or manual install).
 - [web-flasher/README.md](web-flasher/README.md) — exporting firmware
   binaries and publishing the Web Flasher page.
 - [docs/UI_CONCEPT.md](docs/UI_CONCEPT.md) — screen model, interaction

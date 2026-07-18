@@ -1,5 +1,10 @@
 secrets.yaml
 .esphome
+
+# The Home Assistant integration lives in its own repository and its own
+# git checkout, nested here only for local convenience while developing
+# both projects side by side. See custom_components/smart_thermostat_knob/README.md.
+custom_components
 *.bin
 !web-flasher/firmware/**/*.bin
 .venv

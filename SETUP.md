@@ -249,9 +249,11 @@ compatible ways to provide it:
 
 1. **Custom integration (recommended)** — a config-flow UI that builds and
    maintains that sensor for you. See [What the integration does](README.md#what-the-integration-does)
-   in the README for what it's for, then follow
-   [`integration/README.md`](integration/README.md) for HACS/manual install
-   steps and the exact config-flow fields.
+   in the README for what it's for, then follow the
+   [integration repo's README](https://github.com/Jastreb07/elecrow-crowpanel-esphome-thermostat-integration#readme)
+   for HACS/manual install steps and the exact config-flow fields. It's a
+   separate repository from this firmware, installed and updated
+   independently.
 2. **Manual Template-Entity configuration** — hand-write the sensor and its
    JSON attributes yourself. See the example below.
 
@@ -348,9 +350,9 @@ thermostat/
 |-- SETUP.md                 # This file: build, flash, and configure
 |-- build.ps1                # Compiles both boards, exports firmware.factory.bin to web-flasher/firmware/
 |-- .esphome/                # esphome compile output cache (git-ignored)
-|-- hacs.json                # HACS metadata for the custom integration
 |-- custom_components/
-|   `-- smart_thermostat_knob/ # HACS-installable Home Assistant integration
+|   `-- smart_thermostat_knob/ # Git-ignored: own repo (elecrow-crowpanel-esphome-thermostat-integration),
+|                             # nested here only for local side-by-side development
 |-- docs/
 |   |-- README.md            # Documentation index
 |   `-- UI_CONCEPT.md        # Current UI model and interaction notes
@@ -363,7 +365,7 @@ thermostat/
 |   `-- fonts/
 |-- images/                  # Screenshots used in the README
 |-- integration/
-|   `-- README.md            # Custom integration install/usage docs
+|   `-- README.md            # Pointer to the integration's own repository
 |-- web-flasher/             # Browser-based flasher (ESP Web Tools), published via GitHub Pages
 |   |-- index.html
 |   |-- manifest_240.json
