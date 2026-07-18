@@ -405,3 +405,20 @@ thermostat/
 - Shared behavior lives in `thermostat_common.yaml`.
 - Board-specific hardware configuration stays in the board YAML files.
 - Keep new user-facing text and comments in English.
+
+### Branching
+
+Day-to-day work happens on **`dev`**, not `master`. `master` only receives
+commits when `dev` is merged into it on purpose (a manual merge, done by
+the maintainer):
+
+```powershell
+git checkout dev
+# ...commit, push to origin/dev as usual...
+
+# When dev is ready to ship:
+git checkout master
+git merge dev
+git push origin master
+git checkout dev
+```
