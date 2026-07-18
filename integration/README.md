@@ -4,12 +4,24 @@ This custom integration creates one configuration sensor per physical Smart
 Knob and exposes its selected climate, light, and cover entities in the same
 JSON attribute format as the manual Template-Entity configuration.
 
+## Installation via HACS
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Jastreb07&repository=elecrow-crowpanel-esphome-thermostat&category=integration)
+
+1. Click the badge above, or in Home Assistant open **HACS > Integrations >
+   the three-dot menu (top right) > Custom repositories**, add
+   `https://github.com/Jastreb07/elecrow-crowpanel-esphome-thermostat` as
+   category **Integration**.
+2. Search for **Smart Thermostat Knob** in HACS and install it.
+3. Restart Home Assistant.
+4. Continue with **Settings > Devices & services > Add integration** below.
+
 ## Manual installation
 
 Copy this directory:
 
 ```text
-integration/custom_components/smart_thermostat_knob
+custom_components/smart_thermostat_knob
 ```
 
 to the Home Assistant configuration directory:

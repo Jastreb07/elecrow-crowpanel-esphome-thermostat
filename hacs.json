@@ -1,0 +1,5 @@
+{
+  "name": "Smart Thermostat Knob",
+  "render_readme": false,
+  "homeassistant": "2024.6.0"
+}

@@ -1,16 +1,44 @@
 # Thermostat Knob - CrowPanel ESP32-S3 Rotary Displays
 
-ESPHome firmware for a Home Assistant thermostat controller built for
-Elecrow CrowPanel ESP32-S3 rotary displays.
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Jastreb07&repository=elecrow-crowpanel-esphome-thermostat&category=integration)
+
+ESPHome firmware for a Home Assistant thermostat, light, and cover controller
+built for Elecrow CrowPanel ESP32-S3 rotary displays. Includes an optional
+HACS-installable Home Assistant integration for configuring which entities
+show up on the device — see [What the integration
+does](#what-the-integration-does).
 
 The project currently supports two board layouts:
 
 - `thermostat_480.yaml` for the CrowPanel 2.1" 480x480 rotary display
 - `thermostat_240.yaml` for the CrowPanel 1.28" 240x240 rotary display
 
-The UI is a compact, dark, Nest-like thermostat dashboard with a large
-temperature readout, a circular setpoint ring, Home Assistant climate
-integration, touch input, and rotary encoder control.
+The UI is a compact, dark, Nest-like dashboard with a large temperature
+readout, a circular setpoint ring, per-entity screens for lights and covers,
+Home Assistant integration, touch input, and rotary encoder control.
+
+## Video Walkthrough
+
+| 1.28" (240x240) | 2.1" (480x480) |
+|---|---|
+| [![240x240 demo](https://img.youtube.com/vi/REPLACE_WITH_240_VIDEO_ID/0.jpg)](https://www.youtube.com/watch?v=REPLACE_WITH_240_VIDEO_ID) | [![480x480 demo](https://img.youtube.com/vi/REPLACE_WITH_480_VIDEO_ID/0.jpg)](https://www.youtube.com/watch?v=REPLACE_WITH_480_VIDEO_ID) |
+
+Replace `REPLACE_WITH_240_VIDEO_ID` and `REPLACE_WITH_480_VIDEO_ID` with the
+actual YouTube video IDs once the walkthroughs are recorded.
+
+## Screens
+
+| Loading | Home | Thermostat |
+|---|---|---|
+| ![Loading screen](images/screen_loading.png) | ![Home screen](images/screen_home.png) | ![Thermostat screen](images/screen_thermostat.png) |
+
+| Light brightness | Light temperature | Light color |
+|---|---|---|
+| ![Light brightness screen](images/screen_light_brightness.png) | ![Light temperature screen](images/screen_light_temperature.png) | ![Light color screen](images/screen_light_color.png) |
+
+| Cover | Entity navigation |
+|---|---|
+| ![Cover screen](images/screen_cover.png) | ![Navigation screen](images/screen_navigation.png) |
 
 ## Features
 
@@ -20,13 +48,20 @@ integration, touch input, and rotary encoder control.
 - Supports single-setpoint and dual-setpoint climate entities.
 - Can control a thermostat-only setup, an AC-only setup, or a combined
   heat/cool climate entity.
+- Controls Home Assistant lights: brightness, color temperature, and color,
+  with dedicated screens for each mode.
+- Controls Home Assistant covers (shutters, blinds, curtains): position,
+  stop, and full open/close, including covers without position support.
+- A shared entity overview screen to jump between any configured
+  thermostat, light, or cover.
 - Shows Home Assistant connection state on the display.
 - Provides a local HTML preview for the LVGL screens.
 
 The firmware calls Home Assistant services such as `climate.set_temperature`,
-`climate.set_hvac_mode`, and `climate.set_preset_mode` through the native
-ESPHome API. No extra Home Assistant automation YAML is required for the
-basic thermostat control flow.
+`climate.set_hvac_mode`, `climate.set_preset_mode`, `light.turn_on`,
+`cover.set_cover_position`, and `cover.open_cover`/`close_cover`/`stop_cover`
+through the native ESPHome API. No extra Home Assistant automation YAML is
+required for the basic control flow.
 
 ## Hardware
 
@@ -132,15 +167,55 @@ The ESPHome integration in Home Assistant should discover the device after it
 joins Wi-Fi. Home Assistant asks for the API encryption key if one is defined
 in `secrets.yaml`.
 
-There are two compatible ways to provide the page configuration:
+The device itself does not know which climate, light, or cover entities to
+show. It reads that list from one Home Assistant sensor attribute
+(`sensor.smart_knob_config` by default), formatted as JSON. There are two
+compatible ways to provide it:
 
-1. Install the custom integration from `integration/custom_components/` and
-   select the climate/light entities in the Home Assistant UI. See
-   [`integration/README.md`](integration/README.md).
-2. Use the manual Template-Entity configuration below.
+1. **Custom integration (recommended)** — a config-flow UI that builds and
+   maintains that sensor for you. See [What the integration
+   does](#what-the-integration-does) below.
+2. **Manual Template-Entity configuration** — hand-write the sensor and its
+   JSON attributes yourself. See the example below.
 
 Both produce the same `sensor.smart_knob_config` interface. Do not enable both
 with the same entity ID at the same time.
+
+### What the integration does
+
+The **Smart Thermostat Knob** custom integration (`custom_components/smart_thermostat_knob`)
+replaces manually written Template-Entity YAML with a normal Home Assistant
+config flow. It exists because the device's page list has to live somewhere
+Home Assistant can maintain, and picking entities through **Settings > Devices
+& services > Add integration** is far less error-prone than typing entity IDs
+and JSON by hand.
+
+![Home Assistant entity picker used by the Smart Thermostat Knob integration](images/ha-integration-helper.png)
+
+With it installed you can, per physical Smart Knob:
+
+- Pick any number of climate, light, and cover entities through Home
+  Assistant's native entity selectors (autocomplete, no manual entity IDs or
+  JSON editing).
+- Give the knob a friendly name; the integration derives a unique config
+  sensor entity ID from it (for example `sensor.living_room_knob_config`).
+- Point the integration at the device's **Home Assistant Config Entity** text
+  entity so it auto-writes the sensor entity ID into the ESP and restarts it,
+  no manual copy-pasting of entity IDs between HA and the device.
+- **Reconfigure** an existing knob later (rename it or change its entity
+  list) without recreating the whole setup, and run multiple independent
+  Smart Knobs from one Home Assistant instance, each with its own entry.
+
+It is a configuration helper only — it does not add new entities to Home
+Assistant itself, does not talk to the ESP device over the network, and adds
+no extra automations. All firmware behavior described elsewhere in this
+README (control flow, service calls, debouncing) works the same whether the
+sensor was built by this integration or written by hand.
+
+Full installation steps (HACS button and manual copy) and the exact fields
+in the config flow are in [`integration/README.md`](integration/README.md).
+
+### Manual Template-Entity example
 
 Create one template sensor in Home Assistant's `configuration.yaml`. Users only
 edit `entity_id` and `name` inside the lists:
@@ -221,13 +296,15 @@ nudge decides between `cover.open_cover` and `cover.close_cover`.
 
 | Action | Result |
 |---|---|
-| Rotate encoder | Change the current thermostat, light, or menu value |
-| Short press | Switch the TRV/AC target or the available light control mode |
+| Rotate encoder | Change the current thermostat, light, cover, or menu value |
+| Short press | Switch the TRV/AC target, the light control mode, or stop a moving cover |
 | Double click | Jump to thermostat or switch its active target |
 | Hold 800 ms on thermostat | Toggle HVAC off/on and restore its last mode |
 | Hold 800 ms on a light page | Toggle the selected light on/off |
+| Hold 800 ms on a cover page | Jump back to the thermostat |
 | Hold 800 ms on the settings page | Go back one menu level |
-| Horizontal swipe | Thermostat pages → light pages → settings, or back |
+| Swipe (light/cover pages) | Open settings or the entity overview |
+| Swipe (cover page, second axis) | Fully open or close the cover |
 | Touch the display | Wake the display |
 
 Temperature changes are debounced. The UI updates immediately, but
@@ -243,6 +320,9 @@ thermostat/
 |-- thermostat_helpers.h     # C++ helper functions for labels and icons
 |-- secrets.yaml.example     # Template for Wi-Fi/API/OTA secrets
 |-- README.md                # Project overview
+|-- hacs.json                # HACS metadata for the custom integration
+|-- custom_components/
+|   `-- smart_thermostat_knob/ # HACS-installable Home Assistant integration
 |-- docs/
 |   |-- README.md            # Documentation index
 |   |-- UI_CONCEPT.md        # Current UI model and interaction notes
@@ -255,10 +335,35 @@ thermostat/
 |-- assets/
 |   |-- icons/
 |   `-- fonts/
+|-- images/                  # Screenshots used in this README
+|-- integration/
+|   `-- README.md            # Custom integration install/usage docs
 `-- components/
-    |-- cst826/              # Local CST826 touch component
-    `-- ha_light_controller/ # Variable-length Home Assistant light list
+    |-- cst826/                 # Local CST826 touch component
+    |-- ha_climate_controller/  # Variable-length Home Assistant climate list
+    |-- ha_light_controller/    # Variable-length Home Assistant light list
+    `-- ha_cover_controller/    # Variable-length Home Assistant cover list
 ```
+
+## Roadmap
+
+Done:
+
+- [x] Thermostat control (single- and dual-setpoint, HVAC mode, presets)
+- [x] Light control (brightness, color temperature, color)
+- [x] Cover control (position, stop, full open/close)
+- [x] Shared entity overview and settings navigation
+- [x] Optional custom Home Assistant integration for entity selection
+- [x] Local LVGL HTML preview tool
+
+Planned:
+
+- [ ] Fan control screen (speed, oscillate, preset)
+- [ ] Media player screen (volume, play/pause, track skip)
+- [ ] Per-page idle timeout / screen-saver customization
+- [ ] Additional language packs for on-device text
+
+Have a feature request? Open an issue with your use case.
 
 ## Development Notes
 
