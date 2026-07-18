@@ -380,6 +380,7 @@ thermostat/
 |   |-- icons/
 |   `-- fonts/
 |-- images/                  # Screenshots used in the README
+|-- 3D Print/                # Printable knob/enclosure STL files, per board
 |-- integration/
 |   `-- README.md            # Pointer to the integration's own repository
 |-- web-flasher/             # Browser-based flasher (ESP Web Tools), published via GitHub Pages

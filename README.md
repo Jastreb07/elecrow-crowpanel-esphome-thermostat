@@ -65,6 +65,19 @@ ESPHome API.
 - Built-in rotary encoder with push button
 - Touch display
 
+## 3D Printing
+
+The [`3D Print/`](3D%20Print) directory has printable knob/enclosure parts
+for the CrowPanel boards, organized in one subfolder per board size:
+
+| Board | Files |
+|---|---|
+| CrowPanel 1.28" (240x240) | [`Smart Knob 1.28 Knob v2 - Part 1.stl`](<3D Print/CrowPanel 240x240/Smart Knob 1.28 Knob v2 - Part 1.stl>), [`Smart Knob 1.28 Knob v2 - Part 2.stl`](<3D Print/CrowPanel 240x240/Smart Knob 1.28 Knob v2 - Part 2.stl>) |
+| CrowPanel 2.1" (480x480) | Not available yet |
+
+Contributions of 480x480 parts, or improved versions of the 1.28" ones, are
+welcome — open a PR against [`3D Print/`](3D%20Print).
+
 ## What the Integration Does
 
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Jastreb07&repository=elecrow-crowpanel-esphome-thermostat-integration&category=integration)
