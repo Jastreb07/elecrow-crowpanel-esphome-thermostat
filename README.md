@@ -15,8 +15,6 @@ configuration.
 |---|---|
 | [![240x240 demo](https://img.youtube.com/vi/F0mFrxt4jac/0.jpg)](https://www.youtube.com/watch?v=F0mFrxt4jac) | [![480x480 demo](https://img.youtube.com/vi/REPLACE_WITH_480_VIDEO_ID/0.jpg)](https://www.youtube.com/watch?v=REPLACE_WITH_480_VIDEO_ID) |
 
-Replace `REPLACE_WITH_240_VIDEO_ID` and `REPLACE_WITH_480_VIDEO_ID` with the
-actual YouTube video IDs once the walkthroughs are recorded.
 
 ## Screens
 
@@ -39,6 +37,8 @@ actual YouTube video IDs once the walkthroughs are recorded.
 - Turn the knob to change the target temperature, HVAC mode, or preset.
 - Works with a thermostat-only setup, an AC-only setup, or a combined
   heat/cool climate entity, including dual-setpoint entities.
+- Tuned to work well with [Better Thermostat](https://better-thermostat.org/)
+  climate entities — that's what I personally run mine with.
 - Controls Home Assistant lights: brightness, color temperature, and color,
   with a dedicated screen for each.
 - Controls Home Assistant covers (shutters, blinds, curtains): position,
