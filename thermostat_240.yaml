@@ -1104,12 +1104,18 @@ font:
     id: rajdhani_bold_84
     size: 84
     bpp: 4
-    glyphs: ["0123456789", ".-"]
+    glyphs: &rajdhani_glyphs [
+        "0123456789",
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        "abcdefghijklmnopqrstuvwxyz",
+        "äöüÄÖÜß",
+        " .,:%°·-/=()|",
+      ]
   - file: "assets/fonts/Rajdhani-Bold.ttf"
     id: rajdhani_bold_130
     size: 130
     bpp: 4
-    glyphs: ["0123456789", ".-"]
+    glyphs: *rajdhani_glyphs
   - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
     id: icons_18
     size: 18
@@ -1145,13 +1151,7 @@ font:
     id: rajdhani_semibold_46
     size: 46
     bpp: 4
-    glyphs: &rajdhani_glyphs [
-        "0123456789",
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
-        "abcdefghijklmnopqrstuvwxyz",
-        "äöüÄÖÜß",
-        " .,:%°·-/=()|",
-      ]
+    glyphs: *rajdhani_glyphs
   - file: "assets/fonts/Rajdhani-SemiBold.ttf"
     id: rajdhani_semibold_20
     size: 20

@@ -1196,16 +1196,6 @@ font:
     id: rajdhani_bold_186
     size: 186
     bpp: 4
-    glyphs: ["0123456789", ".-"]
-  - file: "assets/fonts/Rajdhani-Bold.ttf"
-    id: rajdhani_bold_220
-    size: 220
-    bpp: 4
-    glyphs: ["0123456789", ".-"]
-  - file: "assets/fonts/Rajdhani-SemiBold.ttf"
-    id: rajdhani_semibold_40
-    size: 40
-    bpp: 4
     glyphs: &rajdhani_glyphs [
         "0123456789",
         "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
@@ -1213,6 +1203,16 @@ font:
         "äöüÄÖÜß",
         " .,:%°·-/=()|",
       ]
+  - file: "assets/fonts/Rajdhani-Bold.ttf"
+    id: rajdhani_bold_220
+    size: 220
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+  - file: "assets/fonts/Rajdhani-SemiBold.ttf"
+    id: rajdhani_semibold_40
+    size: 40
+    bpp: 4
+    glyphs: *rajdhani_glyphs
   - file: "assets/fonts/Rajdhani-SemiBold.ttf"
     id: rajdhani_semibold_42
     size: 42
@@ -1227,12 +1227,12 @@ font:
     id: rajdhani_semibold_60
     size: 60
     bpp: 4
-    glyphs: ["0123456789", ".-°CF%"]
+    glyphs: *rajdhani_glyphs
   - file: "assets/fonts/Rajdhani-SemiBold.ttf"
     id: rajdhani_semibold_74
     size: 74
     bpp: 4
-    glyphs: ["0123456789", ".-°CFKO%"]
+    glyphs: *rajdhani_glyphs
   - file: "assets/fonts/Rajdhani-Medium.ttf"
     id: rajdhani_medium_22
     size: 22
