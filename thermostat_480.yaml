@@ -201,7 +201,8 @@ lvgl:
       then:
         - if:
             condition:
-              lambda: 'return id(connection_ready);'
+              lambda: |-
+                return id(connection_ready) && id(ui_context) != 8 && id(ui_context) != 9;
             then:
               - lambda: 'id(ui_context) = 0;'
               - script.execute: refresh_temps
@@ -1055,6 +1056,193 @@ lvgl:
             x: -24
             y: 18
 
+    # ================= Timer =================
+    - id: screen_timer
+      bg_color: "0x000000"
+      on_swipe_left:
+        - script.execute: open_settings
+      on_swipe_right:
+        - script.execute: open_entity_overview
+      widgets:
+        - button:
+            id: button_timer_background
+            align: CENTER
+            width: 480
+            height: 480
+            radius: 0
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            on_click:
+              - script.execute: wake_display
+
+        - arc:
+            id: arc_timer_track
+            align: CENTER
+            width: 472
+            height: 472
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 0
+            end_angle: 360
+            rotation: 270
+            arc_color: 0x1C1C1C
+            arc_width: 30
+            arc_rounded: true
+            adjustable: false
+            clickable: false
+            indicator:
+              arc_opa: TRANSP
+
+        - arc:
+            id: arc_timer_value
+            align: CENTER
+            width: 472
+            height: 472
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 0
+            end_angle: 360
+            rotation: 270
+            arc_color: 0xDCE3E7
+            arc_opa: TRANSP
+            arc_width: 30
+            arc_rounded: true
+            adjustable: false
+            clickable: false
+            indicator:
+              arc_color: 0x6E4FBD
+              arc_width: 30
+              arc_rounded: true
+
+        - label:
+            id: label_timer_value
+            text: "--:--:--"
+            text_font: rajdhani_semibold_74
+            text_color: 0xFFFFFF
+            align: CENTER
+            width: 340
+            text_align: CENTER
+
+        - label:
+            id: label_timer_title
+            text: ""
+            text_font: rajdhani_medium_24
+            text_color: 0xCDBEEC
+            align: CENTER
+            y: 56
+            width: 340
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+            hidden: true
+
+        # Cancel-confirmation overlay, shown on the first knob click while
+        # this screen is open. Hidden by default.
+        - obj:
+            id: timer_cancel_backdrop
+            align: CENTER
+            width: 472
+            height: 472
+            radius: 236
+            bg_color: 0x000000
+            bg_opa: 85%
+            border_width: 0
+            shadow_width: 0
+            hidden: true
+        - label:
+            id: label_timer_cancel_confirm
+            text: "Cancel timer?\nPress again to confirm"
+            text_font: rajdhani_medium_24
+            text_color: 0xFFFFFF
+            align: CENTER
+            width: 380
+            text_align: CENTER
+            hidden: true
+
+    # ================= Progress =================
+    - id: screen_progress
+      bg_color: "0x000000"
+      on_swipe_left:
+        - script.execute: open_settings
+      on_swipe_right:
+        - script.execute: open_entity_overview
+      widgets:
+        - button:
+            id: button_progress_background
+            align: CENTER
+            width: 480
+            height: 480
+            radius: 0
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            on_click:
+              - script.execute: wake_display
+
+        - arc:
+            id: arc_progress_track
+            align: CENTER
+            width: 472
+            height: 472
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 0
+            end_angle: 360
+            rotation: 270
+            arc_color: 0x1C1C1C
+            arc_width: 30
+            arc_rounded: true
+            adjustable: false
+            clickable: false
+            indicator:
+              arc_opa: TRANSP
+
+        - arc:
+            id: arc_progress_value
+            align: CENTER
+            width: 472
+            height: 472
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 0
+            end_angle: 360
+            rotation: 270
+            arc_color: 0xDCE3E7
+            arc_opa: TRANSP
+            arc_width: 30
+            arc_rounded: true
+            adjustable: false
+            clickable: false
+            indicator:
+              arc_color: 0x6E4FBD
+              arc_width: 30
+              arc_rounded: true
+
+        - label:
+            id: label_progress_value
+            text: "0%"
+            text_font: rajdhani_semibold_74
+            text_color: 0xFFFFFF
+            align: CENTER
+            width: 340
+            text_align: CENTER
+
+        - label:
+            id: label_progress_title
+            text: ""
+            text_font: rajdhani_medium_24
+            text_color: 0xCDBEEC
+            align: CENTER
+            y: 56
+            width: 340
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+            hidden: true
+
     # ================= Settings menu =================
     - id: screen_navigation
       bg_color: "0x000000"
@@ -1201,7 +1389,7 @@ font:
         "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
         "abcdefghijklmnopqrstuvwxyz",
         "äöüÄÖÜß",
-        " .,:%°·-/=()|",
+        " .,:%°·-/=()|?",
       ]
   - file: "assets/fonts/Rajdhani-Bold.ttf"
     id: rajdhani_bold_220

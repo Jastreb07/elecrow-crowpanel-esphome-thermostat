@@ -205,6 +205,21 @@ interval:
             lambda: 'return id(ui_context) == 5 && id(ha_lights).consume_dirty();'
           then:
             - script.execute: refresh_light
+  # Keeps the timer countdown live while its screen is actually showing.
+  # Progress needs no ticker - it only changes when Home Assistant pushes
+  # a new value, handled by progress_value_num's on_value.
+  - interval: 1s
+    then:
+      - if:
+          condition:
+            lambda: 'return id(ui_context) == 8;'
+          then:
+            - script.execute: refresh_timer
+  # Finish-state effects (blink, auto-home) run independently of which
+  # screen is showing, at a faster cadence so the blink is visibly alternating.
+  - interval: 500ms
+    then:
+      - script.execute: check_finish_effects
 
 # ------------------------------------------------------------------
 # Global state
@@ -257,7 +272,8 @@ globals:
   # unreliable on the full-screen button, so the board files feed raw touch
   # start/end coordinates into handle_swipe_release.
   # UI navigation: 0 Home, 1 Thermostat, 2 groups, 3 group items, 4 editor,
-  # 5 one of the configured light pages, 6 entity overview, 7 cover.
+  # 5 one of the configured light pages, 6 entity overview, 7 cover,
+  # 8 timer, 9 progress.
   - id: ui_context
     type: int
     restore_value: false
@@ -351,6 +367,79 @@ globals:
 
   - id: pending_cover_index
     type: int
+    restore_value: false
+    initial_value: "0"
+
+  # Captured automatically whenever timer_end_time_txt changes (see its
+  # on_value); used only to compute the timer arc's fill fraction, never
+  # exposed as its own entity.
+  - id: timer_start_epoch
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+
+  # "Finished" tracking for the Timer/Progress post-completion effects
+  # (auto-return-home delay, LED/value blink). *_finished latches once the
+  # countdown/value crosses into "done" and only clears when a fresh
+  # end time / a value below 100 is set again. *_finished_at_ms anchors the
+  # auto-home delay. blink_led_on is the shared on/off phase for both the
+  # status LED and the value-label blink (one physical LED, so one phase is
+  # enough even if timer and progress finish at the same time).
+  - id: timer_finished
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+  - id: timer_finished_at_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+
+  # True for exactly one check_finish_effects tick - the one where
+  # *_finished just latched to true. Drives the (optional) auto-show-screen
+  # action, which needs to fire once on the transition, not on every tick.
+  - id: timer_just_finished
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+  - id: progress_just_finished
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+  - id: blink_led_on
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+  # Cancel-confirmation dialog on the Timer screen: a single click shows it,
+  # a second click within 5s cancels the timer, otherwise it disappears on
+  # its own (see check_finish_effects).
+  - id: timer_cancel_confirm_pending
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+  - id: timer_cancel_confirm_started_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+
+  # Scratch value for writing a new timer_end_time_txt after the knob
+  # adjusts it (see the ui_context == 8 encoder branch).
+  - id: timer_edit_value
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+
+  - id: progress_finished
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+  - id: progress_finished_at_ms
+    type: uint32_t
     restore_value: false
     initial_value: "0"
 
@@ -494,18 +583,6 @@ switch:
     on_turn_off:
       - script.execute: update_clock_labels
 
-  - platform: template
-    name: "Show Icons"
-    id: icons_enabled
-    optimistic: true
-    restore_mode: RESTORE_DEFAULT_ON
-    on_turn_on:
-      - script.execute: refresh_status
-      - script.execute: refresh_temps
-    on_turn_off:
-      - script.execute: refresh_status
-      - script.execute: refresh_temps
-
   # Disable the 240x240 status LED regardless of brightness or HVAC color.
   - platform: template
     name: "LED Enabled"
@@ -516,6 +593,50 @@ switch:
       - script.execute: update_status_led
     on_turn_off:
       - script.execute: update_status_led
+
+  # Whether the status LED blinks (in the respective *_blink_led_color_select
+  # color) once
+  # the Timer/Progress finishes (see check_finish_effects/update_status_led).
+  # On by default - a finished timer/progress should be hard to miss.
+  - platform: template
+    name: "Timer LED Blink"
+    id: timer_finish_blink_switch
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+
+  - platform: template
+    name: "Progress LED Blink"
+    id: progress_finish_blink_switch
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+
+  # Whether the big value label itself also blinks (same phase as the LED)
+  # once finished. On by default, independent of the LED blink switch above.
+  - platform: template
+    name: "Timer Value Blink"
+    id: timer_value_blink_switch
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+
+  - platform: template
+    name: "Progress Value Blink"
+    id: progress_value_blink_switch
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+
+  # Whether finishing auto-switches the display to the respective screen
+  # (see check_finish_effects). On by default.
+  - platform: template
+    name: "Timer Show Screen"
+    id: timer_show_on_finish_switch
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+
+  - platform: template
+    name: "Progress Show Screen"
+    id: progress_show_on_finish_switch
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
 
 select:
   - platform: template
@@ -531,18 +652,6 @@ select:
         - script.execute: refresh_connection
         - script.execute: update_clock_labels
         - script.execute: update_settings_labels
-
-  - platform: template
-    name: "Design"
-    id: design_select
-    optimistic: true
-    restore_value: true
-    options: ["Mono", "Color"]
-    initial_option: "Mono"
-    on_value:
-      then:
-        - script.execute: refresh_status
-        - script.execute: refresh_temps
 
   - platform: template
     name: "Temperature Unit"
@@ -572,6 +681,27 @@ select:
     options: ["0.1", "0.2", "0.5", "1.0"]
     initial_option: "0.5"
     icon: "mdi:rotate-right"
+
+  # Status LED color for the Timer/Progress finish blink, set separately per
+  # screen. See BLINK_LED_COLORS in thermostat_helpers.h for the fixed
+  # preset list.
+  - platform: template
+    name: "Timer Blink LED Color"
+    id: timer_blink_led_color_select
+    optimistic: true
+    restore_value: true
+    options: ["Green", "Red", "Blue", "Yellow", "Orange", "Purple", "Cyan", "Magenta", "White", "Pink"]
+    initial_option: "Green"
+    icon: "mdi:eyedropper"
+
+  - platform: template
+    name: "Progress Blink LED Color"
+    id: progress_blink_led_color_select
+    optimistic: true
+    restore_value: true
+    options: ["Green", "Red", "Blue", "Yellow", "Orange", "Purple", "Cyan", "Magenta", "White", "Pink"]
+    initial_option: "Green"
+    icon: "mdi:eyedropper"
 
 number:
   - platform: template
@@ -664,6 +794,94 @@ number:
             then:
               - script.execute: update_settings_labels
 
+  # Progress screen value, set from Home Assistant (e.g. a print job, backup,
+  # or download percentage). Considered "running" (visible in the entity
+  # menu) while strictly between 0 and 100 - see progress_is_running().
+  - platform: template
+    name: "Progress"
+    id: progress_value_num
+    icon: "mdi:progress-check"
+    optimistic: true
+    restore_value: false
+    initial_value: 0
+    min_value: 0
+    max_value: 100
+    step: 1
+    unit_of_measurement: "%"
+    mode: box
+    on_value:
+      then:
+        - script.execute: refresh_progress
+
+  # 0 = never auto-return home after the Timer/Progress screen finishes; any
+  # other value is the delay in seconds. See check_finish_effects.
+  - platform: template
+    name: "Timer Auto-Home After (s)"
+    id: timer_auto_home_num
+    optimistic: true
+    restore_value: true
+    initial_value: 0
+    min_value: 0
+    max_value: 300
+    step: 5
+    unit_of_measurement: "s"
+    mode: box
+
+  - platform: template
+    name: "Progress Auto-Home After (s)"
+    id: progress_auto_home_num
+    optimistic: true
+    restore_value: true
+    initial_value: 0
+    min_value: 0
+    max_value: 300
+    step: 5
+    unit_of_measurement: "s"
+    mode: box
+
+  # How many seconds the rotary encoder moves the timer's end time per
+  # detent, on the Timer screen. Also used to start a brand-new timer from
+  # scratch by turning the knob when no end time is set yet.
+  - platform: template
+    name: "Timer Knob Step (s)"
+    id: timer_knob_step_num
+    optimistic: true
+    restore_value: true
+    initial_value: 10
+    min_value: 5
+    max_value: 60
+    step: 5
+    unit_of_measurement: "s"
+    mode: box
+
+  # Status LED brightness while blinking (see check_finish_effects /
+  # update_status_led), separate from the normal led_brightness_num so the
+  # finish alert can stay full-strength even with a dim everyday LED. Full
+  # brightness by default.
+  - platform: template
+    name: "Timer Blink LED Brightness (%)"
+    id: timer_blink_led_brightness_num
+    optimistic: true
+    restore_value: true
+    initial_value: 100
+    min_value: 0
+    max_value: 100
+    step: 5
+    unit_of_measurement: "%"
+    mode: box
+
+  - platform: template
+    name: "Progress Blink LED Brightness (%)"
+    id: progress_blink_led_brightness_num
+    optimistic: true
+    restore_value: true
+    initial_value: 100
+    min_value: 0
+    max_value: 100
+    step: 5
+    unit_of_measurement: "%"
+    mode: box
+
 button:
   - platform: factory_reset
     name: "${friendly_name} Factory Reset"
@@ -673,6 +891,33 @@ button:
     name: "${friendly_name} Restart"
     id: restart_btn
     entity_category: diagnostic
+
+  # Jump straight to the Home/Timer/Progress screen from Home Assistant (an
+  # automation, dashboard button, etc.) - same idea as pressing restart_btn
+  # remotely, just navigates instead of rebooting.
+  - platform: template
+    name: "Show Home Screen"
+    id: show_home_btn
+    icon: "mdi:home-outline"
+    on_press:
+      then:
+        - script.execute: activate_home_screen
+
+  - platform: template
+    name: "Show Timer Screen"
+    id: show_timer_btn
+    icon: "mdi:timer-play-outline"
+    on_press:
+      then:
+        - script.execute: activate_timer_screen
+
+  - platform: template
+    name: "Show Progress Screen"
+    id: show_progress_btn
+    icon: "mdi:progress-check"
+    on_press:
+      then:
+        - script.execute: activate_progress_screen
 
 # ------------------------------------------------------------------
 # Encoder button. on_multi_click keeps single and double clicks separated.
@@ -764,37 +1009,43 @@ binary_sensor:
                                 else:
                                   - if:
                                       condition:
-                                        lambda: 'return id(ui_context) == 6;'
+                                        lambda: 'return id(ui_context) == 8;'
                                       then:
-                                        - script.execute: entity_menu_enter
+                                        - script.execute: timer_click
                                       else:
                                         - if:
                                             condition:
-                                              lambda: 'return id(ui_context) == 2;'
+                                              lambda: 'return id(ui_context) == 6;'
                                             then:
-                                              - if:
-                                                  condition:
-                                                    lambda: 'return id(menu_index) == SETTINGS_GROUP_COUNT;'
-                                                  then:
-                                                    - script.execute: close_settings
-                                                  else:
-                                                    - script.execute: group_enter
+                                              - script.execute: entity_menu_enter
                                             else:
-                                              - if:
-                                                  condition:
-                                                    lambda: 'return id(ui_context) == 3;'
-                                                  then:
-                                                    - if:
-                                                        condition:
-                                                          lambda: |-
-                                                            return id(group_item_index) == settings_group_count(id(menu_index));
-                                                        then:
-                                                          - lambda: 'id(ui_context) = 2;'
-                                                          - script.execute: update_settings_labels
-                                                        else:
-                                                          - script.execute: menu_enter
-                                                  else:
-                                                    - script.execute: submenu_apply
+                                            - if:
+                                                condition:
+                                                  lambda: 'return id(ui_context) == 2;'
+                                                then:
+                                                  - if:
+                                                      condition:
+                                                        lambda: 'return id(menu_index) == SETTINGS_GROUP_COUNT;'
+                                                      then:
+                                                        - script.execute: close_settings
+                                                      else:
+                                                        - script.execute: group_enter
+                                                else:
+                                                  - if:
+                                                      condition:
+                                                        lambda: 'return id(ui_context) == 3;'
+                                                      then:
+                                                        - if:
+                                                            condition:
+                                                              lambda: |-
+                                                                return id(group_item_index) == settings_group_count(id(menu_index));
+                                                            then:
+                                                              - lambda: 'id(ui_context) = 2;'
+                                                              - script.execute: update_settings_labels
+                                                            else:
+                                                              - script.execute: menu_enter
+                                                      else:
+                                                        - script.execute: submenu_apply
 # ------------------------------------------------------------------
 # Rotary encoder. Pins are swapped to fix rotation direction.
 # ------------------------------------------------------------------
@@ -909,6 +1160,31 @@ sensor:
               - script.execute: send_cover_update
         - if:
             condition:
+              lambda: 'return id(encoder_delta) != 0 && id(ui_context) == 8;'
+            then:
+              # Turning the knob moves the end time by one knob-step per
+              # detent - from "now" if no timer is set yet (manually
+              # starting one), or from the current remaining time if one is
+              # already counting down (extend/shorten it). Writing through
+              # timer_end_time_txt reuses its existing on_value handler
+              # (resets start_epoch/finished/blink and refreshes the screen).
+              - lambda: |-
+                  auto now = id(ha_time).now();
+                  if (!now.is_valid()) return;
+                  long remaining = timer_remaining_seconds(id(timer_end_time_txt).state, now);
+                  long base = remaining > 0 ? remaining : 0;
+                  int step = (int) id(timer_knob_step_num).state;
+                  int d = id(encoder_delta) > 0 ? 1 : -1;
+                  long new_remaining = base + (long) d * step;
+                  if (new_remaining < 0) new_remaining = 0;
+                  long now_secs = civil_seconds(now.year, now.month, now.day_of_month,
+                                                 now.hour, now.minute, now.second);
+                  id(timer_edit_value) = format_civil_datetime(now_secs + new_remaining);
+              - text.set:
+                  id: timer_end_time_txt
+                  value: !lambda 'return id(timer_edit_value);'
+        - if:
+            condition:
               lambda: 'return id(encoder_delta) != 0 && id(ui_context) == 2;'
             then:
               - lambda: |-
@@ -919,8 +1195,10 @@ sensor:
               lambda: 'return id(encoder_delta) != 0 && id(ui_context) == 6;'
             then:
               - lambda: |-
+                  int timer_count = 1;  // Timer is always listed, running or not.
+                  int progress_count = progress_is_running(id(progress_value_num).state) ? 1 : 0;
                   int count = (int) id(ha_climates).size() + (int) id(ha_lights).size() +
-                              (int) id(ha_covers).size() + 2;
+                              (int) id(ha_covers).size() + timer_count + progress_count + 2;
                   id(entity_menu_index) = menu_scroll_index(id(entity_menu_index), id(encoder_delta), count);
               - script.execute: update_settings_labels
         - if:
@@ -941,13 +1219,17 @@ sensor:
                     case 0:
                     case 1:
                     case 13:
+                    case 25:
+                    case 28:
                       id(submenu_index) = menu_scroll_index(id(submenu_index), id(encoder_delta), id(submenu_count));
                       break;
                     case 2:
                       id(brightness_pct) = clamp(id(brightness_pct) + d * 5, 5, 100);
                       break;
-                    case 3: case 4: case 5: case 6: case 7:
+                    case 3: case 4: case 7:
                     case 12: case 16: case 17:
+                    case 19: case 21:
+                    case 23: case 24: case 26: case 27:
                       id(submenu_index) = 1 - id(submenu_index);
                       break;
                     case 8:
@@ -956,7 +1238,18 @@ sensor:
                       break;
                     case 10:
                     case 18:
+                    case 29:
+                    case 30:
                       id(num_preview) = clamp(id(num_preview) + d * 5, 0, 100);
+                      break;
+                    case 11:
+                    case 20:
+                      // 0 = "never auto-home", unlike Idle Time/Dim After
+                      // which always stay at least 5s.
+                      id(num_preview) = clamp(id(num_preview) + d * 5, 0, 300);
+                      break;
+                    case 22:
+                      id(num_preview) = clamp(id(num_preview) + d * 5, 5, 60);
                       break;
                     default:
                       break;
@@ -1022,6 +1315,53 @@ text:
             id(light_index) = 0;
             id(cover_index) = 0;
         - script.execute: refresh_connection
+
+  # Timer/Progress: plain local entities, set from Home Assistant like any
+  # other ESPHome text/number/button, no JSON config list involved. Start
+  # time is never configured - it's captured as "now" whenever a new end
+  # time is written, purely to compute the timer arc's fill fraction.
+  - platform: template
+    name: "Timer End Time"
+    id: timer_end_time_txt
+    icon: "mdi:timer-outline"
+    optimistic: true
+    restore_value: true
+    initial_value: ""
+    max_length: 32
+    mode: text
+    on_value:
+      then:
+        - lambda: |-
+            id(timer_start_epoch) = id(ha_time).now().timestamp;
+            id(timer_finished) = false;
+            id(blink_led_on) = false;
+        - script.execute: refresh_timer
+
+  - platform: template
+    name: "Timer Title"
+    id: timer_title_txt
+    icon: "mdi:format-title"
+    optimistic: true
+    restore_value: true
+    initial_value: "Timer"
+    max_length: 32
+    mode: text
+    on_value:
+      then:
+        - script.execute: refresh_timer
+
+  - platform: template
+    name: "Progress Title"
+    id: progress_title_txt
+    icon: "mdi:format-title"
+    optimistic: true
+    restore_value: true
+    initial_value: "Progress"
+    max_length: 32
+    mode: text
+    on_value:
+      then:
+        - script.execute: refresh_progress
 
 # ------------------------------------------------------------------
 # Scripts
@@ -1239,7 +1579,10 @@ script:
                                               else:
                                                 - if:
                                                     condition:
-                                                      lambda: 'return id(ui_context) == 7;'
+                                                      lambda: |-
+                                                        return id(ui_context) == 7 ||
+                                                               id(ui_context) == 8 ||
+                                                               id(ui_context) == 9;
                                                     then:
                                                       - lambda: 'id(ui_context) = 1;'
                                                       - script.execute: load_active_climate
@@ -1408,6 +1751,14 @@ script:
             id(entity_return_index) = id(cover_index);
             id(entity_menu_index) =
                 (int) id(ha_climates).size() + (int) id(ha_lights).size() + id(cover_index);
+          } else if (id(ui_context) == 8) {
+            id(entity_return_kind) = 4;
+            id(entity_menu_index) =
+                (int) id(ha_climates).size() + (int) id(ha_lights).size() + (int) id(ha_covers).size();
+          } else if (id(ui_context) == 9) {
+            id(entity_return_kind) = 5;
+            id(entity_menu_index) = (int) id(ha_climates).size() + (int) id(ha_lights).size() +
+                                     (int) id(ha_covers).size() + 1;  // + Timer (always listed)
           }
           id(thermostat_quick_stage) = 0;
           id(ui_context) = 6;
@@ -1440,13 +1791,41 @@ script:
                       id: screen_cover
                       animation: NONE
                 else:
-                  - lambda: |-
-                      id(climate_index) = clamp(id(entity_return_index), 0, (int) id(ha_climates).size() - 1);
-                      id(ui_context) = 1;
-                  - script.execute: load_active_climate
-                  - lvgl.page.show:
-                      id: screen_thermostat
-                      animation: NONE
+                  - if:
+                      condition:
+                        lambda: 'return id(entity_return_kind) == 4;'
+                      then:
+                        - lambda: |-
+                            id(ui_context) = 8;
+                            // Re-viewing an already-finished timer should not
+                            // instantly trigger auto-home from a stale
+                            // finished_at_ms - treat arriving on screen as the
+                            // start of the auto-home delay.
+                            if (id(timer_finished)) id(timer_finished_at_ms) = millis();
+                        - script.execute: refresh_timer
+                        - lvgl.page.show:
+                            id: screen_timer
+                            animation: NONE
+                      else:
+                        - if:
+                            condition:
+                              lambda: 'return id(entity_return_kind) == 5;'
+                            then:
+                              - lambda: |-
+                                  id(ui_context) = 9;
+                                  if (id(progress_finished)) id(progress_finished_at_ms) = millis();
+                              - script.execute: refresh_progress
+                              - lvgl.page.show:
+                                  id: screen_progress
+                                  animation: NONE
+                            else:
+                              - lambda: |-
+                                  id(climate_index) = clamp(id(entity_return_index), 0, (int) id(ha_climates).size() - 1);
+                                  id(ui_context) = 1;
+                              - script.execute: load_active_climate
+                              - lvgl.page.show:
+                                  id: screen_thermostat
+                                  animation: NONE
 
   - id: settings_swipe_back
     then:
@@ -1476,7 +1855,9 @@ script:
           int climates = (int) id(ha_climates).size();
           int lights = (int) id(ha_lights).size();
           int covers = (int) id(ha_covers).size();
-          int total = climates + lights + covers + 2;
+          int timer_count = 1;  // Timer is always listed, running or not.
+          int progress_count = progress_is_running(id(progress_value_num).state) ? 1 : 0;
+          int total = climates + lights + covers + timer_count + progress_count + 2;
           id(entity_menu_index) = ((id(entity_menu_index) % total) + total) % total;
       - if:
           condition:
@@ -1518,11 +1899,42 @@ script:
                             condition:
                               lambda: |-
                                 return id(entity_menu_index) == (int) id(ha_climates).size() +
-                                       (int) id(ha_lights).size() + (int) id(ha_covers).size();
+                                    (int) id(ha_lights).size() + (int) id(ha_covers).size();
                             then:
-                              - script.execute: open_settings
+                              - lambda: |-
+                                  id(ui_context) = 8;
+                                  if (id(timer_finished)) id(timer_finished_at_ms) = millis();
+                              - script.execute: refresh_timer
+                              - lvgl.page.show: screen_timer
                             else:
-                              - script.execute: close_entity_overview
+                              - if:
+                                  condition:
+                                    lambda: |-
+                                      bool progress_running =
+                                          progress_is_running(id(progress_value_num).state);
+                                      return progress_running &&
+                                             id(entity_menu_index) == (int) id(ha_climates).size() +
+                                                 (int) id(ha_lights).size() +
+                                                 (int) id(ha_covers).size() + 1;
+                                  then:
+                                    - lambda: |-
+                                        id(ui_context) = 9;
+                                        if (id(progress_finished)) id(progress_finished_at_ms) = millis();
+                                    - script.execute: refresh_progress
+                                    - lvgl.page.show: screen_progress
+                                  else:
+                                    - if:
+                                        condition:
+                                          lambda: |-
+                                            int progress_count =
+                                                progress_is_running(id(progress_value_num).state) ? 1 : 0;
+                                            return id(entity_menu_index) == (int) id(ha_climates).size() +
+                                                (int) id(ha_lights).size() + (int) id(ha_covers).size() +
+                                                1 + progress_count;
+                                        then:
+                                          - script.execute: open_settings
+                                        else:
+                                          - script.execute: close_entity_overview
 
   # First vertical thermostat swipe opens HVAC. The following vertical swipe
   # changes the same quick selector to presets without creating another page.
@@ -1942,6 +2354,270 @@ script:
           data:
             entity_id: !lambda 'return id(ha_covers).get(id(cover_index)).entity_id;'
 
+  # Timer/Progress: single fixed screens, no per-entity index. Values come
+  # straight from the text/number entities above; these scripts just push
+  # them onto the LVGL widgets and, if the entity-overview list happens to
+  # be open right now, refresh it too so a timer finishing (or a progress
+  # reaching 0/100) disappears from the menu immediately.
+  - id: refresh_timer
+    then:
+      - lvgl.label.update:
+          id: label_timer_value
+          text: !lambda |-
+            auto now = id(ha_time).now();
+            const std::string &end_str = id(timer_end_time_txt).state;
+            if (end_str.empty()) return std::string("--:--:--");
+            long remaining = timer_remaining_seconds(end_str, now);
+            if (remaining < 0) remaining = 0;
+            char value[16];
+            snprintf(value, sizeof(value), "%ld:%02ld:%02ld", remaining / 3600,
+                     (remaining % 3600) / 60, remaining % 60);
+            return std::string(value);
+      - lambda: |-
+          if (!id(timer_title_txt).state.empty()) {
+            lv_label_set_text(id(label_timer_title), id(timer_title_txt).state.c_str());
+            lv_obj_clear_flag(id(label_timer_title), LV_OBJ_FLAG_HIDDEN);
+          } else {
+            lv_obj_add_flag(id(label_timer_title), LV_OBJ_FLAG_HIDDEN);
+          }
+      - lambda: |-
+          auto now = id(ha_time).now();
+          const std::string &end_str = id(timer_end_time_txt).state;
+          long remaining = end_str.empty() ? -1 : timer_remaining_seconds(end_str, now);
+          uint32_t elapsed = (now.is_valid() && now.timestamp > id(timer_start_epoch))
+                                  ? now.timestamp - id(timer_start_epoch) : 0;
+          uint32_t total = elapsed + (uint32_t) (remaining > 0 ? remaining : 0);
+          int percent = total > 0
+                            ? (int) clamp((float) elapsed / (float) total * 100.0f, 0.0f, 100.0f)
+                            : 0;
+          lv_arc_set_value(id(arc_timer_value), percent);
+      - if:
+          condition:
+            lambda: 'return id(ui_context) == 6;'
+          then:
+            - script.execute: update_settings_labels
+
+  - id: refresh_progress
+    then:
+      - lvgl.label.update:
+          id: label_progress_value
+          text: !lambda |-
+            char value[8];
+            snprintf(value, sizeof(value), "%.0f%%", id(progress_value_num).state);
+            return std::string(value);
+      - lambda: |-
+          if (!id(progress_title_txt).state.empty()) {
+            lv_label_set_text(id(label_progress_title), id(progress_title_txt).state.c_str());
+            lv_obj_clear_flag(id(label_progress_title), LV_OBJ_FLAG_HIDDEN);
+          } else {
+            lv_obj_add_flag(id(label_progress_title), LV_OBJ_FLAG_HIDDEN);
+          }
+      - lambda: |-
+          lv_arc_set_value(id(arc_progress_value), (int) roundf(id(progress_value_num).state));
+      - if:
+          condition:
+            lambda: 'return id(ui_context) == 6;'
+          then:
+            - script.execute: update_settings_labels
+
+  - id: activate_home_screen
+    then:
+      - script.execute: wake_display
+      - lambda: 'id(ui_context) = 0;'
+      - script.execute: refresh_temps
+      - script.execute: refresh_status
+      - lvgl.page.show: screen_home
+
+  - id: activate_timer_screen
+    then:
+      - script.execute: wake_display
+      - lambda: |-
+          id(ui_context) = 8;
+          if (id(timer_finished)) id(timer_finished_at_ms) = millis();
+      - script.execute: refresh_timer
+      - lvgl.page.show: screen_timer
+
+  # Short knob press on the Timer screen. First press shows a "cancel?"
+  # confirmation overlay (auto-dismissed after 5s by check_finish_effects),
+  # hiding the arc/value/title while it's up; a second press while it's
+  # showing confirms the cancel - clears both the end time (stops the
+  # countdown) and the title.
+  - id: timer_click
+    then:
+      - if:
+          condition:
+            lambda: 'return id(timer_cancel_confirm_pending);'
+          then:
+            - lambda: |-
+                id(timer_cancel_confirm_pending) = false;
+                lv_obj_add_flag(id(timer_cancel_backdrop), LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(id(label_timer_cancel_confirm), LV_OBJ_FLAG_HIDDEN);
+                lv_obj_clear_flag(id(arc_timer_track), LV_OBJ_FLAG_HIDDEN);
+                lv_obj_clear_flag(id(arc_timer_value), LV_OBJ_FLAG_HIDDEN);
+                lv_obj_clear_flag(id(label_timer_value), LV_OBJ_FLAG_HIDDEN);
+            - text.set: {id: timer_end_time_txt, value: ""}
+            - text.set: {id: timer_title_txt, value: ""}
+          else:
+            - lambda: |-
+                id(timer_cancel_confirm_pending) = true;
+                id(timer_cancel_confirm_started_ms) = millis();
+                lv_obj_clear_flag(id(timer_cancel_backdrop), LV_OBJ_FLAG_HIDDEN);
+                lv_obj_clear_flag(id(label_timer_cancel_confirm), LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(id(arc_timer_track), LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(id(arc_timer_value), LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(id(label_timer_value), LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(id(label_timer_title), LV_OBJ_FLAG_HIDDEN);
+                lv_label_set_text(id(label_timer_cancel_confirm), "Cancel timer?\nPress again to confirm (5s)");
+
+  - id: activate_progress_screen
+    then:
+      - script.execute: wake_display
+      - lambda: |-
+          id(ui_context) = 9;
+          if (id(progress_finished)) id(progress_finished_at_ms) = millis();
+      - script.execute: refresh_progress
+      - lvgl.page.show: screen_progress
+
+  # Runs every 500ms (see the interval: block). Handles what happens once a
+  # timer/progress has finished: an optional status-LED blink (in the
+  # respective *_blink_led_color_select color, only while still on that
+  # screen - see update_status_led), an optional blink of the big value label (only
+  # while its screen is actually visible), and an optional auto-return-home
+  # after a configurable delay. Recomputes from scratch each tick instead of
+  # tracking extra "is blinking" state, so turning a blink switch off (or the
+  # countdown/value resetting) cleans up within one tick without any separate
+  # teardown logic.
+  - id: check_finish_effects
+    then:
+      - lambda: |-
+          // Latch "finished" the first time the countdown reaches zero /
+          // the value reaches 100. Runs unconditionally (not just while the
+          // respective screen is open), otherwise a timer/progress that
+          // finishes while the user is elsewhere would never be detected -
+          // needed for auto-home, the LED blink once back on screen, and the
+          // auto-show-screen action below. *timer_just_finished is true for
+          // exactly this one tick, driving that action.
+          id(timer_just_finished) = false;
+          const std::string &end_str = id(timer_end_time_txt).state;
+          if (!end_str.empty() && !id(timer_finished)) {
+            long remaining = timer_remaining_seconds(end_str, id(ha_time).now());
+            if (remaining <= 0) {
+              id(timer_finished) = true;
+              id(timer_finished_at_ms) = millis();
+              id(timer_just_finished) = true;
+            }
+          }
+          id(progress_just_finished) = false;
+          float progress_v = id(progress_value_num).state;
+          if (progress_v >= 100.0f) {
+            if (!id(progress_finished)) {
+              id(progress_finished) = true;
+              id(progress_finished_at_ms) = millis();
+              id(progress_just_finished) = true;
+            }
+          } else {
+            id(progress_finished) = false;
+          }
+      - if:
+          condition:
+            lambda: 'return id(timer_just_finished) && id(timer_show_on_finish_switch).state;'
+          then:
+            - script.execute: wake_display
+            - lambda: 'id(ui_context) = 8;'
+            - script.execute: refresh_timer
+            - lvgl.page.show: screen_timer
+      - if:
+          condition:
+            lambda: 'return id(progress_just_finished) && id(progress_show_on_finish_switch).state;'
+          then:
+            - script.execute: wake_display
+            - lambda: 'id(ui_context) = 9;'
+            - script.execute: refresh_progress
+            - lvgl.page.show: screen_progress
+      # A finished timer/progress that isn't (or is no longer) being looked
+      # at resets itself, so it doesn't linger "finished" forever and doesn't
+      # reappear stale (see the Timer Auto-Home / Progress Auto-Home delay
+      # below, which needs a fresh finished_at_ms, not this old one).
+      - if:
+          condition:
+            lambda: 'return id(timer_finished) && id(ui_context) != 8;'
+          then:
+            - text.set: {id: timer_end_time_txt, value: ""}
+            - text.set: {id: timer_title_txt, value: ""}
+      - if:
+          condition:
+            lambda: 'return id(progress_finished) && id(ui_context) != 9;'
+          then:
+            - number.set: {id: progress_value_num, value: 0}
+            - text.set: {id: progress_title_txt, value: ""}
+      - lambda: |-
+          bool timer_led_blinking = id(ui_context) == 8 && id(timer_finished) &&
+                                     id(timer_finish_blink_switch).state;
+          bool progress_led_blinking = id(ui_context) == 9 && id(progress_finished) &&
+                                        id(progress_finish_blink_switch).state;
+          id(blink_led_on) = (timer_led_blinking || progress_led_blinking) ? !id(blink_led_on) : false;
+
+          lv_obj_t *timer_value = id(label_timer_value);
+          bool timer_value_blinking = id(ui_context) == 8 && id(timer_finished) &&
+                                       id(timer_value_blink_switch).state;
+          lv_obj_set_style_text_opa(timer_value,
+              (timer_value_blinking && !id(blink_led_on)) ? LV_OPA_TRANSP : LV_OPA_COVER,
+              LV_PART_MAIN);
+
+          lv_obj_t *progress_value = id(label_progress_value);
+          bool progress_value_blinking = id(ui_context) == 9 && id(progress_finished) &&
+                                          id(progress_value_blink_switch).state;
+          lv_obj_set_style_text_opa(progress_value,
+              (progress_value_blinking && !id(blink_led_on)) ? LV_OPA_TRANSP : LV_OPA_COVER,
+              LV_PART_MAIN);
+      - script.execute: update_status_led
+      - if:
+          condition:
+            lambda: |-
+              int delay = (int) id(timer_auto_home_num).state;
+              return id(ui_context) == 8 && id(timer_finished) && delay > 0 &&
+                     millis() - id(timer_finished_at_ms) >= (uint32_t) delay * 1000;
+          then:
+            - script.execute: activate_home_screen
+      - if:
+          condition:
+            lambda: |-
+              int delay = (int) id(progress_auto_home_num).state;
+              return id(ui_context) == 9 && id(progress_finished) && delay > 0 &&
+                     millis() - id(progress_finished_at_ms) >= (uint32_t) delay * 1000;
+          then:
+            - script.execute: activate_home_screen
+      # Cancel-confirm dialog: dismiss itself after 5s, or immediately if the
+      # user has already swiped away from the Timer screen. While it's up,
+      # count down the seconds left in its own text.
+      - if:
+          condition:
+            lambda: 'return id(timer_cancel_confirm_pending);'
+          then:
+            - if:
+                condition:
+                  lambda: |-
+                    return id(ui_context) != 8 ||
+                           millis() - id(timer_cancel_confirm_started_ms) >= 5000;
+                then:
+                  - lambda: |-
+                      id(timer_cancel_confirm_pending) = false;
+                      lv_obj_add_flag(id(timer_cancel_backdrop), LV_OBJ_FLAG_HIDDEN);
+                      lv_obj_add_flag(id(label_timer_cancel_confirm), LV_OBJ_FLAG_HIDDEN);
+                      lv_obj_clear_flag(id(arc_timer_track), LV_OBJ_FLAG_HIDDEN);
+                      lv_obj_clear_flag(id(arc_timer_value), LV_OBJ_FLAG_HIDDEN);
+                      lv_obj_clear_flag(id(label_timer_value), LV_OBJ_FLAG_HIDDEN);
+                      if (!id(timer_title_txt).state.empty())
+                        lv_obj_clear_flag(id(label_timer_title), LV_OBJ_FLAG_HIDDEN);
+                else:
+                  - lambda: |-
+                      uint32_t elapsed = millis() - id(timer_cancel_confirm_started_ms);
+                      int remaining = 5 - (int) (elapsed / 1000);
+                      if (remaining < 0) remaining = 0;
+                      char buf[64];
+                      snprintf(buf, sizeof(buf), "Cancel timer?\nPress again to confirm (%ds)", remaining);
+                      lv_label_set_text(id(label_timer_cancel_confirm), buf);
+
   - id: toggle_adjust_target
     then:
       - if:
@@ -2010,17 +2686,13 @@ script:
           text: !lambda 'return std::string(ICON_THERMO_HIGH);'
       - lvgl.widget.update:
           id: icon_thermo_current
-          text_color: !lambda |-
-            if (id(design_select).current_option() != "Color") return lv_color_hex(0xFFFFFF);
-            return lv_color_hex(0xFF5A2D);
+          text_color: !lambda 'return lv_color_hex(0xFF5A2D);'
       - lvgl.label.update:
           id: icon_hum_thermo
           text: !lambda 'return std::string(ICON_DROPLET_HALF);'
       - lvgl.widget.update:
           id: icon_hum_thermo
-          text_color: !lambda |-
-            if (id(design_select).current_option() != "Color") return lv_color_hex(0xFFFFFF);
-            return lv_color_hex(0x6EC6FF);
+          text_color: !lambda 'return lv_color_hex(0x6EC6FF);'
       # TRV/AC indicator, visible only in dual-setpoint mode.
       - if:
           condition:
@@ -2171,7 +2843,7 @@ script:
             - lvgl.widget.show: label_home_humidity
             - if:
                 condition:
-                  lambda: 'return id(connection_ready) && id(icons_enabled).state;'
+                  lambda: 'return id(connection_ready);'
                 then:
                   - lvgl.widget.show: icon_hum_thermo
                 else:
@@ -2182,7 +2854,7 @@ script:
             - lvgl.widget.hide: icon_hum_thermo
       - if:
           condition:
-            lambda: 'return id(connection_ready) && id(icons_enabled).state;'
+            lambda: 'return id(connection_ready);'
           then:
             - lvgl.widget.show: icon_thermo_current
           else:
@@ -2238,7 +2910,6 @@ script:
             // Active AC target: snow icon is always blue.
             if (!std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v)) && id(adjust_target) == 1)
               return lv_color_hex(0x6EC6FF);
-            if (id(design_select).current_option() != "Color") return lv_color_hex(0xFFFFFF);
             if (id(current_hvac_raw) == "cool" || id(current_hvac_raw) == "dry"
                 || id(current_hvac_raw) == "fan_only") return lv_color_hex(0x6EC6FF);
             return lv_color_hex(0xFF8A3D);
@@ -2251,7 +2922,6 @@ script:
             // Active AC target: snow icon is always blue.
             if (!std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v)) && id(adjust_target) == 1)
               return lv_color_hex(0x6EC6FF);
-            if (id(design_select).current_option() != "Color") return lv_color_hex(0xFFFFFF);
             if (id(current_hvac_raw) == "cool" || id(current_hvac_raw) == "dry"
                 || id(current_hvac_raw) == "fan_only") return lv_color_hex(0x6EC6FF);
             return lv_color_hex(0xFF8A3D);
@@ -2279,7 +2949,7 @@ script:
               return id(current_hvac_raw) == "off" ? LV_OPA_TRANSP : LV_OPA_COVER;
       - if:
           condition:
-            lambda: 'return id(icons_enabled).state && id(connection_ready);'
+            lambda: 'return id(connection_ready);'
           then:
             - lvgl.widget.show: icon_mode_thermo
             - lvgl.widget.show: icon_mode_home
@@ -2446,6 +3116,10 @@ script:
           } else if (id(ui_context) == 7) {
             id(entity_return_kind) = 3;
             id(entity_return_index) = id(cover_index);
+          } else if (id(ui_context) == 8) {
+            id(entity_return_kind) = 4;
+          } else if (id(ui_context) == 9) {
+            id(entity_return_kind) = 5;
           }
           id(thermostat_quick_stage) = 0;
           id(ui_context) = 2;
@@ -2491,8 +3165,6 @@ script:
               id(submenu_index) = id(language_select).current_option() == "Deutsch" ? 1 : 0;
               id(submenu_count) = 2;
               break;
-            case 5:  id(submenu_index) = id(design_select).current_option() == "Color" ? 1 : 0; break;
-            case 6:  id(submenu_index) = id(icons_enabled).state ? 1 : 0; break;
             case 7:  id(submenu_index) = id(unit_select).current_option() == "Fahrenheit" ? 1 : 0; break;
             case 8:  id(num_preview) = (int) id(idle_home_num).state; break;
             case 9:  id(num_preview) = (int) id(dim_delay_num).state; break;
@@ -2507,6 +3179,31 @@ script:
             }
             case 17: id(submenu_index) = id(led_enabled).state ? 1 : 0; break;
             case 18: id(num_preview) = (int) id(led_brightness_num).state; break;
+            case 11: id(num_preview) = (int) id(timer_auto_home_num).state; break;
+            case 19: id(submenu_index) = id(timer_finish_blink_switch).state ? 1 : 0; break;
+            case 20: id(num_preview) = (int) id(progress_auto_home_num).state; break;
+            case 21: id(submenu_index) = id(progress_finish_blink_switch).state ? 1 : 0; break;
+            case 22: id(num_preview) = (int) id(timer_knob_step_num).state; break;
+            case 23: id(submenu_index) = id(timer_value_blink_switch).state ? 1 : 0; break;
+            case 24: id(submenu_index) = id(progress_value_blink_switch).state ? 1 : 0; break;
+            case 26: id(submenu_index) = id(timer_show_on_finish_switch).state ? 1 : 0; break;
+            case 27: id(submenu_index) = id(progress_show_on_finish_switch).state ? 1 : 0; break;
+            case 29: id(num_preview) = (int) id(timer_blink_led_brightness_num).state; break;
+            case 30: id(num_preview) = (int) id(progress_blink_led_brightness_num).state; break;
+            case 25: {
+              id(submenu_count) = BLINK_LED_COLOR_COUNT;
+              const std::string &cur_name = id(timer_blink_led_color_select).state;
+              for (int i = 0; i < BLINK_LED_COLOR_COUNT; i++)
+                if (cur_name == blink_led_color_name(i)) { id(submenu_index) = i; break; }
+              break;
+            }
+            case 28: {
+              id(submenu_count) = BLINK_LED_COLOR_COUNT;
+              const std::string &cur_name = id(progress_blink_led_color_select).state;
+              for (int i = 0; i < BLINK_LED_COLOR_COUNT; i++)
+                if (cur_name == blink_led_color_name(i)) { id(submenu_index) = i; break; }
+              break;
+            }
             default: break;
           }
           id(ui_context) = 4;
@@ -2540,8 +3237,6 @@ script:
             }
             case 3:  id(apply_service) = id(submenu_index) ? 3 : 4; break;
             case 4:  id(apply_service) = id(submenu_index) ? 9 : 8; break;
-            case 5:  id(apply_service) = id(submenu_index) ? 11 : 10; break;
-            case 6:  id(apply_service) = id(submenu_index) ? 13 : 12; break;
             case 7:  id(apply_service) = id(submenu_index) ? 15 : 14; break;
             case 8:  id(apply_service) = 16; break;
             case 9:  id(apply_service) = 17; break;
@@ -2557,6 +3252,25 @@ script:
             case 16: if (id(submenu_index) == 1) id(apply_service) = 7; break;
             case 17: id(apply_service) = id(submenu_index) ? 23 : 22; break;
             case 18: id(apply_service) = 24; break;
+            case 11: id(apply_service) = 25; break;
+            case 19: id(apply_service) = id(submenu_index) ? 26 : 27; break;
+            case 20: id(apply_service) = 28; break;
+            case 21: id(apply_service) = id(submenu_index) ? 29 : 30; break;
+            case 22: id(apply_service) = 31; break;
+            case 23: id(apply_service) = id(submenu_index) ? 32 : 33; break;
+            case 24: id(apply_service) = id(submenu_index) ? 34 : 35; break;
+            case 25:
+              id(pending_mode_holder) = blink_led_color_name(id(submenu_index));
+              id(apply_service) = 36;
+              break;
+            case 26: id(apply_service) = id(submenu_index) ? 37 : 38; break;
+            case 27: id(apply_service) = id(submenu_index) ? 39 : 40; break;
+            case 29: id(apply_service) = 41; break;
+            case 30: id(apply_service) = 42; break;
+            case 28:
+              id(pending_mode_holder) = blink_led_color_name(id(submenu_index));
+              id(apply_service) = 43;
+              break;
             default: break;
           }
           id(ui_context) = id(thermostat_quick_stage) != 0 ? 1 : 3;
@@ -2598,18 +3312,6 @@ script:
           condition: {lambda: 'return id(apply_service) == 9;'}
           then: [{select.set: {id: language_select, option: "Deutsch"}}]
       - if:
-          condition: {lambda: 'return id(apply_service) == 10;'}
-          then: [{select.set: {id: design_select, option: "Mono"}}]
-      - if:
-          condition: {lambda: 'return id(apply_service) == 11;'}
-          then: [{select.set: {id: design_select, option: "Color"}}]
-      - if:
-          condition: {lambda: 'return id(apply_service) == 12;'}
-          then: [switch.turn_off: icons_enabled]
-      - if:
-          condition: {lambda: 'return id(apply_service) == 13;'}
-          then: [switch.turn_on: icons_enabled]
-      - if:
           condition: {lambda: 'return id(apply_service) == 14;'}
           then: [{select.set: {id: unit_select, option: "Celsius"}}]
       - if:
@@ -2640,6 +3342,69 @@ script:
           condition: {lambda: 'return id(apply_service) == 24;'}
           then: [{number.set: {id: led_brightness_num, value: !lambda 'return id(num_preview);'}}]
       - if:
+          condition: {lambda: 'return id(apply_service) == 25;'}
+          then: [{number.set: {id: timer_auto_home_num, value: !lambda 'return id(num_preview);'}}]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 26;'}
+          then: [switch.turn_on: timer_finish_blink_switch]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 27;'}
+          then: [switch.turn_off: timer_finish_blink_switch]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 28;'}
+          then: [{number.set: {id: progress_auto_home_num, value: !lambda 'return id(num_preview);'}}]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 29;'}
+          then: [switch.turn_on: progress_finish_blink_switch]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 30;'}
+          then: [switch.turn_off: progress_finish_blink_switch]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 31;'}
+          then: [{number.set: {id: timer_knob_step_num, value: !lambda 'return id(num_preview);'}}]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 32;'}
+          then: [switch.turn_on: timer_value_blink_switch]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 33;'}
+          then: [switch.turn_off: timer_value_blink_switch]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 34;'}
+          then: [switch.turn_on: progress_value_blink_switch]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 35;'}
+          then: [switch.turn_off: progress_value_blink_switch]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 36;'}
+          then:
+            - select.set:
+                id: timer_blink_led_color_select
+                option: !lambda 'return id(pending_mode_holder);'
+      - if:
+          condition: {lambda: 'return id(apply_service) == 37;'}
+          then: [switch.turn_on: timer_show_on_finish_switch]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 38;'}
+          then: [switch.turn_off: timer_show_on_finish_switch]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 39;'}
+          then: [switch.turn_on: progress_show_on_finish_switch]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 40;'}
+          then: [switch.turn_off: progress_show_on_finish_switch]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 41;'}
+          then: [{number.set: {id: timer_blink_led_brightness_num, value: !lambda 'return id(num_preview);'}}]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 42;'}
+          then: [{number.set: {id: progress_blink_led_brightness_num, value: !lambda 'return id(num_preview);'}}]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 43;'}
+          then:
+            - select.set:
+                id: progress_blink_led_color_select
+                option: !lambda 'return id(pending_mode_holder);'
+      - if:
           condition:
             lambda: 'return id(thermostat_quick_stage) != 0;'
           then:
@@ -2660,13 +3425,21 @@ script:
             int climates = (int) id(ha_climates).size();
             int lights = (int) id(ha_lights).size();
             int covers = (int) id(ha_covers).size();
-            int count = climates + lights + covers + 2;
-            auto entity_name = [climates, lights, covers, count](int p) -> std::string {
+            int timers = 1;  // Timer is always listed, running or not.
+            int progresses = progress_is_running(id(progress_value_num).state) ? 1 : 0;
+            int count = climates + lights + covers + timers + progresses + 2;
+            auto entity_name = [climates, lights, covers, timers, progresses, count](int p) -> std::string {
               p = ((p % count) + count) % count;
               if (p < climates) return id(ha_climates).get(p).name;
               if (p < climates + lights) return id(ha_lights).get(p - climates).name;
               if (p < climates + lights + covers) return id(ha_covers).get(p - climates - lights).name;
-              return p == climates + lights + covers ? std::string("Settings") : std::string("Back");
+              if (p < climates + lights + covers + timers)
+                return id(timer_title_txt).state.empty() ? std::string("Timer") : id(timer_title_txt).state;
+              if (p < climates + lights + covers + timers + progresses)
+                return id(progress_title_txt).state.empty() ? std::string("Progress")
+                                                              : id(progress_title_txt).state;
+              return p == climates + lights + covers + timers + progresses ? std::string("Settings")
+                                                                             : std::string("Back");
             };
             auto m = menu_window(id(entity_menu_index), count, ${settings_extra_rows}, entity_name);
             id(set_title) = "Entities";
@@ -2677,7 +3450,7 @@ script:
             id(set_next2) = m.next2;
             id(set_value) = m.value;
           } else if (id(ui_context) == 2) {
-            auto m = menu_window(id(menu_index), SETTINGS_ROOT_COUNT, false,
+            auto m = menu_window(id(menu_index), SETTINGS_ROOT_COUNT, ${settings_extra_rows},
                                   [](int p) -> std::string { return settings_root_name(p); });
             id(set_title) = "Settings";
             id(set_prev2) = m.prev2;
@@ -2710,8 +3483,6 @@ script:
               case 2: snprintf(buf, sizeof(buf), "%d%%", id(brightness_pct)); val = buf; break;
               case 3: val = id(time_24h).state ? "24h" : "12h"; break;
               case 4: val = id(language_select).current_option(); break;
-              case 5: val = id(design_select).current_option() == "Color" ? "Color" : "Black/White"; break;
-              case 6: val = id(icons_enabled).state ? "On" : "Off"; break;
               case 7: val = id(unit_select).current_option() == "Fahrenheit" ? "°F" : "°C"; break;
               case 8: snprintf(buf, sizeof(buf), "%ds", (int) id(idle_home_num).state); val = buf; break;
               case 9: snprintf(buf, sizeof(buf), "%ds", (int) id(dim_delay_num).state); val = buf; break;
@@ -2723,19 +3494,50 @@ script:
               case 16: val = ""; break;
               case 17: val = id(led_enabled).state ? "On" : "Off"; break;
               case 18: snprintf(buf, sizeof(buf), "%d%%", (int) id(led_brightness_num).state); val = buf; break;
+              case 11: {
+                int v = (int) id(timer_auto_home_num).state;
+                if (v <= 0) { val = "Off"; } else { snprintf(buf, sizeof(buf), "%ds", v); val = buf; }
+                break;
+              }
+              case 19: val = id(timer_finish_blink_switch).state ? "On" : "Off"; break;
+              case 20: {
+                int v = (int) id(progress_auto_home_num).state;
+                if (v <= 0) { val = "Off"; } else { snprintf(buf, sizeof(buf), "%ds", v); val = buf; }
+                break;
+              }
+              case 21: val = id(progress_finish_blink_switch).state ? "On" : "Off"; break;
+              case 22: snprintf(buf, sizeof(buf), "%ds", (int) id(timer_knob_step_num).state); val = buf; break;
+              case 23: val = id(timer_value_blink_switch).state ? "On" : "Off"; break;
+              case 24: val = id(progress_value_blink_switch).state ? "On" : "Off"; break;
+              case 25: val = id(timer_blink_led_color_select).state; break;
+              case 26: val = id(timer_show_on_finish_switch).state ? "On" : "Off"; break;
+              case 27: val = id(progress_show_on_finish_switch).state ? "On" : "Off"; break;
+              case 28: val = id(progress_blink_led_color_select).state; break;
+              case 29: snprintf(buf, sizeof(buf), "%d%%", (int) id(timer_blink_led_brightness_num).state); val = buf; break;
+              case 30: snprintf(buf, sizeof(buf), "%d%%", (int) id(progress_blink_led_brightness_num).state); val = buf; break;
             }
             (void) val;
           } else {
             int t = id(submenu_type);
             id(set_title) = settings_menu_name(t, de);
-            id(set_prev2) = "";
-            id(set_prev) = "";
-            id(set_next) = "";
-            id(set_next2) = "";
-            std::string cur, val;
-            std::string h_apply = "Press = apply";
-            std::string h_save = "Press = save";
-            std::string h_turn = "Turn = adjust";
+            int group = settings_group_wrap(id(menu_index));
+            int gcount = settings_group_entry_count(group);
+            auto entry_name = [group, de](int position) -> std::string {
+              int type = settings_group_entry_type_at(group, position);
+              return type < 0 ? std::string("Back") : std::string(settings_menu_name(type, de));
+            };
+            auto gm = menu_window(id(group_item_index), gcount, ${settings_extra_rows}, entry_name);
+            id(set_prev2) = gm.prev2;
+            id(set_prev) = gm.prev;
+            id(set_next) = gm.next;
+            id(set_next2) = gm.next2;
+            // Every case below overrides prev/cur/next with its own option
+            // list (HA entity list, fixed choices, Off/On, or the number's
+            // own step range) and val with that list's "i / n" position -
+            // same scroll pattern everywhere, just over different lists.
+            // Only case 14/15 (read-only WiFi/firmware info) have nothing to
+            // scroll through and keep the group-sibling prev/next from above.
+            std::string cur, val = gm.value;
             switch (t) {
               case 0:
               case 1: {
@@ -2766,16 +3568,48 @@ script:
                 val = m.value;
                 break;
               }
-              case 2: snprintf(buf, sizeof(buf), "%d%%", id(brightness_pct)); cur = buf; val = h_turn; break;
-              case 3: cur = id(submenu_index) ? "24h" : "12h"; val = h_save; break;
-              case 4: cur = id(submenu_index) ? "Deutsch" : "English"; val = h_save; break;
-              case 5: cur = id(submenu_index) ? "Color" : "Black/White"; val = h_save; break;
-              case 6: cur = id(submenu_index) ? "On" : "Off"; val = h_save; break;
-              case 7: cur = id(submenu_index) ? "°F" : "°C"; val = h_save; break;
+              case 2: {
+                auto m = numeric_menu_window(id(brightness_pct), 5, 100, 5, [](int v) -> std::string {
+                  char b[8]; snprintf(b, sizeof(b), "%d%%", v); return b;
+                });
+                cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next; val = m.value;
+                break;
+              }
+              case 3: {
+                auto m = bool_menu_window(id(submenu_index), "12h", "24h");
+                cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next; val = m.value;
+                break;
+              }
+              case 4: {
+                auto m = bool_menu_window(id(submenu_index), "English", "Deutsch");
+                cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next; val = m.value;
+                break;
+              }
+              case 7: {
+                auto m = bool_menu_window(id(submenu_index), "°C", "°F");
+                cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next; val = m.value;
+                break;
+              }
               case 8:
-              case 9: snprintf(buf, sizeof(buf), "%ds", id(num_preview)); cur = buf; val = h_save; break;
-              case 10: snprintf(buf, sizeof(buf), "%d%%", id(num_preview)); cur = buf; val = h_save; break;
-              case 12: cur = id(submenu_index) ? "All modes" : "Heat/Off"; val = h_save; break;
+              case 9: {
+                auto m = numeric_menu_window(id(num_preview), 5, 300, 5, [](int v) -> std::string {
+                  char b[8]; snprintf(b, sizeof(b), "%ds", v); return b;
+                });
+                cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next; val = m.value;
+                break;
+              }
+              case 10: {
+                auto m = numeric_menu_window(id(num_preview), 0, 100, 5, [](int v) -> std::string {
+                  char b[8]; snprintf(b, sizeof(b), "%d%%", v); return b;
+                });
+                cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next; val = m.value;
+                break;
+              }
+              case 12: {
+                auto m = bool_menu_window(id(submenu_index), "Heat/Off", "All modes");
+                cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next; val = m.value;
+                break;
+              }
               case 13: {
                 static const char *const opts[] = {"0.1", "0.2", "0.5", "1.0"};
                 id(submenu_count) = 4;
@@ -2785,7 +3619,7 @@ script:
                 cur = m.cur;
                 id(set_prev) = m.prev;
                 id(set_next) = m.next;
-                val = h_save;
+                val = m.value;
                 break;
               }
               case 14:
@@ -2794,17 +3628,78 @@ script:
                 val = buf;
                 break;
               case 15: cur = id(fw_version).state; val = ""; break;
-              case 16: cur = id(submenu_index) == 1 ? "Yes, reset" : "No"; val = "Press = confirm"; break;
-              case 17: cur = id(submenu_index) ? "On" : "Off"; val = h_save; break;
-              case 18: snprintf(buf, sizeof(buf), "%d%%", id(num_preview)); cur = buf; val = h_save; break;
+              case 16: {
+                auto m = bool_menu_window(id(submenu_index), "No", "Yes, reset");
+                cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next;
+                val = "Press = confirm";
+                break;
+              }
+              case 17: {
+                auto m = bool_menu_window(id(submenu_index), "Off", "On");
+                cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next; val = m.value;
+                break;
+              }
+              case 18: {
+                auto m = numeric_menu_window(id(num_preview), 5, 100, 5, [](int v) -> std::string {
+                  char b[8]; snprintf(b, sizeof(b), "%d%%", v); return b;
+                });
+                cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next; val = m.value;
+                break;
+              }
+              case 11:
+              case 20: {
+                auto m = numeric_menu_window(id(num_preview), 0, 300, 5, [](int v) -> std::string {
+                  if (v <= 0) return "Off";
+                  char b[8]; snprintf(b, sizeof(b), "%ds", v); return b;
+                });
+                cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next; val = m.value;
+                break;
+              }
+              case 19:
+              case 21: {
+                auto m = bool_menu_window(id(submenu_index), "Off", "On");
+                cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next; val = m.value;
+                break;
+              }
+              case 22: {
+                auto m = numeric_menu_window(id(num_preview), 5, 60, 5, [](int v) -> std::string {
+                  char b[8]; snprintf(b, sizeof(b), "%ds", v); return b;
+                });
+                cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next; val = m.value;
+                break;
+              }
+              case 23:
+              case 24: {
+                auto m = bool_menu_window(id(submenu_index), "Off", "On");
+                cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next; val = m.value;
+                break;
+              }
+              case 26:
+              case 27: {
+                auto m = bool_menu_window(id(submenu_index), "Off", "On");
+                cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next; val = m.value;
+                break;
+              }
+              case 29:
+              case 30: {
+                auto m = numeric_menu_window(id(num_preview), 0, 100, 5, [](int v) -> std::string {
+                  char b[8]; snprintf(b, sizeof(b), "%d%%", v); return b;
+                });
+                cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next; val = m.value;
+                break;
+              }
+              case 25:
+              case 28: {
+                auto m = menu_window(id(submenu_index), BLINK_LED_COLOR_COUNT, false,
+                                      [](int p) -> std::string { return blink_led_color_name(p); });
+                cur = m.cur;
+                id(set_prev) = m.prev;
+                id(set_next) = m.next;
+                val = m.value;
+                break;
+              }
             }
             id(set_cur) = cur;
-            if (t != 0 && t != 1) {
-              int count = id(submenu_count) > 0 ? id(submenu_count) : 1;
-              int position = ((id(submenu_index) % count) + count) % count;
-              snprintf(buf, sizeof(buf), "%d / %d", position + 1, count);
-              val = buf;
-            }
             id(set_value) = val;
           }
       - lvgl.label.update:
@@ -2815,7 +3710,9 @@ script:
           text: !lambda |-
             if (id(ui_context) == 6)
               return std::string(entity_menu_icon(id(entity_menu_index) - 2,
-                  (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size()));
+                  (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size(),
+                  1,  // Timer is always listed, running or not.
+                  progress_is_running(id(progress_value_num).state) ? 1 : 0));
             if (id(ui_context) == 2)
               return std::string(settings_root_icon(id(menu_index) - 2));
             if (id(ui_context) == 3) {
@@ -2828,7 +3725,9 @@ script:
           text: !lambda |-
             if (id(ui_context) == 6)
               return std::string(entity_menu_icon(id(entity_menu_index) - 1,
-                  (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size()));
+                  (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size(),
+                  1,  // Timer is always listed, running or not.
+                  progress_is_running(id(progress_value_num).state) ? 1 : 0));
             if (id(ui_context) == 2)
               return std::string(settings_root_icon(id(menu_index) - 1));
             if (id(ui_context) == 3) {
@@ -2841,7 +3740,9 @@ script:
           text: !lambda |-
             if (id(ui_context) == 6)
               return std::string(entity_menu_icon(id(entity_menu_index),
-                  (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size()));
+                  (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size(),
+                  1,  // Timer is always listed, running or not.
+                  progress_is_running(id(progress_value_num).state) ? 1 : 0));
             if (id(ui_context) == 2)
               return std::string(settings_root_icon(id(menu_index)));
             if (id(ui_context) == 3) {
@@ -2854,7 +3755,9 @@ script:
           text: !lambda |-
             if (id(ui_context) == 6)
               return std::string(entity_menu_icon(id(entity_menu_index) + 1,
-                  (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size()));
+                  (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size(),
+                  1,  // Timer is always listed, running or not.
+                  progress_is_running(id(progress_value_num).state) ? 1 : 0));
             if (id(ui_context) == 2)
               return std::string(settings_root_icon(id(menu_index) + 1));
             if (id(ui_context) == 3) {
@@ -2867,7 +3770,9 @@ script:
           text: !lambda |-
             if (id(ui_context) == 6)
               return std::string(entity_menu_icon(id(entity_menu_index) + 2,
-                  (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size()));
+                  (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size(),
+                  1,  // Timer is always listed, running or not.
+                  progress_is_running(id(progress_value_num).state) ? 1 : 0));
             if (id(ui_context) == 2)
               return std::string(settings_root_icon(id(menu_index) + 2));
             if (id(ui_context) == 3) {
@@ -2875,32 +3780,23 @@ script:
               return std::string(type < 0 ? ICON_BACK : MENU_ICONS[type]);
             }
             return std::string(MENU_ICONS[id(submenu_type)]);
+      - lvgl.widget.show: label_menu_icon
       - if:
-          condition: {lambda: 'return id(icons_enabled).state;'}
-          then:
-            - lvgl.widget.show: label_menu_icon
-            - if:
-                condition: {lambda: 'return !id(set_prev2).empty();'}
-                then: [lvgl.widget.show: label_menu_icon_prev2]
-                else: [lvgl.widget.hide: label_menu_icon_prev2]
-            - if:
-                condition: {lambda: 'return !id(set_prev).empty();'}
-                then: [lvgl.widget.show: label_menu_icon_prev]
-                else: [lvgl.widget.hide: label_menu_icon_prev]
-            - if:
-                condition: {lambda: 'return !id(set_next).empty();'}
-                then: [lvgl.widget.show: label_menu_icon_next]
-                else: [lvgl.widget.hide: label_menu_icon_next]
-            - if:
-                condition: {lambda: 'return !id(set_next2).empty();'}
-                then: [lvgl.widget.show: label_menu_icon_next2]
-                else: [lvgl.widget.hide: label_menu_icon_next2]
-          else:
-            - lvgl.widget.hide: label_menu_icon_prev2
-            - lvgl.widget.hide: label_menu_icon_prev
-            - lvgl.widget.hide: label_menu_icon
-            - lvgl.widget.hide: label_menu_icon_next
-            - lvgl.widget.hide: label_menu_icon_next2
+          condition: {lambda: 'return !id(set_prev2).empty();'}
+          then: [lvgl.widget.show: label_menu_icon_prev2]
+          else: [lvgl.widget.hide: label_menu_icon_prev2]
+      - if:
+          condition: {lambda: 'return !id(set_prev).empty();'}
+          then: [lvgl.widget.show: label_menu_icon_prev]
+          else: [lvgl.widget.hide: label_menu_icon_prev]
+      - if:
+          condition: {lambda: 'return !id(set_next).empty();'}
+          then: [lvgl.widget.show: label_menu_icon_next]
+          else: [lvgl.widget.hide: label_menu_icon_next]
+      - if:
+          condition: {lambda: 'return !id(set_next2).empty();'}
+          then: [lvgl.widget.show: label_menu_icon_next2]
+          else: [lvgl.widget.hide: label_menu_icon_next2]
       - lvgl.label.update: {id: label_menu_prev2, text: !lambda 'return id(set_prev2);'}
       - lvgl.label.update: {id: label_menu_prev, text: !lambda 'return id(set_prev);'}
       - lvgl.label.update: {id: label_menu_current, text: !lambda 'return id(set_cur);'}

@@ -146,7 +146,8 @@ lvgl:
       then:
         - if:
             condition:
-              lambda: 'return id(connection_ready);'
+              lambda: |-
+                return id(connection_ready) && id(ui_context) != 8 && id(ui_context) != 9;
             then:
               - lambda: 'id(ui_context) = 0;'
               - script.execute: refresh_temps
@@ -984,6 +985,193 @@ lvgl:
             x: -10
             y: 8
 
+    # ================= Timer =================
+    - id: screen_timer
+      bg_color: "0x000000"
+      on_swipe_down:
+        - script.execute: open_settings
+      on_swipe_up:
+        - script.execute: open_entity_overview
+      widgets:
+        - button:
+            id: button_timer_background
+            align: CENTER
+            width: 238
+            height: 238
+            radius: 0
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            on_click:
+              - script.execute: wake_display
+
+        - arc:
+            id: arc_timer_track
+            align: CENTER
+            width: 238
+            height: 238
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 0
+            end_angle: 360
+            rotation: 270
+            arc_color: 0x1C1C1C
+            arc_width: 16
+            arc_rounded: true
+            adjustable: false
+            clickable: false
+            indicator:
+              arc_opa: TRANSP
+
+        - arc:
+            id: arc_timer_value
+            align: CENTER
+            width: 238
+            height: 238
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 0
+            end_angle: 360
+            rotation: 270
+            arc_color: 0xDCE3E7
+            arc_opa: TRANSP
+            arc_width: 16
+            arc_rounded: true
+            adjustable: false
+            clickable: false
+            indicator:
+              arc_color: 0x6E4FBD
+              arc_width: 16
+              arc_rounded: true
+
+        - label:
+            id: label_timer_value
+            text: "--:--:--"
+            text_font: rajdhani_semibold_46
+            text_color: 0xFFFFFF
+            align: CENTER
+            width: 180
+            text_align: CENTER
+
+        - label:
+            id: label_timer_title
+            text: ""
+            text_font: rajdhani_medium_16
+            text_color: 0xCDBEEC
+            align: CENTER
+            y: 40
+            width: 180
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+            hidden: true
+
+        # Cancel-confirmation overlay, shown on the first knob click while
+        # this screen is open. Hidden by default.
+        - obj:
+            id: timer_cancel_backdrop
+            align: CENTER
+            width: 238
+            height: 238
+            radius: 119
+            bg_color: 0x000000
+            bg_opa: 85%
+            border_width: 0
+            shadow_width: 0
+            hidden: true
+        - label:
+            id: label_timer_cancel_confirm
+            text: "Cancel timer?\nPress again to confirm"
+            text_font: rajdhani_medium_16
+            text_color: 0xFFFFFF
+            align: CENTER
+            width: 190
+            text_align: CENTER
+            hidden: true
+
+    # ================= Progress =================
+    - id: screen_progress
+      bg_color: "0x000000"
+      on_swipe_down:
+        - script.execute: open_settings
+      on_swipe_up:
+        - script.execute: open_entity_overview
+      widgets:
+        - button:
+            id: button_progress_background
+            align: CENTER
+            width: 238
+            height: 238
+            radius: 0
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            on_click:
+              - script.execute: wake_display
+
+        - arc:
+            id: arc_progress_track
+            align: CENTER
+            width: 238
+            height: 238
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 0
+            end_angle: 360
+            rotation: 270
+            arc_color: 0x1C1C1C
+            arc_width: 16
+            arc_rounded: true
+            adjustable: false
+            clickable: false
+            indicator:
+              arc_opa: TRANSP
+
+        - arc:
+            id: arc_progress_value
+            align: CENTER
+            width: 238
+            height: 238
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 0
+            end_angle: 360
+            rotation: 270
+            arc_color: 0xDCE3E7
+            arc_opa: TRANSP
+            arc_width: 16
+            arc_rounded: true
+            adjustable: false
+            clickable: false
+            indicator:
+              arc_color: 0x6E4FBD
+              arc_width: 16
+              arc_rounded: true
+
+        - label:
+            id: label_progress_value
+            text: "0%"
+            text_font: rajdhani_semibold_46
+            text_color: 0xFFFFFF
+            align: CENTER
+            width: 180
+            text_align: CENTER
+
+        - label:
+            id: label_progress_title
+            text: ""
+            text_font: rajdhani_medium_16
+            text_color: 0xCDBEEC
+            align: CENTER
+            y: 40
+            width: 180
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+            hidden: true
+
     # ================= Settings menu =================
     - id: screen_navigation
       bg_color: "0x000000"
@@ -1109,7 +1297,7 @@ font:
         "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
         "abcdefghijklmnopqrstuvwxyz",
         "äöüÄÖÜß",
-        " .,:%°·-/=()|",
+        " .,:%°·-/=()|?",
       ]
   - file: "assets/fonts/Rajdhani-Bold.ttf"
     id: rajdhani_bold_130
@@ -1191,6 +1379,7 @@ light:
   - platform: esp32_rmt_led_strip
     id: status_led
     name: "Status LED"
+    internal: true
     pin: GPIO48
     num_leds: 5
     rgb_order: GRB
@@ -1207,24 +1396,66 @@ script:
             lambda: 'return !id(app_booted);'
           then: []
           else:
+            # Timer/Progress finish blink takes priority over the normal
+            # HVAC-color display - it's a deliberate alert, so it ignores
+            # led_enabled/display_dimmed the same way the old forced-backlight
+            # blink used to. Only while still on the respective screen -
+            # leaving it (even with the timer/progress still finished) stops
+            # the blink.
             - if:
                 condition:
-                  lambda: 'return id(display_dimmed) || !id(led_enabled).state;'
+                  lambda: |-
+                    bool timer_blinking = id(ui_context) == 8 && id(timer_finished) &&
+                                           id(timer_finish_blink_switch).state;
+                    bool progress_blinking = id(ui_context) == 9 && id(progress_finished) &&
+                                              id(progress_finish_blink_switch).state;
+                    return timer_blinking || progress_blinking;
                 then:
-                  - light.turn_off: status_led
+                  - if:
+                      condition:
+                        lambda: 'return id(blink_led_on);'
+                      then:
+                        # Timer blinks while ui_context == 8, progress while == 9 -
+                        # the outer condition already guarantees one of the two.
+                        - light.turn_on:
+                            id: status_led
+                            brightness: !lambda |-
+                                float pct = id(ui_context) == 8 ? id(timer_blink_led_brightness_num).state
+                                                                 : id(progress_blink_led_brightness_num).state;
+                                return pct / 100.0f;
+                            red: !lambda |-
+                                const std::string &name = id(ui_context) == 8 ? id(timer_blink_led_color_select).state
+                                                                                : id(progress_blink_led_color_select).state;
+                                return blink_led_color_rgb(name).r;
+                            green: !lambda |-
+                                const std::string &name = id(ui_context) == 8 ? id(timer_blink_led_color_select).state
+                                                                                : id(progress_blink_led_color_select).state;
+                                return blink_led_color_rgb(name).g;
+                            blue: !lambda |-
+                                const std::string &name = id(ui_context) == 8 ? id(timer_blink_led_color_select).state
+                                                                                : id(progress_blink_led_color_select).state;
+                                return blink_led_color_rgb(name).b;
+                      else:
+                        - light.turn_off: status_led
                 else:
-                  - light.turn_on:
-                      id: status_led
-                      brightness: !lambda 'return id(led_brightness_num).state / 100.0f;'
-                      red: !lambda |-
-                          bool dual = !std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v));
-                          return hvac_led_color(id(current_hvac_raw), dual, id(adjust_target)).r;
-                      green: !lambda |-
-                          bool dual = !std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v));
-                          return hvac_led_color(id(current_hvac_raw), dual, id(adjust_target)).g;
-                      blue: !lambda |-
-                          bool dual = !std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v));
-                          return hvac_led_color(id(current_hvac_raw), dual, id(adjust_target)).b;
+                  - if:
+                      condition:
+                        lambda: 'return id(display_dimmed) || !id(led_enabled).state;'
+                      then:
+                        - light.turn_off: status_led
+                      else:
+                        - light.turn_on:
+                            id: status_led
+                            brightness: !lambda 'return id(led_brightness_num).state / 100.0f;'
+                            red: !lambda |-
+                                bool dual = !std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v));
+                                return hvac_led_color(id(current_hvac_raw), dual, id(adjust_target)).r;
+                            green: !lambda |-
+                                bool dual = !std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v));
+                                return hvac_led_color(id(current_hvac_raw), dual, id(adjust_target)).g;
+                            blue: !lambda |-
+                                bool dual = !std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v));
+                                return hvac_led_color(id(current_hvac_raw), dual, id(adjust_target)).b;
 
   - id: !extend preview_led_brightness
     then:

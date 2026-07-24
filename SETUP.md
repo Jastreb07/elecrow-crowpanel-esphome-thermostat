@@ -351,6 +351,83 @@ swiping fully opens or closes it. Covers that only support open/close/stop
 estimate and the direction of the last nudge decides between
 `cover.open_cover` and `cover.close_cover`.
 
+## Timer & Progress
+
+Unlike the thermostat/light/cover pages, Timer and Progress are **not**
+configured through `sensor.smart_knob_config` or the custom integration —
+each device has exactly one of each, backed by plain entities the built-in
+ESPHome integration already exposes (see [Adding the
+device](#adding-the-device)). Set them from an automation, script, or
+dashboard like any other `text`/`number`/`button` entity:
+
+| Entity | Purpose |
+|---|---|
+| `text.*_timer_end_time` | Target end time, either `YYYY-MM-DD HH:MM:SS` or just `HH:MM:SS` (today's date). Empty = no timer set. Writing a new value always restarts the countdown from "now" — there's no separate start-time field. |
+| `text.*_timer_title` | Optional label shown under the countdown. Defaults to "Timer"; empty hides it. |
+| `number.*_progress` | Progress percentage, 0–100. |
+| `text.*_progress_title` | Optional label shown under the percentage. Defaults to "Progress"; empty hides it. |
+| `button.*_show_home_screen` | Jumps the device back to the Home screen. |
+| `button.*_show_timer_screen` | Jumps the device to the Timer screen. |
+| `button.*_show_progress_screen` | Jumps the device to the Progress screen. |
+
+Example automation setting a 20-minute timer and showing it immediately:
+
+```yaml
+service: text.set_value
+target:
+  entity_id: text.thermostat480_timer_end_time
+data:
+  value: "{{ (now() + timedelta(minutes=20)).strftime('%Y-%m-%d %H:%M:%S') }}"
+---
+service: button.press
+target:
+  entity_id: button.thermostat480_show_timer_screen
+```
+
+Both screens are excluded from the idle-to-home timeout, so once shown they
+stay up until you swipe away manually. They also appear as extra rows in
+the on-device entity overview menu, but only while actually "running" — the
+timer while its end time is still in the future, progress while its value
+is strictly between 0 and 100 — so a finished timer or a 0%/100% progress
+value quietly drops out of the menu again.
+
+### Controlling the Timer with the knob
+
+On the Timer screen itself, the rotary encoder edits the end time directly —
+no Home Assistant round-trip needed:
+
+- **Turning the knob** moves the end time by one **Timer Knob Step** (see
+  below, default 10s) per detent. If no timer is set yet, the first turn
+  starts one from scratch (`now + one step`); if a timer is already running,
+  turning extends or shortens the remaining time.
+- **A short knob press** shows a "Cancel timer?" confirmation overlay. A
+  second press within 5 seconds cancels the timer — this clears both the
+  end time and the title. Otherwise the overlay disappears on its own after
+  5 seconds and the timer keeps running untouched.
+
+The Progress screen doesn't have knob controls — its value only comes from
+`number.*_progress`.
+
+### What happens when a timer/progress finishes
+
+Configurable on the device itself, under **Settings > Smart Knob**, one pair
+of settings each for Timer and Progress (same settings menu the existing
+Idle Time/Dim/LED options already live in — turn the knob to open **Settings
+> Smart Knob**, press to enter one of the four items below):
+
+| Setting | Behavior |
+|---|---|
+| Timer Auto-Home | Seconds after the countdown reaches zero before the device jumps back to the Home screen on its own. `0` = never (stays on the finished Timer screen until you swipe away). Only fires while the Timer screen is still showing. |
+| Timer Finish Blink | When on, the Timer screen's background flashes white/green (every 500 ms) once finished, forcing full display brightness for as long as it blinks. Off by default. |
+| Progress Auto-Home | Same as Timer Auto-Home, but for the Progress screen reaching 100%. |
+| Progress Finish Blink | Same as Timer Finish Blink, but for Progress reaching 100%. |
+| Timer Knob Step | Seconds the rotary encoder moves the Timer's end time per detent (see [Controlling the Timer with the knob](#controlling-the-timer-with-the-knob)). Default `10`, range 5-60s. |
+
+All five are also plain Home Assistant entities if you'd rather set them
+from there: `number.*_timer_auto_home_after_s`, `switch.*_timer_finish_blink`,
+`number.*_progress_auto_home_after_s`, `switch.*_progress_finish_blink`,
+`number.*_timer_knob_step_s`.
+
 ## Project Layout
 
 ```text

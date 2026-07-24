@@ -12,6 +12,82 @@
 #include <cstdio>
 #include <cmath>
 #include <functional>
+#include "esphome/core/time.h"
+
+// Days since 1970-01-01 for a proleptic Gregorian civil date (Howard
+// Hinnant's well-known constant-time algorithm). Used instead of mktime()/
+// strptime() so the timer never depends on the libc timezone/DST state -
+// both sides of a comparison are always computed the same deterministic way.
+inline long civil_days_from_ymd(int y, int m, int d) {
+  y -= m <= 2;
+  long era = (y >= 0 ? y : y - 399) / 400;
+  unsigned yoe = (unsigned) (y - era * 400);
+  unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+  unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return era * 146097 + (long) doe - 719468;
+}
+
+inline long civil_seconds(int y, int m, int d, int hh, int mm, int ss) {
+  return civil_days_from_ymd(y, m, d) * 86400L + hh * 3600L + mm * 60L + ss;
+}
+
+// Seconds remaining until end_time_str, or a negative value if the string is
+// empty, unparseable, or `now` isn't valid yet. Accepts either a full
+// "YYYY-MM-DD HH:MM:SS" datetime or a plain "HH:MM:SS" time (combined with
+// today's date from `now`).
+inline long timer_remaining_seconds(const std::string &end_time_str,
+                                     const esphome::ESPTime &now) {
+  if (end_time_str.empty() || !now.is_valid()) return -1;
+  int y, mo, d, h, mi, s;
+  if (sscanf(end_time_str.c_str(), "%d-%d-%d %d:%d:%d", &y, &mo, &d, &h, &mi, &s) == 6) {
+    // Full datetime, nothing more to fill in.
+  } else if (sscanf(end_time_str.c_str(), "%d:%d:%d", &h, &mi, &s) == 3) {
+    y = now.year;
+    mo = now.month;
+    d = now.day_of_month;
+  } else {
+    return -1;
+  }
+  long end_secs = civil_seconds(y, mo, d, h, mi, s);
+  long now_secs = civil_seconds(now.year, now.month, now.day_of_month, now.hour, now.minute, now.second);
+  return end_secs - now_secs;
+}
+
+// Inverse of civil_days_from_ymd (Howard Hinnant's algorithm): turns a day
+// count since 1970-01-01 back into a proleptic Gregorian y/m/d.
+inline void civil_ymd_from_days(long z, int &y, int &m, int &d) {
+  z += 719468;
+  long era = (z >= 0 ? z : z - 146096) / 146097;
+  unsigned doe = (unsigned) (z - era * 146097);
+  unsigned yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+  long yy = (long) yoe + era * 400;
+  unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+  unsigned mp = (5 * doy + 2) / 153;
+  d = (int) (doy - (153 * mp + 2) / 5 + 1);
+  m = (int) (mp + (mp < 10 ? 3 : -9));
+  y = (int) (yy + (m <= 2 ? 1 : 0));
+}
+
+// Inverse of civil_seconds(): formats a civil-epoch second count (same
+// convention as civil_seconds/timer_remaining_seconds - not a Unix
+// timestamp) back into "YYYY-MM-DD HH:MM:SS", for writing a new value into
+// timer_end_time_txt after the knob adjusts it.
+inline std::string format_civil_datetime(long total_seconds) {
+  long days = total_seconds >= 0 ? total_seconds / 86400 : -((-total_seconds + 86399) / 86400);
+  long secs_of_day = total_seconds - days * 86400;
+  int y, mo, d;
+  civil_ymd_from_days(days, y, mo, d);
+  int h = (int) (secs_of_day / 3600);
+  int mi = (int) ((secs_of_day % 3600) / 60);
+  int s = (int) (secs_of_day % 60);
+  char buf[24];
+  snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d", y, mo, d, h, mi, s);
+  return std::string(buf);
+}
+
+inline bool progress_is_running(float value) {
+  return value > 0.0f && value < 100.0f;
+}
 
 // Return live Home Assistant text once the configuration and entity state are
 // ready. Until then, callers choose the exact placeholder width per label.
@@ -61,49 +137,66 @@ static const char *const ICON_SUN_THERMOMETER_OUTLINE = "\U000F18D7";  // mdi-su
 static const char *const ICON_PALETTE = "\U000F03D8";                // mdi-palette
 static const char *const ICON_WINDOW_SHUTTER = "\U000F111C";         // mdi-window-shutter
 
-// Menu icons. Index matches the settings menu item.
+// Menu icons. Index matches the settings menu item. Indices 5/6 (formerly
+// Design/Icons) are permanently retired - removing the feature left a gap
+// rather than renumbering everything after it, same as index 11 before it
+// grew a use. Their icon/name slots stay as inert placeholders.
 static const char *const MENU_ICONS[] = {
     "󰎓",  //  0 HVAC mode      mdi-thermostat
     "󰘮",  //  1 Preset         mdi-tune
     "󰃞",  //  2 Brightness     mdi-brightness-6
     "󰅐",  //  3 Clock          mdi-clock-outline
     "󰗊",  //  4 Language       mdi-translate
-    "󰏘",  //  5 Design         mdi-palette
-    "󰈈",  //  6 Icons          mdi-eye
+    "",   //  5 removed (Design)
+    "",   //  6 removed (Icons)
     "󰔄",  //  7 Unit           mdi-temperature-celsius
     "󰔟",  //  8 Idle time      mdi-timer-sand
     "󰃜",  //  9 Dim after      mdi-brightness-4
     "󰏰",  // 10 Dim level      mdi-percent
-    "",   // 11 removed/reserved
-    "󰔡",  // 12 Knob modes     mdi-toggle-switch
-    "󰑧",  // 13 Knob step      mdi-rotate-right
+    "󰔟",  // 11 Timer auto-home  mdi-timer-sand (reused)
+    "󰔡",  // 12 Mode           mdi-toggle-switch
+    "󰑧",  // 13 Step           mdi-rotate-right
     "󰖩",  // 14 WiFi           mdi-wifi
     "󰋽",  // 15 Firmware       mdi-information-outline
     "󰜉",  // 16 Reset          mdi-restart
     "󰌵",  // 17 LED            mdi-lightbulb
     "󰃟",  // 18 LED brightness mdi-brightness-7
+    "󰌵",  // 19 Timer LED blink       mdi-lightbulb (reused)
+    "󰔟",  // 20 Progress auto-home    mdi-timer-sand (reused)
+    "󰌵",  // 21 Progress LED blink    mdi-lightbulb (reused)
+    "󰑧",  // 22 Timer knob step       mdi-rotate-right (reused)
+    "󰌵",  // 23 Timer value blink     mdi-lightbulb (reused)
+    "󰌵",  // 24 Progress value blink  mdi-lightbulb (reused)
+    "\U000F020A",  // 25 Timer blink LED color    mdi-eyedropper (reused)
+    "\U000F05A8",  // 26 Timer show screen        mdi-white-balance-sunny (reused)
+    "\U000F05A8",  // 27 Progress show screen     mdi-white-balance-sunny (reused)
+    "\U000F020A",  // 28 Progress blink LED color mdi-eyedropper (reused)
+    "󰃟",  // 29 Timer blink LED brightness    mdi-brightness-7 (reused)
+    "󰃟",  // 30 Progress blink LED brightness mdi-brightness-7 (reused)
 };
-constexpr int SETTINGS_MENU_COUNT = 19;
+constexpr int SETTINGS_MENU_COUNT = 31;
 
 // Root groups for the hierarchical settings screen. The values below are the
 // stable setting IDs used by the existing editor/apply logic.
-constexpr int SETTINGS_GROUP_COUNT = 3;
+constexpr int SETTINGS_GROUP_COUNT = 4;
 constexpr int SETTINGS_ROOT_COUNT = SETTINGS_GROUP_COUNT + 1;  // + Back
 static const char *const SETTINGS_GROUP_NAMES[SETTINGS_GROUP_COUNT] = {
-    "Thermostat", "Smart Knob", "System"};
+    "Thermostat", "Timer", "Progress", "System"};
 static const char *const SETTINGS_GROUP_ICONS[SETTINGS_GROUP_COUNT] = {
-    MENU_ICONS[0], MENU_ICONS[12], MENU_ICONS[14]};
+    MENU_ICONS[0], MENU_ICONS[8], MENU_ICONS[10], MENU_ICONS[14]};
 
-static constexpr int SETTINGS_GROUP_THERMOSTAT[] = {0, 1, 7};
-static constexpr int SETTINGS_GROUP_SMART_KNOB[] = {
-    12, 13, 5, 6, 2, 3, 4, 8, 9, 10, 17, 18};
-static constexpr int SETTINGS_GROUP_SYSTEM[] = {14, 15, 16};
+static constexpr int SETTINGS_GROUP_THERMOSTAT[] = {0, 1, 7, 12, 13};
+static constexpr int SETTINGS_GROUP_TIMER[] = {11, 19, 25, 29, 23, 22, 26};
+static constexpr int SETTINGS_GROUP_PROGRESS[] = {20, 21, 28, 30, 24, 27};
+static constexpr int SETTINGS_GROUP_SYSTEM[] = {
+    2, 4, 3, 18, 17, 10, 9, 8, 14, 15, 16};
 
 inline int settings_group_count(int group) {
   switch (group) {
     case 0: return sizeof(SETTINGS_GROUP_THERMOSTAT) / sizeof(SETTINGS_GROUP_THERMOSTAT[0]);
-    case 1: return sizeof(SETTINGS_GROUP_SMART_KNOB) / sizeof(SETTINGS_GROUP_SMART_KNOB[0]);
-    case 2: return sizeof(SETTINGS_GROUP_SYSTEM) / sizeof(SETTINGS_GROUP_SYSTEM[0]);
+    case 1: return sizeof(SETTINGS_GROUP_TIMER) / sizeof(SETTINGS_GROUP_TIMER[0]);
+    case 2: return sizeof(SETTINGS_GROUP_PROGRESS) / sizeof(SETTINGS_GROUP_PROGRESS[0]);
+    case 3: return sizeof(SETTINGS_GROUP_SYSTEM) / sizeof(SETTINGS_GROUP_SYSTEM[0]);
     default: return 0;
   }
 }
@@ -114,8 +207,9 @@ inline int settings_group_type_at(int group, int position) {
   position = ((position % count) + count) % count;
   switch (group) {
     case 0: return SETTINGS_GROUP_THERMOSTAT[position];
-    case 1: return SETTINGS_GROUP_SMART_KNOB[position];
-    case 2: return SETTINGS_GROUP_SYSTEM[position];
+    case 1: return SETTINGS_GROUP_TIMER[position];
+    case 2: return SETTINGS_GROUP_PROGRESS[position];
+    case 3: return SETTINGS_GROUP_SYSTEM[position];
     default: return 0;
   }
 }
@@ -139,14 +233,19 @@ inline const char *settings_root_icon(int position) {
 }
 
 inline const char *entity_menu_icon(int position, int climate_count, int light_count,
-                                     int cover_count) {
-  int count = climate_count + light_count + cover_count + 2;  // Settings + Back
+                                     int cover_count, int timer_count, int progress_count) {
+  int before_timer = climate_count + light_count + cover_count;
+  int before_progress = before_timer + timer_count;
+  int before_settings = before_progress + progress_count;
+  int count = before_settings + 2;  // Settings + Back
   if (count <= 0) return ICON_BACK;
   position = ((position % count) + count) % count;
   if (position < climate_count) return MENU_ICONS[0];
   if (position < climate_count + light_count) return MENU_ICONS[17];
-  if (position < climate_count + light_count + cover_count) return ICON_WINDOW_SHUTTER;
-  return position == climate_count + light_count + cover_count ? MENU_ICONS[12] : ICON_BACK;
+  if (position < before_timer) return ICON_WINDOW_SHUTTER;
+  if (position < before_progress) return MENU_ICONS[3];   // Timer: clock
+  if (position < before_settings) return MENU_ICONS[10];  // Progress: percent
+  return position == before_settings ? MENU_ICONS[12] : ICON_BACK;
 }
 
 inline int settings_group_entry_count(int group) {
@@ -212,6 +311,27 @@ inline MenuWindow menu_window(int index, int count, bool extra_rows,
   return m;
 }
 
+// Same prev/cur/next/"i / n" pattern as menu_window, but for a number
+// entity's own value range instead of a list of names - lets every settings
+// editor (booleans, numeric steppers, select lists) use one consistent
+// scroll display. `value` need not fall exactly on a step multiple (e.g.
+// right after boot); it's clamped into range and snapped to the nearest step.
+inline MenuWindow numeric_menu_window(int value, int minv, int maxv, int step,
+                                       const std::function<std::string(int)> &format) {
+  if (step <= 0) step = 1;
+  int count = (maxv - minv) / step + 1;
+  int clamped = value < minv ? minv : (value > maxv ? maxv : value);
+  int idx = (clamped - minv + step / 2) / step;
+  return menu_window(idx, count, false,
+                      [minv, step, &format](int p) -> std::string { return format(minv + p * step); });
+}
+
+// Same pattern for a plain two-option boolean setting (Off/On, 12h/24h, ...).
+inline MenuWindow bool_menu_window(int index, const char *off_label, const char *on_label) {
+  const char *opts[] = {off_label, on_label};
+  return menu_window(index, 2, false, [&opts](int p) -> std::string { return opts[((p % 2) + 2) % 2]; });
+}
+
 // ------------------------------------------------------------------
 // Shared bidirectional, looping swipe-cycling between a fixed set of
 // screens (e.g. the light control pages). Both gesture directions on an
@@ -275,10 +395,13 @@ inline std::string ha_preset_label(const std::string &p, bool de) {
 inline const char *settings_menu_name(int i, bool de) {
   (void) de;
   static const char *const EN[] = {
-      "HVAC Mode",  "Preset", "Brightness", "Clock",     "Language",   "Design",
-      "Icons",      "Unit",   "Idle Time",  "Dim After", "Dim Level",  "-",
-      "Knob Modes", "Knob Step", "WiFi",    "Firmware",  "Reset",      "LED",
-      "LED Brightness"};
+      "HVAC Mode",  "Preset", "Brightness", "Clock",     "Language",   "-",
+      "-",          "Unit",   "Idle Time",  "Dim After", "Dim Level",  "Timer Auto-Home",
+      "Mode",       "Step",      "WiFi",    "Firmware",  "Reset",      "LED",
+      "LED Brightness", "Timer LED Blink", "Progress Auto-Home", "Progress LED Blink",
+      "Timer Knob Step", "Timer Value Blink", "Progress Value Blink", "Timer Blink LED Color",
+      "Timer Show Screen", "Progress Show Screen", "Progress Blink LED Color",
+      "Timer Blink Brightness", "Progress Blink Brightness"};
   if (i < 0 || i >= SETTINGS_MENU_COUNT) return "-";
   return EN[i];
 }
@@ -298,6 +421,38 @@ inline LedColor hvac_led_color(const std::string &hvac, bool dual_setpoint, int 
   if (dual_setpoint) return adjust_target == 1 ? WHITE_BLUE : ORANGE;
   if (hvac == "cool" || hvac == "dry" || hvac == "fan_only") return WHITE_BLUE;
   return ORANGE;
+}
+
+// ------------------------------------------------------------------
+// Fixed preset colors for the Timer/Progress finish blink on the status LED
+// (see check_finish_effects / update_status_led). A small named set, not a
+// hue wheel, matches how the setting is picked (knob-scroll through a short
+// list), same reasoning as LIGHT_COLOR_PRESETS.
+// ------------------------------------------------------------------
+struct BlinkLedColor { const char *name; float r, g, b; };
+constexpr int BLINK_LED_COLOR_COUNT = 10;
+static constexpr BlinkLedColor BLINK_LED_COLORS[BLINK_LED_COLOR_COUNT] = {
+    {"Green", 0.0f, 1.0f, 0.0f},
+    {"Red", 1.0f, 0.0f, 0.0f},
+    {"Blue", 0.0f, 0.4f, 1.0f},
+    {"Yellow", 1.0f, 1.0f, 0.0f},
+    {"Orange", 1.0f, 0.5f, 0.0f},
+    {"Purple", 0.6f, 0.0f, 1.0f},
+    {"Cyan", 0.0f, 1.0f, 1.0f},
+    {"Magenta", 1.0f, 0.0f, 1.0f},
+    {"White", 1.0f, 1.0f, 1.0f},
+    {"Pink", 1.0f, 0.4f, 0.7f},
+};
+
+inline const char *blink_led_color_name(int i) {
+  i = ((i % BLINK_LED_COLOR_COUNT) + BLINK_LED_COLOR_COUNT) % BLINK_LED_COLOR_COUNT;
+  return BLINK_LED_COLORS[i].name;
+}
+
+inline LedColor blink_led_color_rgb(const std::string &name) {
+  for (int i = 0; i < BLINK_LED_COLOR_COUNT; i++)
+    if (name == BLINK_LED_COLORS[i].name) return {BLINK_LED_COLORS[i].r, BLINK_LED_COLORS[i].g, BLINK_LED_COLORS[i].b};
+  return {BLINK_LED_COLORS[0].r, BLINK_LED_COLORS[0].g, BLINK_LED_COLORS[0].b};  // default Green
 }
 
 // ------------------------------------------------------------------
