@@ -952,13 +952,35 @@ number:
 
 button:
   - platform: factory_reset
-    name: "[System] ${friendly_name} Factory Reset"
+    name: "${friendly_name} Factory Reset"
     id: factory_reset_btn
 
   - platform: restart
-    name: "[Standard] ${friendly_name} Restart"
+    name: "${friendly_name} Restart"
     id: restart_btn
     entity_category: diagnostic
+
+  # Copy all persisted settings into settings_export_txt as a compact
+  # key=value string, and apply a previously exported string back from
+  # settings_import_txt. Timer/Progress/Notify content (end time, titles,
+  # value) is intentionally excluded - that's live data, not a setting.
+  - platform: template
+    name: "Export Settings"
+    id: export_settings_btn
+    icon: "mdi:export-variant"
+    entity_category: config
+    on_press:
+      then:
+        - script.execute: export_settings
+
+  - platform: template
+    name: "Import Settings"
+    id: import_settings_btn
+    icon: "mdi:import"
+    entity_category: config
+    on_press:
+      then:
+        - script.execute: import_settings
 
   # Jump straight to the Home/Timer/Progress screen from Home Assistant (an
   # automation, dashboard button, etc.) - same idea as pressing restart_btn
@@ -1000,7 +1022,7 @@ button:
 # ------------------------------------------------------------------
 binary_sensor:
   - platform: status
-    name: "[Standard] ${friendly_name} Status"
+    name: "${friendly_name} Status"
 
   - platform: gpio
     id: encoder_button
@@ -1351,7 +1373,7 @@ sensor:
 
   - platform: wifi_signal
     id: wifi_rssi
-    name: "[System] ${friendly_name} WiFi Signal"
+    name: "${friendly_name} WiFi Signal"
     update_interval: 60s
 
 # ------------------------------------------------------------------
@@ -1360,22 +1382,22 @@ sensor:
 text_sensor:
   - platform: version
     id: fw_version
-    name: "[System] ${friendly_name} Firmware"
+    name: "${friendly_name} Firmware"
 
   - platform: wifi_info
     ip_address:
       id: wifi_ip_txt
-      name: "[System] ${friendly_name} IP"
+      name: "${friendly_name} IP"
     ssid:
       id: wifi_ssid_txt
-      name: "[System] ${friendly_name} SSID"
+      name: "${friendly_name} SSID"
 
 # The Home Assistant config entity can be changed without recompiling. The
 # template text component persists the selected entity ID in ESP flash and
 # publishes it as a normal configurable Home Assistant entity.
 text:
   - platform: template
-    name: "[Standard] Home Assistant Config Entity"
+    name: "Home Assistant Config Entity"
     id: ha_config_entity
     icon: "mdi:database-cog-outline"
     entity_category: config
@@ -1396,6 +1418,28 @@ text:
             id(light_index) = 0;
             id(cover_index) = 0;
         - script.execute: refresh_connection
+
+  - platform: template
+    name: "Settings Export"
+    id: settings_export_txt
+    icon: "mdi:export-variant"
+    entity_category: config
+    optimistic: true
+    restore_value: false
+    initial_value: ""
+    max_length: 255
+    mode: text
+
+  - platform: template
+    name: "Settings Import"
+    id: settings_import_txt
+    icon: "mdi:import"
+    entity_category: config
+    optimistic: true
+    restore_value: false
+    initial_value: ""
+    max_length: 255
+    mode: text
 
   # Timer/Progress: plain local entities, set from Home Assistant like any
   # other ESPHome text/number/button, no JSON config list involved. Start
@@ -4128,6 +4172,111 @@ script:
       - lvgl.label.update: {id: label_home_weekday, text: !lambda 'return id(pending_clock_day);'}
       - lvgl.label.update: {id: label_home_date, text: !lambda 'return id(pending_home_date);'}
 
+  # Serializes every persisted setting (System/Thermostat/Timer/Progress/
+  # Notify) into settings_export_txt as a compact "key=value;..." string -
+  # not JSON, to avoid pulling in a JSON library for something this simple.
+  # Keys are short and colors/language/unit are single letters, so ~29
+  # settings still fit in Home Assistant's 255-char text-entity limit.
+  # ha_config_entity and Timer/Progress/Notify content (end time, titles,
+  # value) are intentionally excluded - the former rarely changes and has
+  # its own entity already, the latter is live data, not a setting.
+  - id: export_settings
+    then:
+      - lambda: |-
+          std::string out;
+          auto add_bool = [&out](const char *key, bool v) {
+            out += key; out += "="; out += (v ? "1" : "0"); out += ";";
+          };
+          auto add_num = [&out](const char *key, float v) {
+            char b[32];
+            snprintf(b, sizeof(b), "%g", v);
+            out += key; out += "="; out += b; out += ";";
+          };
+          auto add_chr = [&out](const char *key, char v) {
+            out += key; out += "="; out += v; out += ";";
+          };
+          add_bool("t24", id(time_24h).state);
+          add_bool("led", id(led_enabled).state);
+          add_bool("tfb", id(timer_finish_blink_switch).state);
+          add_bool("pfb", id(progress_finish_blink_switch).state);
+          add_bool("tvb", id(timer_value_blink_switch).state);
+          add_bool("pvb", id(progress_value_blink_switch).state);
+          add_bool("tss", id(timer_show_on_finish_switch).state);
+          add_bool("pss", id(progress_show_on_finish_switch).state);
+          add_bool("nfb", id(notify_finish_blink_switch).state);
+          add_bool("nvb", id(notify_value_blink_switch).state);
+          add_bool("nss", id(notify_show_on_finish_switch).state);
+          add_chr("lang", id(language_select).current_option() == "Deutsch" ? 'd' : 'e');
+          add_chr("unit", id(unit_select).current_option() == "Fahrenheit" ? 'F' : 'C');
+          out += "kstep="; out += id(knob_step_select).current_option(); out += ";";
+          add_chr("tcol", blink_led_color_letter(id(timer_blink_led_color_select).state));
+          add_chr("pcol", blink_led_color_letter(id(progress_blink_led_color_select).state));
+          add_chr("ncol", blink_led_color_letter(id(notify_blink_led_color_select).state));
+          add_num("idle", id(idle_home_num).state);
+          add_num("dimd", id(dim_delay_num).state);
+          add_num("diml", id(dim_level_num).state);
+          add_num("bri", id(brightness_num).state);
+          add_num("lbri", id(led_brightness_num).state);
+          add_num("tah", id(timer_auto_home_num).state);
+          add_num("pah", id(progress_auto_home_num).state);
+          add_num("tks", id(timer_knob_step_num).state);
+          add_num("tbb", id(timer_blink_led_brightness_num).state);
+          add_num("pbb", id(progress_blink_led_brightness_num).state);
+          add_num("nah", id(notify_auto_home_num).state);
+          add_num("nbb", id(notify_blink_led_brightness_num).state);
+          if (!out.empty()) out.pop_back();  // drop the trailing ';'
+          id(settings_export_txt).make_call().set_value(out).perform();
+
+  # Inverse of export_settings: reads settings_import_txt and applies every
+  # recognized key. Unknown keys (e.g. from a different firmware version)
+  # are silently skipped rather than failing the whole import.
+  - id: import_settings
+    then:
+      - lambda: |-
+          std::string data = id(settings_import_txt).state;
+          size_t pos = 0;
+          while (pos < data.size()) {
+            size_t semi = data.find(';', pos);
+            std::string pair = (semi == std::string::npos) ? data.substr(pos) : data.substr(pos, semi - pos);
+            pos = (semi == std::string::npos) ? data.size() : semi + 1;
+            size_t eq = pair.find('=');
+            if (eq == std::string::npos) continue;
+            std::string key = pair.substr(0, eq);
+            std::string val = pair.substr(eq + 1);
+            if (val.empty()) continue;
+            bool bv = val == "1";
+            float fv = strtof(val.c_str(), nullptr);
+            char cv = val[0];
+            if (key == "t24") { if (bv) id(time_24h).turn_on(); else id(time_24h).turn_off(); }
+            else if (key == "led") { if (bv) id(led_enabled).turn_on(); else id(led_enabled).turn_off(); }
+            else if (key == "tfb") { if (bv) id(timer_finish_blink_switch).turn_on(); else id(timer_finish_blink_switch).turn_off(); }
+            else if (key == "pfb") { if (bv) id(progress_finish_blink_switch).turn_on(); else id(progress_finish_blink_switch).turn_off(); }
+            else if (key == "tvb") { if (bv) id(timer_value_blink_switch).turn_on(); else id(timer_value_blink_switch).turn_off(); }
+            else if (key == "pvb") { if (bv) id(progress_value_blink_switch).turn_on(); else id(progress_value_blink_switch).turn_off(); }
+            else if (key == "tss") { if (bv) id(timer_show_on_finish_switch).turn_on(); else id(timer_show_on_finish_switch).turn_off(); }
+            else if (key == "pss") { if (bv) id(progress_show_on_finish_switch).turn_on(); else id(progress_show_on_finish_switch).turn_off(); }
+            else if (key == "nfb") { if (bv) id(notify_finish_blink_switch).turn_on(); else id(notify_finish_blink_switch).turn_off(); }
+            else if (key == "nvb") { if (bv) id(notify_value_blink_switch).turn_on(); else id(notify_value_blink_switch).turn_off(); }
+            else if (key == "nss") { if (bv) id(notify_show_on_finish_switch).turn_on(); else id(notify_show_on_finish_switch).turn_off(); }
+            else if (key == "lang") { id(language_select).make_call().set_option(cv == 'd' ? "Deutsch" : "English").perform(); }
+            else if (key == "unit") { id(unit_select).make_call().set_option(cv == 'F' ? "Fahrenheit" : "Celsius").perform(); }
+            else if (key == "kstep") { id(knob_step_select).make_call().set_option(val).perform(); }
+            else if (key == "tcol") { id(timer_blink_led_color_select).make_call().set_option(blink_led_color_from_letter(cv)).perform(); }
+            else if (key == "pcol") { id(progress_blink_led_color_select).make_call().set_option(blink_led_color_from_letter(cv)).perform(); }
+            else if (key == "ncol") { id(notify_blink_led_color_select).make_call().set_option(blink_led_color_from_letter(cv)).perform(); }
+            else if (key == "idle") { id(idle_home_num).make_call().set_value(fv).perform(); }
+            else if (key == "dimd") { id(dim_delay_num).make_call().set_value(fv).perform(); }
+            else if (key == "diml") { id(dim_level_num).make_call().set_value(fv).perform(); }
+            else if (key == "bri") { id(brightness_num).make_call().set_value(fv).perform(); }
+            else if (key == "lbri") { id(led_brightness_num).make_call().set_value(fv).perform(); }
+            else if (key == "tah") { id(timer_auto_home_num).make_call().set_value(fv).perform(); }
+            else if (key == "pah") { id(progress_auto_home_num).make_call().set_value(fv).perform(); }
+            else if (key == "tks") { id(timer_knob_step_num).make_call().set_value(fv).perform(); }
+            else if (key == "tbb") { id(timer_blink_led_brightness_num).make_call().set_value(fv).perform(); }
+            else if (key == "pbb") { id(progress_blink_led_brightness_num).make_call().set_value(fv).perform(); }
+            else if (key == "nah") { id(notify_auto_home_num).make_call().set_value(fv).perform(); }
+            else if (key == "nbb") { id(notify_blink_led_brightness_num).make_call().set_value(fv).perform(); }
+          }
 
 # ------------------------------------------------------------------
 # Uhrzeit

@@ -475,6 +475,23 @@ inline LedColor blink_led_color_rgb(const std::string &name) {
   return {BLINK_LED_COLORS[0].r, BLINK_LED_COLORS[0].g, BLINK_LED_COLORS[0].b};  // default Green
 }
 
+// One-letter codes for BLINK_LED_COLORS, used by export_settings/
+// import_settings to keep the exported string well under Home Assistant's
+// 255-char text-entity limit - K stands in for Pink since P is Purple.
+inline char blink_led_color_letter(const std::string &name) {
+  static const char letters[BLINK_LED_COLOR_COUNT] = {'G', 'R', 'B', 'Y', 'O', 'P', 'C', 'M', 'W', 'K'};
+  for (int i = 0; i < BLINK_LED_COLOR_COUNT; i++)
+    if (name == BLINK_LED_COLORS[i].name) return letters[i];
+  return 'G';
+}
+
+inline const char *blink_led_color_from_letter(char c) {
+  static const char letters[BLINK_LED_COLOR_COUNT] = {'G', 'R', 'B', 'Y', 'O', 'P', 'C', 'M', 'W', 'K'};
+  for (int i = 0; i < BLINK_LED_COLOR_COUNT; i++)
+    if (c == letters[i]) return BLINK_LED_COLORS[i].name;
+  return "Green";
+}
+
 // ------------------------------------------------------------------
 // Light color mode presets. A full continuous hue ring needed 96
 // individually recolored arc segments per refresh, which was too slow on
