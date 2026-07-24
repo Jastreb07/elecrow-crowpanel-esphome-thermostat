@@ -138,9 +138,10 @@ static const char *const ICON_PALETTE = "\U000F03D8";                // mdi-pale
 static const char *const ICON_WINDOW_SHUTTER = "\U000F111C";         // mdi-window-shutter
 
 // Menu icons. Index matches the settings menu item. Indices 5/6 (formerly
-// Design/Icons) are permanently retired - removing the feature left a gap
-// rather than renumbering everything after it, same as index 11 before it
-// grew a use. Their icon/name slots stay as inert placeholders.
+// Design/Icons) and 12 (formerly Mode) are permanently retired - removing a
+// feature leaves a gap rather than renumbering everything after it, same as
+// index 11 before it grew a use. Their icon/name slots stay as inert
+// placeholders.
 static const char *const MENU_ICONS[] = {
     "󰎓",  //  0 HVAC mode      mdi-thermostat
     "󰘮",  //  1 Preset         mdi-tune
@@ -154,7 +155,7 @@ static const char *const MENU_ICONS[] = {
     "󰃜",  //  9 Dim after      mdi-brightness-4
     "󰏰",  // 10 Dim level      mdi-percent
     "󰔟",  // 11 Timer auto-home  mdi-timer-sand (reused)
-    "󰔡",  // 12 Mode           mdi-toggle-switch
+    "",   // 12 removed (Mode)
     "󰑧",  // 13 Step           mdi-rotate-right
     "󰖩",  // 14 WiFi           mdi-wifi
     "󰋽",  // 15 Firmware       mdi-information-outline
@@ -173,21 +174,28 @@ static const char *const MENU_ICONS[] = {
     "\U000F020A",  // 28 Progress blink LED color mdi-eyedropper (reused)
     "󰃟",  // 29 Timer blink LED brightness    mdi-brightness-7 (reused)
     "󰃟",  // 30 Progress blink LED brightness mdi-brightness-7 (reused)
+    "󰔟",  // 31 Notify auto-home       mdi-timer-sand (reused)
+    "󰌵",  // 32 Notify LED blink       mdi-lightbulb (reused)
+    "\U000F020A",  // 33 Notify blink LED color      mdi-eyedropper (reused)
+    "󰃟",  // 34 Notify blink LED brightness mdi-brightness-7 (reused)
+    "󰌵",  // 35 Notify value blink     mdi-lightbulb (reused)
+    "\U000F05A8",  // 36 Notify show screen    mdi-white-balance-sunny (reused)
 };
-constexpr int SETTINGS_MENU_COUNT = 31;
+constexpr int SETTINGS_MENU_COUNT = 37;
 
 // Root groups for the hierarchical settings screen. The values below are the
 // stable setting IDs used by the existing editor/apply logic.
-constexpr int SETTINGS_GROUP_COUNT = 4;
+constexpr int SETTINGS_GROUP_COUNT = 5;
 constexpr int SETTINGS_ROOT_COUNT = SETTINGS_GROUP_COUNT + 1;  // + Back
 static const char *const SETTINGS_GROUP_NAMES[SETTINGS_GROUP_COUNT] = {
-    "Thermostat", "Timer", "Progress", "System"};
+    "Thermostat", "Timer", "Progress", "Notify", "System"};
 static const char *const SETTINGS_GROUP_ICONS[SETTINGS_GROUP_COUNT] = {
-    MENU_ICONS[0], MENU_ICONS[8], MENU_ICONS[10], MENU_ICONS[14]};
+    MENU_ICONS[0], MENU_ICONS[8], MENU_ICONS[10], ICON_SUN, MENU_ICONS[14]};
 
-static constexpr int SETTINGS_GROUP_THERMOSTAT[] = {0, 1, 7, 12, 13};
+static constexpr int SETTINGS_GROUP_THERMOSTAT[] = {0, 1, 7, 13};
 static constexpr int SETTINGS_GROUP_TIMER[] = {11, 19, 25, 29, 23, 22, 26};
 static constexpr int SETTINGS_GROUP_PROGRESS[] = {20, 21, 28, 30, 24, 27};
+static constexpr int SETTINGS_GROUP_NOTIFY[] = {31, 32, 33, 34, 35, 36};
 static constexpr int SETTINGS_GROUP_SYSTEM[] = {
     2, 4, 3, 18, 17, 10, 9, 8, 14, 15, 16};
 
@@ -196,7 +204,8 @@ inline int settings_group_count(int group) {
     case 0: return sizeof(SETTINGS_GROUP_THERMOSTAT) / sizeof(SETTINGS_GROUP_THERMOSTAT[0]);
     case 1: return sizeof(SETTINGS_GROUP_TIMER) / sizeof(SETTINGS_GROUP_TIMER[0]);
     case 2: return sizeof(SETTINGS_GROUP_PROGRESS) / sizeof(SETTINGS_GROUP_PROGRESS[0]);
-    case 3: return sizeof(SETTINGS_GROUP_SYSTEM) / sizeof(SETTINGS_GROUP_SYSTEM[0]);
+    case 3: return sizeof(SETTINGS_GROUP_NOTIFY) / sizeof(SETTINGS_GROUP_NOTIFY[0]);
+    case 4: return sizeof(SETTINGS_GROUP_SYSTEM) / sizeof(SETTINGS_GROUP_SYSTEM[0]);
     default: return 0;
   }
 }
@@ -209,7 +218,8 @@ inline int settings_group_type_at(int group, int position) {
     case 0: return SETTINGS_GROUP_THERMOSTAT[position];
     case 1: return SETTINGS_GROUP_TIMER[position];
     case 2: return SETTINGS_GROUP_PROGRESS[position];
-    case 3: return SETTINGS_GROUP_SYSTEM[position];
+    case 3: return SETTINGS_GROUP_NOTIFY[position];
+    case 4: return SETTINGS_GROUP_SYSTEM[position];
     default: return 0;
   }
 }
@@ -232,20 +242,28 @@ inline const char *settings_root_icon(int position) {
   return position == SETTINGS_GROUP_COUNT ? ICON_BACK : SETTINGS_GROUP_ICONS[position];
 }
 
+// Settings-row icon in the entity overview list. Still the toggle-switch
+// glyph formerly shown via MENU_ICONS[12] (the retired "Mode" setting) - the
+// glyph is still loaded in the font, only that array slot was blanked out.
+static const char *const ICON_SETTINGS_ROW = "󰔡";  // mdi-toggle-switch (reused)
+
 inline const char *entity_menu_icon(int position, int climate_count, int light_count,
-                                     int cover_count, int timer_count, int progress_count) {
+                                     int cover_count, int timer_count, int progress_count,
+                                     int notify_count) {
   int before_timer = climate_count + light_count + cover_count;
   int before_progress = before_timer + timer_count;
-  int before_settings = before_progress + progress_count;
+  int before_notify = before_progress + progress_count;
+  int before_settings = before_notify + notify_count;
   int count = before_settings + 2;  // Settings + Back
   if (count <= 0) return ICON_BACK;
   position = ((position % count) + count) % count;
   if (position < climate_count) return MENU_ICONS[0];
   if (position < climate_count + light_count) return MENU_ICONS[17];
   if (position < before_timer) return ICON_WINDOW_SHUTTER;
-  if (position < before_progress) return MENU_ICONS[3];   // Timer: clock
-  if (position < before_settings) return MENU_ICONS[10];  // Progress: percent
-  return position == before_settings ? MENU_ICONS[12] : ICON_BACK;
+  if (position < before_progress) return MENU_ICONS[3];  // Timer: clock
+  if (position < before_notify) return MENU_ICONS[10];   // Progress: percent
+  if (position < before_settings) return ICON_SUN;        // Notify: sun (reused)
+  return position == before_settings ? ICON_SETTINGS_ROW : ICON_BACK;
 }
 
 inline int settings_group_entry_count(int group) {
@@ -397,11 +415,13 @@ inline const char *settings_menu_name(int i, bool de) {
   static const char *const EN[] = {
       "HVAC Mode",  "Preset", "Brightness", "Clock",     "Language",   "-",
       "-",          "Unit",   "Idle Time",  "Dim After", "Dim Level",  "Timer Auto-Home",
-      "Mode",       "Step",      "WiFi",    "Firmware",  "Reset",      "LED",
+      "-",          "Step",      "WiFi",    "Firmware",  "Reset",      "LED",
       "LED Brightness", "Timer LED Blink", "Progress Auto-Home", "Progress LED Blink",
       "Timer Knob Step", "Timer Value Blink", "Progress Value Blink", "Timer Blink LED Color",
       "Timer Show Screen", "Progress Show Screen", "Progress Blink LED Color",
-      "Timer Blink Brightness", "Progress Blink Brightness"};
+      "Timer Blink Brightness", "Progress Blink Brightness", "Notify Auto-Home",
+      "Notify LED Blink", "Notify Blink LED Color", "Notify Blink Brightness",
+      "Notify Value Blink", "Notify Show Screen"};
   if (i < 0 || i >= SETTINGS_MENU_COUNT) return "-";
   return EN[i];
 }
@@ -527,14 +547,21 @@ inline std::vector<std::string> ha_parse_list(const std::string &raw) {
   return out;
 }
 
-inline std::vector<std::string> ha_filter_modes(const std::string &raw, bool only_heat_off) {
-  auto v = ha_parse_list(raw);
-  if (only_heat_off) {
-    std::vector<std::string> f;
-    for (auto &m : v)
-      if (m == "heat" || m == "off") f.push_back(m);
-    if (!f.empty()) v = f;
-  }
+// The "hvac_modes" attribute HA sends over the API is a stringified list
+// (e.g. "['off', 'heat', 'cool']"); ha_parse_list splits on every non-alnum
+// character, so anything other than a plain mode word in there (stray enum
+// class names, punctuation runs, ...) would otherwise turn into its own
+// bogus entry and show up as an unlabeled "-" row. Keep only tokens that are
+// an actual HVACMode value, same set ha_hvac_mode_label() recognizes.
+inline bool ha_is_known_hvac_mode(const std::string &m) {
+  return m == "off" || m == "heat" || m == "cool" || m == "heat_cool" ||
+         m == "auto" || m == "dry" || m == "fan_only";
+}
+
+inline std::vector<std::string> ha_filter_modes(const std::string &raw) {
+  std::vector<std::string> v;
+  for (auto &m : ha_parse_list(raw))
+    if (ha_is_known_hvac_mode(m)) v.push_back(m);
   if (v.empty()) {
     v.push_back("heat");
     v.push_back("off");

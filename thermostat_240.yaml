@@ -147,7 +147,8 @@ lvgl:
         - if:
             condition:
               lambda: |-
-                return id(connection_ready) && id(ui_context) != 8 && id(ui_context) != 9;
+                return id(connection_ready) && id(ui_context) != 8 && id(ui_context) != 9 &&
+                       id(ui_context) != 10;
             then:
               - lambda: 'id(ui_context) = 0;'
               - script.execute: refresh_temps
@@ -1172,6 +1173,92 @@ lvgl:
             long_mode: SCROLL_CIRCULAR
             hidden: true
 
+    # ================= Notify =================
+    # Same construction as Progress above, but the two labels swap roles:
+    # the big center label is the notify title (not a "%" value), and the
+    # small label becomes a subtext pinned to the top instead of below.
+    - id: screen_notify
+      bg_color: "0x000000"
+      on_swipe_down:
+        - script.execute: open_settings
+      on_swipe_up:
+        - script.execute: open_entity_overview
+      widgets:
+        - button:
+            id: button_notify_background
+            align: CENTER
+            width: 238
+            height: 238
+            radius: 0
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            on_click:
+              - script.execute: wake_display
+
+        - arc:
+            id: arc_notify_track
+            align: CENTER
+            width: 238
+            height: 238
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 0
+            end_angle: 360
+            rotation: 270
+            arc_color: 0x1C1C1C
+            arc_width: 16
+            arc_rounded: true
+            adjustable: false
+            clickable: false
+            indicator:
+              arc_opa: TRANSP
+
+        - arc:
+            id: arc_notify_value
+            align: CENTER
+            width: 238
+            height: 238
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 0
+            end_angle: 360
+            rotation: 270
+            arc_color: 0xDCE3E7
+            arc_opa: TRANSP
+            arc_width: 16
+            arc_rounded: true
+            adjustable: false
+            clickable: false
+            indicator:
+              arc_color: 0x6E4FBD
+              arc_width: 16
+              arc_rounded: true
+
+        - label:
+            id: label_notify_title
+            text: ""
+            text_font: rajdhani_semibold_46
+            text_color: 0xFFFFFF
+            align: CENTER
+            width: 180
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+
+        - label:
+            id: label_notify_subtext
+            text: ""
+            text_font: rajdhani_medium_16
+            text_color: 0xCDBEEC
+            align: CENTER
+            y: 40
+            width: 190
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+            hidden: true
+
     # ================= Settings menu =================
     - id: screen_navigation
       bg_color: "0x000000"
@@ -1396,12 +1483,12 @@ script:
             lambda: 'return !id(app_booted);'
           then: []
           else:
-            # Timer/Progress finish blink takes priority over the normal
-            # HVAC-color display - it's a deliberate alert, so it ignores
-            # led_enabled/display_dimmed the same way the old forced-backlight
-            # blink used to. Only while still on the respective screen -
-            # leaving it (even with the timer/progress still finished) stops
-            # the blink.
+            # Timer/Progress/Notify finish blink takes priority over the
+            # normal HVAC-color display - it's a deliberate alert, so it
+            # ignores led_enabled/display_dimmed the same way the old
+            # forced-backlight blink used to. Only while still on the
+            # respective screen - leaving it (even with the timer/progress/
+            # notify still finished) stops the blink.
             - if:
                 condition:
                   lambda: |-
@@ -1409,31 +1496,37 @@ script:
                                            id(timer_finish_blink_switch).state;
                     bool progress_blinking = id(ui_context) == 9 && id(progress_finished) &&
                                               id(progress_finish_blink_switch).state;
-                    return timer_blinking || progress_blinking;
+                    bool notify_blinking = id(ui_context) == 10 && id(notify_finished) &&
+                                            id(notify_finish_blink_switch).state;
+                    return timer_blinking || progress_blinking || notify_blinking;
                 then:
                   - if:
                       condition:
                         lambda: 'return id(blink_led_on);'
                       then:
-                        # Timer blinks while ui_context == 8, progress while == 9 -
-                        # the outer condition already guarantees one of the two.
+                        # Timer blinks while ui_context == 8, progress while == 9,
+                        # notify while == 10 - the outer condition already
+                        # guarantees exactly one of the three.
                         - light.turn_on:
                             id: status_led
                             brightness: !lambda |-
-                                float pct = id(ui_context) == 8 ? id(timer_blink_led_brightness_num).state
-                                                                 : id(progress_blink_led_brightness_num).state;
-                                return pct / 100.0f;
+                                if (id(ui_context) == 8) return id(timer_blink_led_brightness_num).state / 100.0f;
+                                if (id(ui_context) == 9) return id(progress_blink_led_brightness_num).state / 100.0f;
+                                return id(notify_blink_led_brightness_num).state / 100.0f;
                             red: !lambda |-
-                                const std::string &name = id(ui_context) == 8 ? id(timer_blink_led_color_select).state
-                                                                                : id(progress_blink_led_color_select).state;
+                                std::string name = id(ui_context) == 8 ? id(timer_blink_led_color_select).state
+                                    : id(ui_context) == 9 ? id(progress_blink_led_color_select).state
+                                                           : id(notify_blink_led_color_select).state;
                                 return blink_led_color_rgb(name).r;
                             green: !lambda |-
-                                const std::string &name = id(ui_context) == 8 ? id(timer_blink_led_color_select).state
-                                                                                : id(progress_blink_led_color_select).state;
+                                std::string name = id(ui_context) == 8 ? id(timer_blink_led_color_select).state
+                                    : id(ui_context) == 9 ? id(progress_blink_led_color_select).state
+                                                           : id(notify_blink_led_color_select).state;
                                 return blink_led_color_rgb(name).g;
                             blue: !lambda |-
-                                const std::string &name = id(ui_context) == 8 ? id(timer_blink_led_color_select).state
-                                                                                : id(progress_blink_led_color_select).state;
+                                std::string name = id(ui_context) == 8 ? id(timer_blink_led_color_select).state
+                                    : id(ui_context) == 9 ? id(progress_blink_led_color_select).state
+                                                           : id(notify_blink_led_color_select).state;
                                 return blink_led_color_rgb(name).b;
                       else:
                         - light.turn_off: status_led

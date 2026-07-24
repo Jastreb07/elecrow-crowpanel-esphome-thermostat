@@ -202,7 +202,8 @@ lvgl:
         - if:
             condition:
               lambda: |-
-                return id(connection_ready) && id(ui_context) != 8 && id(ui_context) != 9;
+                return id(connection_ready) && id(ui_context) != 8 && id(ui_context) != 9 &&
+                       id(ui_context) != 10;
             then:
               - lambda: 'id(ui_context) = 0;'
               - script.execute: refresh_temps
@@ -1233,6 +1234,92 @@ lvgl:
 
         - label:
             id: label_progress_title
+            text: ""
+            text_font: rajdhani_medium_24
+            text_color: 0xCDBEEC
+            align: CENTER
+            y: 56
+            width: 340
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+            hidden: true
+
+    # ================= Notify =================
+    # Same construction as Progress above, but the two labels swap roles:
+    # the big center label is the notify title (not a "%" value), and the
+    # small label becomes a subtext pinned to the top instead of below.
+    - id: screen_notify
+      bg_color: "0x000000"
+      on_swipe_left:
+        - script.execute: open_settings
+      on_swipe_right:
+        - script.execute: open_entity_overview
+      widgets:
+        - button:
+            id: button_notify_background
+            align: CENTER
+            width: 480
+            height: 480
+            radius: 0
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            on_click:
+              - script.execute: wake_display
+
+        - arc:
+            id: arc_notify_track
+            align: CENTER
+            width: 472
+            height: 472
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 0
+            end_angle: 360
+            rotation: 270
+            arc_color: 0x1C1C1C
+            arc_width: 30
+            arc_rounded: true
+            adjustable: false
+            clickable: false
+            indicator:
+              arc_opa: TRANSP
+
+        - arc:
+            id: arc_notify_value
+            align: CENTER
+            width: 472
+            height: 472
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 0
+            end_angle: 360
+            rotation: 270
+            arc_color: 0xDCE3E7
+            arc_opa: TRANSP
+            arc_width: 30
+            arc_rounded: true
+            adjustable: false
+            clickable: false
+            indicator:
+              arc_color: 0x6E4FBD
+              arc_width: 30
+              arc_rounded: true
+
+        - label:
+            id: label_notify_title
+            text: ""
+            text_font: rajdhani_semibold_74
+            text_color: 0xFFFFFF
+            align: CENTER
+            width: 340
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+
+        - label:
+            id: label_notify_subtext
             text: ""
             text_font: rajdhani_medium_24
             text_color: 0xCDBEEC

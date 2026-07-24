@@ -205,9 +205,10 @@ interval:
             lambda: 'return id(ui_context) == 5 && id(ha_lights).consume_dirty();'
           then:
             - script.execute: refresh_light
-  # Keeps the timer countdown live while its screen is actually showing.
-  # Progress needs no ticker - it only changes when Home Assistant pushes
-  # a new value, handled by progress_value_num's on_value.
+  # Keeps the timer countdown (and the Notify screen's Auto-Home arc) live
+  # while their screen is actually showing. Progress needs no ticker - it
+  # only changes when Home Assistant pushes a new value, handled by
+  # progress_value_num's on_value.
   - interval: 1s
     then:
       - if:
@@ -215,6 +216,11 @@ interval:
             lambda: 'return id(ui_context) == 8;'
           then:
             - script.execute: refresh_timer
+      - if:
+          condition:
+            lambda: 'return id(ui_context) == 10;'
+          then:
+            - script.execute: refresh_notify
   # Finish-state effects (blink, auto-home) run independently of which
   # screen is showing, at a faster cadence so the blink is visibly alternating.
   - interval: 500ms
@@ -443,6 +449,25 @@ globals:
     restore_value: false
     initial_value: "0"
 
+  # Notify: unlike Timer/Progress there's no countdown/threshold - "finished"
+  # simply means "a notification is currently active" (notify_title_txt is
+  # non-empty), latched true the moment it's set so notify_finished_at_ms
+  # anchors the auto-home delay and the arc countdown consistently.
+  - id: notify_finished
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+  - id: notify_finished_at_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+
+  - id: notify_just_finished
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
   - id: brightness_pct
     type: int
     restore_value: false
@@ -546,7 +571,7 @@ globals:
 
 light:
   - platform: monochromatic
-    name: "${friendly_name} Backlight"
+    name: "[Standard] ${friendly_name} Backlight"
     output: bl_pwm
     id: display_backlight
     default_transition_length: 0s
@@ -574,7 +599,7 @@ light:
 # ------------------------------------------------------------------
 switch:
   - platform: template
-    name: "24h Clock"
+    name: "[System] 24h Clock"
     id: time_24h
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
@@ -585,7 +610,7 @@ switch:
 
   # Disable the 240x240 status LED regardless of brightness or HVAC color.
   - platform: template
-    name: "LED Enabled"
+    name: "[System] LED Enabled"
     id: led_enabled
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
@@ -599,13 +624,13 @@ switch:
   # the Timer/Progress finishes (see check_finish_effects/update_status_led).
   # On by default - a finished timer/progress should be hard to miss.
   - platform: template
-    name: "Timer LED Blink"
+    name: "[Timer] Timer LED Blink"
     id: timer_finish_blink_switch
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
 
   - platform: template
-    name: "Progress LED Blink"
+    name: "[Progress] Progress LED Blink"
     id: progress_finish_blink_switch
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
@@ -613,13 +638,13 @@ switch:
   # Whether the big value label itself also blinks (same phase as the LED)
   # once finished. On by default, independent of the LED blink switch above.
   - platform: template
-    name: "Timer Value Blink"
+    name: "[Timer] Timer Value Blink"
     id: timer_value_blink_switch
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
 
   - platform: template
-    name: "Progress Value Blink"
+    name: "[Progress] Progress Value Blink"
     id: progress_value_blink_switch
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
@@ -627,20 +652,38 @@ switch:
   # Whether finishing auto-switches the display to the respective screen
   # (see check_finish_effects). On by default.
   - platform: template
-    name: "Timer Show Screen"
+    name: "[Timer] Timer Show Screen"
     id: timer_show_on_finish_switch
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
 
   - platform: template
-    name: "Progress Show Screen"
+    name: "[Progress] Progress Show Screen"
     id: progress_show_on_finish_switch
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+
+  - platform: template
+    name: "[Notify] Notify LED Blink"
+    id: notify_finish_blink_switch
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+
+  - platform: template
+    name: "[Notify] Notify Value Blink"
+    id: notify_value_blink_switch
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+
+  - platform: template
+    name: "[Notify] Notify Show Screen"
+    id: notify_show_on_finish_switch
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
 
 select:
   - platform: template
-    name: "Language"
+    name: "[System] Language"
     id: language_select
     optimistic: true
     restore_value: true
@@ -654,7 +697,7 @@ select:
         - script.execute: update_settings_labels
 
   - platform: template
-    name: "Temperature Unit"
+    name: "[Thermostat] Temperature Unit"
     id: unit_select
     optimistic: true
     restore_value: true
@@ -664,17 +707,9 @@ select:
       then:
         - script.execute: refresh_temps
 
-  - platform: template
-    name: "Knob HVAC Modes"
-    id: knob_hvac_modes
-    optimistic: true
-    restore_value: true
-    options: ["Heat/Off", "All"]
-    initial_option: "Heat/Off"
-
   # Rotary encoder sensitivity in Celsius per detent.
   - platform: template
-    name: "Knob Step (°C)"
+    name: "[Thermostat] Knob Step (°C)"
     id: knob_step_select
     optimistic: true
     restore_value: true
@@ -686,7 +721,7 @@ select:
   # screen. See BLINK_LED_COLORS in thermostat_helpers.h for the fixed
   # preset list.
   - platform: template
-    name: "Timer Blink LED Color"
+    name: "[Timer] Timer Blink LED Color"
     id: timer_blink_led_color_select
     optimistic: true
     restore_value: true
@@ -695,8 +730,17 @@ select:
     icon: "mdi:eyedropper"
 
   - platform: template
-    name: "Progress Blink LED Color"
+    name: "[Progress] Progress Blink LED Color"
     id: progress_blink_led_color_select
+    optimistic: true
+    restore_value: true
+    options: ["Green", "Red", "Blue", "Yellow", "Orange", "Purple", "Cyan", "Magenta", "White", "Pink"]
+    initial_option: "Green"
+    icon: "mdi:eyedropper"
+
+  - platform: template
+    name: "[Notify] Notify Blink LED Color"
+    id: notify_blink_led_color_select
     optimistic: true
     restore_value: true
     options: ["Green", "Red", "Blue", "Yellow", "Orange", "Purple", "Cyan", "Magenta", "White", "Pink"]
@@ -705,7 +749,7 @@ select:
 
 number:
   - platform: template
-    name: "Idle To Home (s)"
+    name: "[System] Idle To Home (s)"
     id: idle_home_num
     optimistic: true
     restore_value: true
@@ -717,7 +761,7 @@ number:
     mode: box
 
   - platform: template
-    name: "Dim After (s)"
+    name: "[System] Dim After (s)"
     id: dim_delay_num
     optimistic: true
     restore_value: true
@@ -729,7 +773,7 @@ number:
     mode: box
 
   - platform: template
-    name: "Dim Level (%)"
+    name: "[System] Dim Level (%)"
     id: dim_level_num
     optimistic: true
     restore_value: true
@@ -743,7 +787,7 @@ number:
   # Display brightness as a Home Assistant entity, synchronized with the
   # settings screen and the backlight.
   - platform: template
-    name: "Brightness (%)"
+    name: "[System] Brightness (%)"
     id: brightness_num
     optimistic: true
     restore_value: true
@@ -774,7 +818,7 @@ number:
   # Status LED brightness for the 240x240 board. This is separate from display
   # brightness and can be changed from Home Assistant.
   - platform: template
-    name: "LED Brightness (%)"
+    name: "[System] LED Brightness (%)"
     id: led_brightness_num
     optimistic: true
     restore_value: true
@@ -798,7 +842,7 @@ number:
   # or download percentage). Considered "running" (visible in the entity
   # menu) while strictly between 0 and 100 - see progress_is_running().
   - platform: template
-    name: "Progress"
+    name: "[Standard] Progress"
     id: progress_value_num
     icon: "mdi:progress-check"
     optimistic: true
@@ -816,7 +860,7 @@ number:
   # 0 = never auto-return home after the Timer/Progress screen finishes; any
   # other value is the delay in seconds. See check_finish_effects.
   - platform: template
-    name: "Timer Auto-Home After (s)"
+    name: "[Timer] Timer Auto-Home After (s)"
     id: timer_auto_home_num
     optimistic: true
     restore_value: true
@@ -828,7 +872,7 @@ number:
     mode: box
 
   - platform: template
-    name: "Progress Auto-Home After (s)"
+    name: "[Progress] Progress Auto-Home After (s)"
     id: progress_auto_home_num
     optimistic: true
     restore_value: true
@@ -843,7 +887,7 @@ number:
   # detent, on the Timer screen. Also used to start a brand-new timer from
   # scratch by turning the knob when no end time is set yet.
   - platform: template
-    name: "Timer Knob Step (s)"
+    name: "[Timer] Timer Knob Step (s)"
     id: timer_knob_step_num
     optimistic: true
     restore_value: true
@@ -859,7 +903,7 @@ number:
   # finish alert can stay full-strength even with a dim everyday LED. Full
   # brightness by default.
   - platform: template
-    name: "Timer Blink LED Brightness (%)"
+    name: "[Timer] Timer Blink LED Brightness (%)"
     id: timer_blink_led_brightness_num
     optimistic: true
     restore_value: true
@@ -871,8 +915,32 @@ number:
     mode: box
 
   - platform: template
-    name: "Progress Blink LED Brightness (%)"
+    name: "[Progress] Progress Blink LED Brightness (%)"
     id: progress_blink_led_brightness_num
+    optimistic: true
+    restore_value: true
+    initial_value: 100
+    min_value: 0
+    max_value: 100
+    step: 5
+    unit_of_measurement: "%"
+    mode: box
+
+  - platform: template
+    name: "[Notify] Notify Auto-Home After (s)"
+    id: notify_auto_home_num
+    optimistic: true
+    restore_value: true
+    initial_value: 0
+    min_value: 0
+    max_value: 300
+    step: 5
+    unit_of_measurement: "s"
+    mode: box
+
+  - platform: template
+    name: "[Notify] Notify Blink LED Brightness (%)"
+    id: notify_blink_led_brightness_num
     optimistic: true
     restore_value: true
     initial_value: 100
@@ -884,11 +952,11 @@ number:
 
 button:
   - platform: factory_reset
-    name: "${friendly_name} Factory Reset"
+    name: "[System] ${friendly_name} Factory Reset"
     id: factory_reset_btn
 
   - platform: restart
-    name: "${friendly_name} Restart"
+    name: "[Standard] ${friendly_name} Restart"
     id: restart_btn
     entity_category: diagnostic
 
@@ -896,7 +964,7 @@ button:
   # automation, dashboard button, etc.) - same idea as pressing restart_btn
   # remotely, just navigates instead of rebooting.
   - platform: template
-    name: "Show Home Screen"
+    name: "[Standard] Show Home Screen"
     id: show_home_btn
     icon: "mdi:home-outline"
     on_press:
@@ -904,7 +972,7 @@ button:
         - script.execute: activate_home_screen
 
   - platform: template
-    name: "Show Timer Screen"
+    name: "[Standard] Show Timer Screen"
     id: show_timer_btn
     icon: "mdi:timer-play-outline"
     on_press:
@@ -912,19 +980,27 @@ button:
         - script.execute: activate_timer_screen
 
   - platform: template
-    name: "Show Progress Screen"
+    name: "[Standard] Show Progress Screen"
     id: show_progress_btn
     icon: "mdi:progress-check"
     on_press:
       then:
         - script.execute: activate_progress_screen
 
+  - platform: template
+    name: "[Standard] Show Notify Screen"
+    id: show_notify_btn
+    icon: "mdi:bell-outline"
+    on_press:
+      then:
+        - script.execute: activate_notify_screen
+
 # ------------------------------------------------------------------
 # Encoder button. on_multi_click keeps single and double clicks separated.
 # ------------------------------------------------------------------
 binary_sensor:
   - platform: status
-    name: "${friendly_name} Status"
+    name: "[Standard] ${friendly_name} Status"
 
   - platform: gpio
     id: encoder_button
@@ -1197,8 +1273,9 @@ sensor:
               - lambda: |-
                   int timer_count = 1;  // Timer is always listed, running or not.
                   int progress_count = progress_is_running(id(progress_value_num).state) ? 1 : 0;
+                  int notify_count = id(notify_finished) ? 1 : 0;
                   int count = (int) id(ha_climates).size() + (int) id(ha_lights).size() +
-                              (int) id(ha_covers).size() + timer_count + progress_count + 2;
+                              (int) id(ha_covers).size() + timer_count + progress_count + notify_count + 2;
                   id(entity_menu_index) = menu_scroll_index(id(entity_menu_index), id(encoder_delta), count);
               - script.execute: update_settings_labels
         - if:
@@ -1221,15 +1298,17 @@ sensor:
                     case 13:
                     case 25:
                     case 28:
+                    case 33:
                       id(submenu_index) = menu_scroll_index(id(submenu_index), id(encoder_delta), id(submenu_count));
                       break;
                     case 2:
                       id(brightness_pct) = clamp(id(brightness_pct) + d * 5, 5, 100);
                       break;
                     case 3: case 4: case 7:
-                    case 12: case 16: case 17:
+                    case 16: case 17:
                     case 19: case 21:
                     case 23: case 24: case 26: case 27:
+                    case 32: case 35: case 36:
                       id(submenu_index) = 1 - id(submenu_index);
                       break;
                     case 8:
@@ -1240,10 +1319,12 @@ sensor:
                     case 18:
                     case 29:
                     case 30:
+                    case 34:
                       id(num_preview) = clamp(id(num_preview) + d * 5, 0, 100);
                       break;
                     case 11:
                     case 20:
+                    case 31:
                       // 0 = "never auto-home", unlike Idle Time/Dim After
                       // which always stay at least 5s.
                       id(num_preview) = clamp(id(num_preview) + d * 5, 0, 300);
@@ -1270,7 +1351,7 @@ sensor:
 
   - platform: wifi_signal
     id: wifi_rssi
-    name: "${friendly_name} WiFi Signal"
+    name: "[System] ${friendly_name} WiFi Signal"
     update_interval: 60s
 
 # ------------------------------------------------------------------
@@ -1279,22 +1360,22 @@ sensor:
 text_sensor:
   - platform: version
     id: fw_version
-    name: "${friendly_name} Firmware"
+    name: "[System] ${friendly_name} Firmware"
 
   - platform: wifi_info
     ip_address:
       id: wifi_ip_txt
-      name: "${friendly_name} IP"
+      name: "[System] ${friendly_name} IP"
     ssid:
       id: wifi_ssid_txt
-      name: "${friendly_name} SSID"
+      name: "[System] ${friendly_name} SSID"
 
 # The Home Assistant config entity can be changed without recompiling. The
 # template text component persists the selected entity ID in ESP flash and
 # publishes it as a normal configurable Home Assistant entity.
 text:
   - platform: template
-    name: "Home Assistant Config Entity"
+    name: "[Standard] Home Assistant Config Entity"
     id: ha_config_entity
     icon: "mdi:database-cog-outline"
     entity_category: config
@@ -1321,7 +1402,7 @@ text:
   # time is never configured - it's captured as "now" whenever a new end
   # time is written, purely to compute the timer arc's fill fraction.
   - platform: template
-    name: "Timer End Time"
+    name: "[Timer] Timer End Time"
     id: timer_end_time_txt
     icon: "mdi:timer-outline"
     optimistic: true
@@ -1338,7 +1419,7 @@ text:
         - script.execute: refresh_timer
 
   - platform: template
-    name: "Timer Title"
+    name: "[Timer] Timer Title"
     id: timer_title_txt
     icon: "mdi:format-title"
     optimistic: true
@@ -1351,7 +1432,7 @@ text:
         - script.execute: refresh_timer
 
   - platform: template
-    name: "Progress Title"
+    name: "[Progress] Progress Title"
     id: progress_title_txt
     icon: "mdi:format-title"
     optimistic: true
@@ -1362,6 +1443,35 @@ text:
     on_value:
       then:
         - script.execute: refresh_progress
+
+  # Notify: a one-shot message from Home Assistant, not a persisted default
+  # label like Timer/Progress Title - cleared on boot, and self-clears once
+  # dismissed (see check_finish_effects).
+  - platform: template
+    name: "[Notify] Notify Title"
+    id: notify_title_txt
+    icon: "mdi:bell-outline"
+    optimistic: true
+    restore_value: false
+    initial_value: ""
+    max_length: 32
+    mode: text
+    on_value:
+      then:
+        - script.execute: refresh_notify
+
+  - platform: template
+    name: "[Notify] Notify Subtext"
+    id: notify_subtext_txt
+    icon: "mdi:bell-outline"
+    optimistic: true
+    restore_value: false
+    initial_value: ""
+    max_length: 64
+    mode: text
+    on_value:
+      then:
+        - script.execute: refresh_notify
 
 # ------------------------------------------------------------------
 # Scripts
@@ -1582,7 +1692,8 @@ script:
                                                       lambda: |-
                                                         return id(ui_context) == 7 ||
                                                                id(ui_context) == 8 ||
-                                                               id(ui_context) == 9;
+                                                               id(ui_context) == 9 ||
+                                                               id(ui_context) == 10;
                                                     then:
                                                       - lambda: 'id(ui_context) = 1;'
                                                       - script.execute: load_active_climate
@@ -1759,6 +1870,11 @@ script:
             id(entity_return_kind) = 5;
             id(entity_menu_index) = (int) id(ha_climates).size() + (int) id(ha_lights).size() +
                                      (int) id(ha_covers).size() + 1;  // + Timer (always listed)
+          } else if (id(ui_context) == 10) {
+            id(entity_return_kind) = 6;
+            id(entity_menu_index) = (int) id(ha_climates).size() + (int) id(ha_lights).size() +
+                                     (int) id(ha_covers).size() + 1 +
+                                     (progress_is_running(id(progress_value_num).state) ? 1 : 0);
           }
           id(thermostat_quick_stage) = 0;
           id(ui_context) = 6;
@@ -1819,13 +1935,25 @@ script:
                                   id: screen_progress
                                   animation: NONE
                             else:
-                              - lambda: |-
-                                  id(climate_index) = clamp(id(entity_return_index), 0, (int) id(ha_climates).size() - 1);
-                                  id(ui_context) = 1;
-                              - script.execute: load_active_climate
-                              - lvgl.page.show:
-                                  id: screen_thermostat
-                                  animation: NONE
+                              - if:
+                                  condition:
+                                    lambda: 'return id(entity_return_kind) == 6;'
+                                  then:
+                                    - lambda: |-
+                                        id(ui_context) = 10;
+                                        if (id(notify_finished)) id(notify_finished_at_ms) = millis();
+                                    - script.execute: refresh_notify
+                                    - lvgl.page.show:
+                                        id: screen_notify
+                                        animation: NONE
+                                  else:
+                                    - lambda: |-
+                                        id(climate_index) = clamp(id(entity_return_index), 0, (int) id(ha_climates).size() - 1);
+                                        id(ui_context) = 1;
+                                    - script.execute: load_active_climate
+                                    - lvgl.page.show:
+                                        id: screen_thermostat
+                                        animation: NONE
 
   - id: settings_swipe_back
     then:
@@ -1857,7 +1985,8 @@ script:
           int covers = (int) id(ha_covers).size();
           int timer_count = 1;  // Timer is always listed, running or not.
           int progress_count = progress_is_running(id(progress_value_num).state) ? 1 : 0;
-          int total = climates + lights + covers + timer_count + progress_count + 2;
+          int notify_count = id(notify_finished) ? 1 : 0;
+          int total = climates + lights + covers + timer_count + progress_count + notify_count + 2;
           id(entity_menu_index) = ((id(entity_menu_index) % total) + total) % total;
       - if:
           condition:
@@ -1928,13 +2057,30 @@ script:
                                           lambda: |-
                                             int progress_count =
                                                 progress_is_running(id(progress_value_num).state) ? 1 : 0;
-                                            return id(entity_menu_index) == (int) id(ha_climates).size() +
-                                                (int) id(ha_lights).size() + (int) id(ha_covers).size() +
-                                                1 + progress_count;
+                                            return id(notify_finished) &&
+                                                   id(entity_menu_index) == (int) id(ha_climates).size() +
+                                                       (int) id(ha_lights).size() + (int) id(ha_covers).size() +
+                                                       1 + progress_count;
                                         then:
-                                          - script.execute: open_settings
+                                          - lambda: |-
+                                              id(ui_context) = 10;
+                                              if (id(notify_finished)) id(notify_finished_at_ms) = millis();
+                                          - script.execute: refresh_notify
+                                          - lvgl.page.show: screen_notify
                                         else:
-                                          - script.execute: close_entity_overview
+                                          - if:
+                                              condition:
+                                                lambda: |-
+                                                  int progress_count =
+                                                      progress_is_running(id(progress_value_num).state) ? 1 : 0;
+                                                  int notify_count = id(notify_finished) ? 1 : 0;
+                                                  return id(entity_menu_index) == (int) id(ha_climates).size() +
+                                                      (int) id(ha_lights).size() + (int) id(ha_covers).size() +
+                                                      1 + progress_count + notify_count;
+                                              then:
+                                                - script.execute: open_settings
+                                              else:
+                                                - script.execute: close_entity_overview
 
   # First vertical thermostat swipe opens HVAC. The following vertical swipe
   # changes the same quick selector to presets without creating another page.
@@ -1954,7 +2100,7 @@ script:
           id(thermostat_quick_stage) = 1;
           id(submenu_type) = 0;
           id(submenu_index) = 0;
-          auto vec = ha_filter_modes(id(hvac_modes_raw), false);
+          auto vec = ha_filter_modes(id(hvac_modes_raw));
           id(submenu_count) = (int) vec.size();
           for (size_t i = 0; i < vec.size(); i++)
             if (vec[i] == id(current_hvac_raw)) { id(submenu_index) = (int) i; break; }
@@ -2420,6 +2566,35 @@ script:
           then:
             - script.execute: update_settings_labels
 
+  - id: refresh_notify
+    then:
+      - lvgl.label.update:
+          id: label_notify_title
+          text: !lambda 'return id(notify_title_txt).state;'
+      - lambda: |-
+          if (!id(notify_subtext_txt).state.empty()) {
+            lv_label_set_text(id(label_notify_subtext), id(notify_subtext_txt).state.c_str());
+            lv_obj_clear_flag(id(label_notify_subtext), LV_OBJ_FLAG_HIDDEN);
+          } else {
+            lv_obj_add_flag(id(label_notify_subtext), LV_OBJ_FLAG_HIDDEN);
+          }
+      - lambda: |-
+          // No numeric value to show progress for, so the arc instead shows
+          // how far through the Auto-Home countdown we are (0 while off or
+          // not yet active).
+          int delay = (int) id(notify_auto_home_num).state;
+          int percent = 0;
+          if (delay > 0 && id(notify_finished)) {
+            uint32_t elapsed = millis() - id(notify_finished_at_ms);
+            percent = (int) clamp((float) elapsed / ((float) delay * 1000.0f) * 100.0f, 0.0f, 100.0f);
+          }
+          lv_arc_set_value(id(arc_notify_value), percent);
+      - if:
+          condition:
+            lambda: 'return id(ui_context) == 6;'
+          then:
+            - script.execute: update_settings_labels
+
   - id: activate_home_screen
     then:
       - script.execute: wake_display
@@ -2478,6 +2653,15 @@ script:
       - script.execute: refresh_progress
       - lvgl.page.show: screen_progress
 
+  - id: activate_notify_screen
+    then:
+      - script.execute: wake_display
+      - lambda: |-
+          id(ui_context) = 10;
+          if (id(notify_finished)) id(notify_finished_at_ms) = millis();
+      - script.execute: refresh_notify
+      - lvgl.page.show: screen_notify
+
   # Runs every 500ms (see the interval: block). Handles what happens once a
   # timer/progress has finished: an optional status-LED blink (in the
   # respective *_blink_led_color_select color, only while still on that
@@ -2518,9 +2702,28 @@ script:
           } else {
             id(progress_finished) = false;
           }
+          // Notify has no threshold to cross - it's "finished" (active) the
+          // instant a title is set, and stays that way until dismissed.
+          id(notify_just_finished) = false;
+          if (!id(notify_title_txt).state.empty()) {
+            if (!id(notify_finished)) {
+              id(notify_finished) = true;
+              id(notify_finished_at_ms) = millis();
+              id(notify_just_finished) = true;
+            }
+          } else {
+            id(notify_finished) = false;
+          }
+      # Gated on connection_ready so a timer/progress that had already
+      # finished before a reboot (its end time/value survives via restored
+      # entity state) can't hijack the very first screen after boot - normal
+      # boot always lands on screen_home first (see refresh_connection),
+      # and only finishes occurring after that point auto-show their screen.
       - if:
           condition:
-            lambda: 'return id(timer_just_finished) && id(timer_show_on_finish_switch).state;'
+            lambda: |-
+              return id(connection_ready) && id(timer_just_finished) &&
+                     id(timer_show_on_finish_switch).state;
           then:
             - script.execute: wake_display
             - lambda: 'id(ui_context) = 8;'
@@ -2528,12 +2731,24 @@ script:
             - lvgl.page.show: screen_timer
       - if:
           condition:
-            lambda: 'return id(progress_just_finished) && id(progress_show_on_finish_switch).state;'
+            lambda: |-
+              return id(connection_ready) && id(progress_just_finished) &&
+                     id(progress_show_on_finish_switch).state;
           then:
             - script.execute: wake_display
             - lambda: 'id(ui_context) = 9;'
             - script.execute: refresh_progress
             - lvgl.page.show: screen_progress
+      - if:
+          condition:
+            lambda: |-
+              return id(connection_ready) && id(notify_just_finished) &&
+                     id(notify_show_on_finish_switch).state;
+          then:
+            - script.execute: wake_display
+            - lambda: 'id(ui_context) = 10;'
+            - script.execute: refresh_notify
+            - lvgl.page.show: screen_notify
       # A finished timer/progress that isn't (or is no longer) being looked
       # at resets itself, so it doesn't linger "finished" forever and doesn't
       # reappear stale (see the Timer Auto-Home / Progress Auto-Home delay
@@ -2550,12 +2765,21 @@ script:
           then:
             - number.set: {id: progress_value_num, value: 0}
             - text.set: {id: progress_title_txt, value: ""}
+      - if:
+          condition:
+            lambda: 'return id(notify_finished) && id(ui_context) != 10;'
+          then:
+            - text.set: {id: notify_title_txt, value: ""}
+            - text.set: {id: notify_subtext_txt, value: ""}
       - lambda: |-
           bool timer_led_blinking = id(ui_context) == 8 && id(timer_finished) &&
                                      id(timer_finish_blink_switch).state;
           bool progress_led_blinking = id(ui_context) == 9 && id(progress_finished) &&
                                         id(progress_finish_blink_switch).state;
-          id(blink_led_on) = (timer_led_blinking || progress_led_blinking) ? !id(blink_led_on) : false;
+          bool notify_led_blinking = id(ui_context) == 10 && id(notify_finished) &&
+                                      id(notify_finish_blink_switch).state;
+          id(blink_led_on) = (timer_led_blinking || progress_led_blinking || notify_led_blinking)
+                                  ? !id(blink_led_on) : false;
 
           lv_obj_t *timer_value = id(label_timer_value);
           bool timer_value_blinking = id(ui_context) == 8 && id(timer_finished) &&
@@ -2569,6 +2793,13 @@ script:
                                           id(progress_value_blink_switch).state;
           lv_obj_set_style_text_opa(progress_value,
               (progress_value_blinking && !id(blink_led_on)) ? LV_OPA_TRANSP : LV_OPA_COVER,
+              LV_PART_MAIN);
+
+          lv_obj_t *notify_title = id(label_notify_title);
+          bool notify_value_blinking = id(ui_context) == 10 && id(notify_finished) &&
+                                        id(notify_value_blink_switch).state;
+          lv_obj_set_style_text_opa(notify_title,
+              (notify_value_blinking && !id(blink_led_on)) ? LV_OPA_TRANSP : LV_OPA_COVER,
               LV_PART_MAIN);
       - script.execute: update_status_led
       - if:
@@ -2585,6 +2816,14 @@ script:
               int delay = (int) id(progress_auto_home_num).state;
               return id(ui_context) == 9 && id(progress_finished) && delay > 0 &&
                      millis() - id(progress_finished_at_ms) >= (uint32_t) delay * 1000;
+          then:
+            - script.execute: activate_home_screen
+      - if:
+          condition:
+            lambda: |-
+              int delay = (int) id(notify_auto_home_num).state;
+              return id(ui_context) == 10 && id(notify_finished) && delay > 0 &&
+                     millis() - id(notify_finished_at_ms) >= (uint32_t) delay * 1000;
           then:
             - script.execute: activate_home_screen
       # Cancel-confirm dialog: dismiss itself after 5s, or immediately if the
@@ -3120,6 +3359,8 @@ script:
             id(entity_return_kind) = 4;
           } else if (id(ui_context) == 9) {
             id(entity_return_kind) = 5;
+          } else if (id(ui_context) == 10) {
+            id(entity_return_kind) = 6;
           }
           id(thermostat_quick_stage) = 0;
           id(ui_context) = 2;
@@ -3143,10 +3384,9 @@ script:
           id(submenu_index) = 0;
           switch (id(submenu_type)) {
             case 0: {
-              auto vec = ha_filter_modes(
-                  id(hvac_modes_raw),
-                  id(thermostat_quick_stage) == 0 &&
-                      id(knob_hvac_modes).current_option() != "All");
+              // Always lists every mode HA reports for this climate entity,
+              // unfiltered.
+              auto vec = ha_filter_modes(id(hvac_modes_raw));
               id(submenu_count) = (int) vec.size();
               for (size_t i = 0; i < vec.size(); i++)
                 if (vec[i] == id(current_hvac_raw)) { id(submenu_index) = (int) i; break; }
@@ -3169,7 +3409,6 @@ script:
             case 8:  id(num_preview) = (int) id(idle_home_num).state; break;
             case 9:  id(num_preview) = (int) id(dim_delay_num).state; break;
             case 10: id(num_preview) = (int) id(dim_level_num).state; break;
-            case 12: id(submenu_index) = id(knob_hvac_modes).current_option() == "All" ? 1 : 0; break;
             case 13: {
               static const char *const opts[] = {"0.1", "0.2", "0.5", "1.0"};
               id(submenu_count) = 4;
@@ -3190,6 +3429,11 @@ script:
             case 27: id(submenu_index) = id(progress_show_on_finish_switch).state ? 1 : 0; break;
             case 29: id(num_preview) = (int) id(timer_blink_led_brightness_num).state; break;
             case 30: id(num_preview) = (int) id(progress_blink_led_brightness_num).state; break;
+            case 31: id(num_preview) = (int) id(notify_auto_home_num).state; break;
+            case 32: id(submenu_index) = id(notify_finish_blink_switch).state ? 1 : 0; break;
+            case 34: id(num_preview) = (int) id(notify_blink_led_brightness_num).state; break;
+            case 35: id(submenu_index) = id(notify_value_blink_switch).state ? 1 : 0; break;
+            case 36: id(submenu_index) = id(notify_show_on_finish_switch).state ? 1 : 0; break;
             case 25: {
               id(submenu_count) = BLINK_LED_COLOR_COUNT;
               const std::string &cur_name = id(timer_blink_led_color_select).state;
@@ -3200,6 +3444,13 @@ script:
             case 28: {
               id(submenu_count) = BLINK_LED_COLOR_COUNT;
               const std::string &cur_name = id(progress_blink_led_color_select).state;
+              for (int i = 0; i < BLINK_LED_COLOR_COUNT; i++)
+                if (cur_name == blink_led_color_name(i)) { id(submenu_index) = i; break; }
+              break;
+            }
+            case 33: {
+              id(submenu_count) = BLINK_LED_COLOR_COUNT;
+              const std::string &cur_name = id(notify_blink_led_color_select).state;
               for (int i = 0; i < BLINK_LED_COLOR_COUNT; i++)
                 if (cur_name == blink_led_color_name(i)) { id(submenu_index) = i; break; }
               break;
@@ -3215,10 +3466,7 @@ script:
           id(apply_service) = 0;
           switch (id(submenu_type)) {
             case 0: {
-              auto vec = ha_filter_modes(
-                  id(hvac_modes_raw),
-                  id(thermostat_quick_stage) == 0 &&
-                      id(knob_hvac_modes).current_option() != "All");
+              auto vec = ha_filter_modes(id(hvac_modes_raw));
               int n = (int) vec.size();
               if (n <= 0) break;
               int idx = ((id(submenu_index) % n) + n) % n;
@@ -3241,7 +3489,6 @@ script:
             case 8:  id(apply_service) = 16; break;
             case 9:  id(apply_service) = 17; break;
             case 10: id(apply_service) = 18; break;
-            case 12: id(apply_service) = id(submenu_index) ? 5 : 6; break;
             case 13: {
               static const char *const opts[] = {"0.1", "0.2", "0.5", "1.0"};
               int idx = ((id(submenu_index) % 4) + 4) % 4;
@@ -3271,6 +3518,15 @@ script:
               id(pending_mode_holder) = blink_led_color_name(id(submenu_index));
               id(apply_service) = 43;
               break;
+            case 31: id(apply_service) = 44; break;
+            case 32: id(apply_service) = id(submenu_index) ? 45 : 46; break;
+            case 33:
+              id(pending_mode_holder) = blink_led_color_name(id(submenu_index));
+              id(apply_service) = 47;
+              break;
+            case 34: id(apply_service) = 48; break;
+            case 35: id(apply_service) = id(submenu_index) ? 49 : 50; break;
+            case 36: id(apply_service) = id(submenu_index) ? 51 : 52; break;
             default: break;
           }
           id(ui_context) = id(thermostat_quick_stage) != 0 ? 1 : 3;
@@ -3296,12 +3552,6 @@ script:
       - if:
           condition: {lambda: 'return id(apply_service) == 4;'}
           then: [switch.turn_off: time_24h]
-      - if:
-          condition: {lambda: 'return id(apply_service) == 5;'}
-          then: [{select.set: {id: knob_hvac_modes, option: "All"}}]
-      - if:
-          condition: {lambda: 'return id(apply_service) == 6;'}
-          then: [{select.set: {id: knob_hvac_modes, option: "Heat/Off"}}]
       - if:
           condition: {lambda: 'return id(apply_service) == 7;'}
           then: [button.press: factory_reset_btn]
@@ -3405,6 +3655,36 @@ script:
                 id: progress_blink_led_color_select
                 option: !lambda 'return id(pending_mode_holder);'
       - if:
+          condition: {lambda: 'return id(apply_service) == 44;'}
+          then: [{number.set: {id: notify_auto_home_num, value: !lambda 'return id(num_preview);'}}]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 45;'}
+          then: [switch.turn_on: notify_finish_blink_switch]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 46;'}
+          then: [switch.turn_off: notify_finish_blink_switch]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 47;'}
+          then:
+            - select.set:
+                id: notify_blink_led_color_select
+                option: !lambda 'return id(pending_mode_holder);'
+      - if:
+          condition: {lambda: 'return id(apply_service) == 48;'}
+          then: [{number.set: {id: notify_blink_led_brightness_num, value: !lambda 'return id(num_preview);'}}]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 49;'}
+          then: [switch.turn_on: notify_value_blink_switch]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 50;'}
+          then: [switch.turn_off: notify_value_blink_switch]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 51;'}
+          then: [switch.turn_on: notify_show_on_finish_switch]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 52;'}
+          then: [switch.turn_off: notify_show_on_finish_switch]
+      - if:
           condition:
             lambda: 'return id(thermostat_quick_stage) != 0;'
           then:
@@ -3427,8 +3707,10 @@ script:
             int covers = (int) id(ha_covers).size();
             int timers = 1;  // Timer is always listed, running or not.
             int progresses = progress_is_running(id(progress_value_num).state) ? 1 : 0;
-            int count = climates + lights + covers + timers + progresses + 2;
-            auto entity_name = [climates, lights, covers, timers, progresses, count](int p) -> std::string {
+            int notifies = id(notify_finished) ? 1 : 0;
+            int count = climates + lights + covers + timers + progresses + notifies + 2;
+            auto entity_name = [climates, lights, covers, timers, progresses, notifies,
+                                 count](int p) -> std::string {
               p = ((p % count) + count) % count;
               if (p < climates) return id(ha_climates).get(p).name;
               if (p < climates + lights) return id(ha_lights).get(p - climates).name;
@@ -3438,8 +3720,11 @@ script:
               if (p < climates + lights + covers + timers + progresses)
                 return id(progress_title_txt).state.empty() ? std::string("Progress")
                                                               : id(progress_title_txt).state;
-              return p == climates + lights + covers + timers + progresses ? std::string("Settings")
-                                                                             : std::string("Back");
+              if (p < climates + lights + covers + timers + progresses + notifies)
+                return id(notify_title_txt).state.empty() ? std::string("Notify") : id(notify_title_txt).state;
+              return p == climates + lights + covers + timers + progresses + notifies
+                         ? std::string("Settings")
+                         : std::string("Back");
             };
             auto m = menu_window(id(entity_menu_index), count, ${settings_extra_rows}, entity_name);
             id(set_title) = "Entities";
@@ -3487,7 +3772,6 @@ script:
               case 8: snprintf(buf, sizeof(buf), "%ds", (int) id(idle_home_num).state); val = buf; break;
               case 9: snprintf(buf, sizeof(buf), "%ds", (int) id(dim_delay_num).state); val = buf; break;
               case 10: snprintf(buf, sizeof(buf), "%d%%", (int) id(dim_level_num).state); val = buf; break;
-              case 12: val = id(knob_hvac_modes).current_option() == "All" ? "All modes" : "Heat/Off"; break;
               case 13: val = id(knob_step_select).current_option().str() + "°C"; break;
               case 14: val = id(wifi_ssid_txt).state; break;
               case 15: val = id(fw_version).state; break;
@@ -3515,6 +3799,16 @@ script:
               case 28: val = id(progress_blink_led_color_select).state; break;
               case 29: snprintf(buf, sizeof(buf), "%d%%", (int) id(timer_blink_led_brightness_num).state); val = buf; break;
               case 30: snprintf(buf, sizeof(buf), "%d%%", (int) id(progress_blink_led_brightness_num).state); val = buf; break;
+              case 31: {
+                int v = (int) id(notify_auto_home_num).state;
+                if (v <= 0) { val = "Off"; } else { snprintf(buf, sizeof(buf), "%ds", v); val = buf; }
+                break;
+              }
+              case 32: val = id(notify_finish_blink_switch).state ? "On" : "Off"; break;
+              case 33: val = id(notify_blink_led_color_select).state; break;
+              case 34: snprintf(buf, sizeof(buf), "%d%%", (int) id(notify_blink_led_brightness_num).state); val = buf; break;
+              case 35: val = id(notify_value_blink_switch).state ? "On" : "Off"; break;
+              case 36: val = id(notify_show_on_finish_switch).state ? "On" : "Off"; break;
             }
             (void) val;
           } else {
@@ -3543,10 +3837,7 @@ script:
               case 1: {
                 std::vector<std::string> vec;
                 if (t == 0) {
-                  vec = ha_filter_modes(
-                      id(hvac_modes_raw),
-                      id(thermostat_quick_stage) == 0 &&
-                          id(knob_hvac_modes).current_option() != "All");
+                  vec = ha_filter_modes(id(hvac_modes_raw));
                 } else {
                   vec = ha_filter_presets(id(preset_modes_raw));
                 }
@@ -3605,11 +3896,6 @@ script:
                 cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next; val = m.value;
                 break;
               }
-              case 12: {
-                auto m = bool_menu_window(id(submenu_index), "Heat/Off", "All modes");
-                cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next; val = m.value;
-                break;
-              }
               case 13: {
                 static const char *const opts[] = {"0.1", "0.2", "0.5", "1.0"};
                 id(submenu_count) = 4;
@@ -3647,7 +3933,8 @@ script:
                 break;
               }
               case 11:
-              case 20: {
+              case 20:
+              case 31: {
                 auto m = numeric_menu_window(id(num_preview), 0, 300, 5, [](int v) -> std::string {
                   if (v <= 0) return "Off";
                   char b[8]; snprintf(b, sizeof(b), "%ds", v); return b;
@@ -3675,13 +3962,17 @@ script:
                 break;
               }
               case 26:
-              case 27: {
+              case 27:
+              case 32:
+              case 35:
+              case 36: {
                 auto m = bool_menu_window(id(submenu_index), "Off", "On");
                 cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next; val = m.value;
                 break;
               }
               case 29:
-              case 30: {
+              case 30:
+              case 34: {
                 auto m = numeric_menu_window(id(num_preview), 0, 100, 5, [](int v) -> std::string {
                   char b[8]; snprintf(b, sizeof(b), "%d%%", v); return b;
                 });
@@ -3689,7 +3980,8 @@ script:
                 break;
               }
               case 25:
-              case 28: {
+              case 28:
+              case 33: {
                 auto m = menu_window(id(submenu_index), BLINK_LED_COLOR_COUNT, false,
                                       [](int p) -> std::string { return blink_led_color_name(p); });
                 cur = m.cur;
@@ -3712,7 +4004,8 @@ script:
               return std::string(entity_menu_icon(id(entity_menu_index) - 2,
                   (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size(),
                   1,  // Timer is always listed, running or not.
-                  progress_is_running(id(progress_value_num).state) ? 1 : 0));
+                  progress_is_running(id(progress_value_num).state) ? 1 : 0,
+                  id(notify_finished) ? 1 : 0));
             if (id(ui_context) == 2)
               return std::string(settings_root_icon(id(menu_index) - 2));
             if (id(ui_context) == 3) {
@@ -3727,7 +4020,8 @@ script:
               return std::string(entity_menu_icon(id(entity_menu_index) - 1,
                   (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size(),
                   1,  // Timer is always listed, running or not.
-                  progress_is_running(id(progress_value_num).state) ? 1 : 0));
+                  progress_is_running(id(progress_value_num).state) ? 1 : 0,
+                  id(notify_finished) ? 1 : 0));
             if (id(ui_context) == 2)
               return std::string(settings_root_icon(id(menu_index) - 1));
             if (id(ui_context) == 3) {
@@ -3742,7 +4036,8 @@ script:
               return std::string(entity_menu_icon(id(entity_menu_index),
                   (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size(),
                   1,  // Timer is always listed, running or not.
-                  progress_is_running(id(progress_value_num).state) ? 1 : 0));
+                  progress_is_running(id(progress_value_num).state) ? 1 : 0,
+                  id(notify_finished) ? 1 : 0));
             if (id(ui_context) == 2)
               return std::string(settings_root_icon(id(menu_index)));
             if (id(ui_context) == 3) {
@@ -3757,7 +4052,8 @@ script:
               return std::string(entity_menu_icon(id(entity_menu_index) + 1,
                   (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size(),
                   1,  // Timer is always listed, running or not.
-                  progress_is_running(id(progress_value_num).state) ? 1 : 0));
+                  progress_is_running(id(progress_value_num).state) ? 1 : 0,
+                  id(notify_finished) ? 1 : 0));
             if (id(ui_context) == 2)
               return std::string(settings_root_icon(id(menu_index) + 1));
             if (id(ui_context) == 3) {
@@ -3772,7 +4068,8 @@ script:
               return std::string(entity_menu_icon(id(entity_menu_index) + 2,
                   (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size(),
                   1,  // Timer is always listed, running or not.
-                  progress_is_running(id(progress_value_num).state) ? 1 : 0));
+                  progress_is_running(id(progress_value_num).state) ? 1 : 0,
+                  id(notify_finished) ? 1 : 0));
             if (id(ui_context) == 2)
               return std::string(settings_root_icon(id(menu_index) + 2));
             if (id(ui_context) == 3) {
