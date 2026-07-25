@@ -126,6 +126,7 @@ clock:
 timer:
   cancel_confirm_title: "Timer abbrechen?"
   cancel_confirm_body: "Erneut drücken zum Bestätigen (%ds)"
+  add_hint: "Drehen zum Einstellen, drücken zum Hinzufügen"
 
 light:
   mode_brightness: "Helligkeit"

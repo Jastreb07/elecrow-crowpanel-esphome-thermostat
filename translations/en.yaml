@@ -126,6 +126,7 @@ clock:
 timer:
   cancel_confirm_title: "Cancel timer?"
   cancel_confirm_body: "Press again to confirm (%ds)"
+  add_hint: "Turn to set, press to add"
 
 light:
   mode_brightness: "Brightness"

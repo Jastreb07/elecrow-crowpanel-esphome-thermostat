@@ -73,7 +73,8 @@ inline void civil_ymd_from_days(long z, int &y, int &m, int &d) {
 // Inverse of civil_seconds(): formats a civil-epoch second count (same
 // convention as civil_seconds/timer_remaining_seconds - not a Unix
 // timestamp) back into "YYYY-MM-DD HH:MM:SS", for writing a new value into
-// timer_end_time_txt after the knob adjusts it.
+// timer_edit_value (the Timer add-page's preview end-time) after the knob
+// adjusts it.
 inline std::string format_civil_datetime(long total_seconds) {
   long days = total_seconds >= 0 ? total_seconds / 86400 : -((-total_seconds + 86399) / 86400);
   long secs_of_day = total_seconds - days * 86400;
@@ -195,7 +196,7 @@ static const char *const SETTINGS_GROUP_ICONS[SETTINGS_GROUP_COUNT] = {
 
 static constexpr int SETTINGS_GROUP_THERMOSTAT[] = {0, 1, 7, 13};
 static constexpr int SETTINGS_GROUP_TIMER[] = {11, 19, 25, 29, 23, 22, 26};
-static constexpr int SETTINGS_GROUP_PROGRESS[] = {20, 21, 28, 30, 24, 27};
+static constexpr int SETTINGS_GROUP_PROGRESS[] = {20, 30};
 static constexpr int SETTINGS_GROUP_NOTIFY[] = {31, 34};
 static constexpr int SETTINGS_GROUP_SYSTEM[] = {
     2, 4, 3, 18, 17, 10, 9, 8, 14, 15, 16};
@@ -425,9 +426,9 @@ inline const char *settings_menu_name(int i) {
       "", "settings.item.step", "settings.item.wifi",
       "settings.item.firmware", "settings.item.reset", "settings.item.led",
       "settings.item.led_brightness", "settings.item.timer_led_blink", "settings.item.progress_auto_home",
-      "settings.item.progress_led_blink", "settings.item.timer_knob_step", "settings.item.timer_value_blink",
-      "settings.item.progress_value_blink", "settings.item.timer_blink_color", "settings.item.timer_show_screen",
-      "settings.item.progress_show_screen", "settings.item.progress_blink_color", "settings.item.timer_blink_brightness",
+      "", "settings.item.timer_knob_step", "settings.item.timer_value_blink",
+      "", "settings.item.timer_blink_color", "settings.item.timer_show_screen",
+      "", "", "settings.item.timer_blink_brightness",
       "settings.item.progress_blink_brightness", "settings.item.notify_auto_home", "",
       "", "settings.item.notify_blink_brightness", "",
       ""};
@@ -522,6 +523,19 @@ inline const char *blink_led_color_from_letter(char c) {
   return "Green";
 }
 
+// Converts a BLINK_LED_COLORS name into the same 6-digit hex format used by
+// the Timer/Progress/Notify queues' `color` field - lets an on-device-
+// created Timer entry (see timer_click's add-page branch) carry forward
+// whatever the "Timer Blink LED Color" setting currently is, in the same
+// format HA would have supplied for a queue entry it added itself.
+inline std::string blink_led_color_hex(const std::string &name) {
+  LedColor c = blink_led_color_rgb(name);
+  char buf[7];
+  snprintf(buf, sizeof(buf), "%02X%02X%02X", (int) roundf(c.r * 255.0f), (int) roundf(c.g * 255.0f),
+           (int) roundf(c.b * 255.0f));
+  return std::string(buf);
+}
+
 // ------------------------------------------------------------------
 // Notify queue: internal storage (id(notify_queue), a plain global, not an
 // HA entity - no 255-char limit to worry about). Home Assistant never
@@ -539,14 +553,16 @@ inline const char *blink_led_color_from_letter(char c) {
 // priority ("0"=low/"1"=medium/"2"=high), value_blink ("1"/"0", whether the
 // title text itself also blinks), seq (insertion order, ESP-assigned), end
 // (optional - a "YYYY-MM-DD HH:MM:SS" or "HH:MM:SS" date-time, same format
-// as timer_end_time_txt; when set the entry is self-deleting: the Notify
+// as a QueuedTimer's end_time; when set the entry is self-deleting: the Notify
 // screen shows a Timer-style countdown arc for it, and it's automatically
 // dropped from the queue once that time passes - see check_finish_effects),
 // added (ESP-assigned Unix timestamp captured when an `end` was set, used
-// as the countdown arc's start point - not meaningful without `end`).
+// as the countdown arc's start point - not meaningful without `end`),
+// arc_color (optional 6-digit hex RGB for the countdown arc itself - empty
+// keeps the default purple, see ARC_DEFAULT_COLOR/arc_color_or_default()).
 // Unknown keys are ignored; missing keys fall back to sane defaults.
 // Example HA input: "id=door1;title=Door open;subtitle=Garage;color=FF0000;
-// led_mode=2;priority=2;value_blink=1;end=2026-07-25 18:30:00"
+// led_mode=2;priority=2;value_blink=1;end=2026-07-25 18:30:00;arc_color=00AAFF"
 //
 // parse_notify_queue() always returns entries sorted highest-priority
 // first, and within the same priority, most-recently-added first.
@@ -561,6 +577,7 @@ struct QueuedNotify {
   uint32_t seq;
   std::string end_time;   // empty = no self-delete/countdown
   uint32_t added_epoch;   // Unix timestamp, only meaningful if end_time set
+  std::string arc_color;  // empty = default arc color
 };
 
 // Parses one "key=value;key=value;..." line into a QueuedNotify, applying
@@ -604,6 +621,9 @@ inline QueuedNotify parse_notify_entry(const std::string &line) {
       qn.end_time = value;
     } else if (key == "added") {
       qn.added_epoch = (uint32_t) strtoul(value.c_str(), nullptr, 10);
+    } else if (key == "arc_color") {
+      if (!value.empty() && value[0] == '#') value = value.substr(1);
+      qn.arc_color = value;
     }
   }
   return qn;
@@ -649,7 +669,23 @@ inline std::string serialize_notify_entry(const QueuedNotify &q) {
     snprintf(num, sizeof(num), "%lu", (unsigned long) q.added_epoch);
     out += num;
   }
+  if (!q.arc_color.empty()) out += ";arc_color=" + q.arc_color;
   return out;
+}
+
+// Default arc indicator color (the purple used everywhere before per-entry
+// arc colors existed). arc_color_or_default() below falls back to this
+// whenever an entry didn't specify its own arc_color.
+constexpr uint32_t ARC_DEFAULT_COLOR = 0x6E4FBD;
+
+// Parses an entry's optional arc_color (6-digit hex, no '#') into a 24-bit
+// 0xRRGGBB value for lv_color_hex(), falling back to ARC_DEFAULT_COLOR if
+// empty or malformed.
+inline uint32_t arc_color_or_default(const std::string &hex) {
+  if (hex.size() != 6) return ARC_DEFAULT_COLOR;
+  char *end = nullptr;
+  uint32_t v = (uint32_t) strtoul(hex.c_str(), &end, 16);
+  return (end == hex.c_str() + 6) ? v : ARC_DEFAULT_COLOR;
 }
 
 // Parses a 6-digit hex RGB string (as stored in QueuedNotify::color, no '#')
@@ -667,6 +703,281 @@ inline LedColor hex_to_led_color(const std::string &hex) {
   int g = (nibble(hex[2]) << 4) | nibble(hex[3]);
   int b = (nibble(hex[4]) << 4) | nibble(hex[5]);
   return {r / 255.0f, g / 255.0f, b / 255.0f};
+}
+
+// ------------------------------------------------------------------
+// Timer queue: same internal-storage/add-button/remove-button-by-id design
+// as the Notify queue above (id(timer_queue), a plain global). Unlike
+// Notify, entries are plain FIFO (sorted by seq only, no priority) and
+// don't self-delete when they finish - they stay in the queue, blinking/
+// counting as "finished", until removed (on-device cancel-confirm click or
+// the HA remove button). `end` is required (not optional like Notify's).
+//
+// Entries can come from HA (id=...;title=...;end=...;color=RRGGBB;
+// led_mode=0..2;value_blink=0|1;arc_color=RRGGBB, same key=value format as
+// Notify - arc_color is optional, empty keeps the default purple arc) or be
+// created directly on the device via the Timer screen's last swipe page
+// (see timer_click) - those get an ESP-generated id and their color/
+// led_mode/value_blink/arc_color come from the Timer settings-menu entries
+// instead of being specified explicitly.
+// ------------------------------------------------------------------
+struct QueuedTimer {
+  std::string entry_id, title;
+  std::string end_time;  // "YYYY-MM-DD HH:MM:SS" or "HH:MM:SS", required
+  std::string color;     // 6-digit hex RGB, no '#'
+  int led_mode;
+  bool value_blink;
+  uint32_t seq;
+  uint32_t added_epoch;  // Unix timestamp when added - the countdown arc's start point
+  bool notified;          // one-shot flag: has the auto-show already fired for this entry?
+  std::string arc_color;  // empty = default arc color
+};
+
+inline QueuedTimer parse_timer_entry(const std::string &line) {
+  QueuedTimer qt;
+  qt.color = "00FF00";
+  qt.led_mode = 2;
+  qt.value_blink = false;
+  qt.seq = 0;
+  qt.added_epoch = 0;
+  qt.notified = false;
+  size_t pos = 0;
+  while (pos < line.size()) {
+    size_t semi = line.find(';', pos);
+    std::string token = (semi == std::string::npos) ? line.substr(pos) : line.substr(pos, semi - pos);
+    pos = (semi == std::string::npos) ? line.size() : semi + 1;
+    size_t eq = token.find('=');
+    if (eq == std::string::npos) continue;
+    std::string key = token.substr(0, eq);
+    std::string value = token.substr(eq + 1);
+    if (key == "id") qt.entry_id = value;
+    else if (key == "title") qt.title = value;
+    else if (key == "end") qt.end_time = value;
+    else if (key == "color") {
+      if (!value.empty() && value[0] == '#') value = value.substr(1);
+      qt.color = value.empty() ? "00FF00" : value;
+    } else if (key == "led_mode") {
+      qt.led_mode = value.empty() ? 2 : (value[0] - '0');
+      if (qt.led_mode < 0 || qt.led_mode > 2) qt.led_mode = 2;
+    } else if (key == "value_blink") {
+      qt.value_blink = value == "1";
+    } else if (key == "seq") {
+      qt.seq = (uint32_t) strtoul(value.c_str(), nullptr, 10);
+    } else if (key == "added") {
+      qt.added_epoch = (uint32_t) strtoul(value.c_str(), nullptr, 10);
+    } else if (key == "notified") {
+      qt.notified = value == "1";
+    } else if (key == "arc_color") {
+      if (!value.empty() && value[0] == '#') value = value.substr(1);
+      qt.arc_color = value;
+    }
+  }
+  return qt;
+}
+
+inline std::vector<QueuedTimer> parse_timer_queue(const std::string &raw) {
+  std::vector<QueuedTimer> out;
+  size_t pos = 0;
+  while (pos < raw.size()) {
+    size_t nl = raw.find('\n', pos);
+    std::string line = (nl == std::string::npos) ? raw.substr(pos) : raw.substr(pos, nl - pos);
+    pos = (nl == std::string::npos) ? raw.size() : nl + 1;
+    if (line.empty()) continue;
+    QueuedTimer qt = parse_timer_entry(line);
+    if (qt.entry_id.empty() || qt.title.empty() || qt.end_time.empty()) continue;
+    out.push_back(qt);
+  }
+  std::sort(out.begin(), out.end(),
+            [](const QueuedTimer &a, const QueuedTimer &b) { return a.seq < b.seq; });
+  return out;
+}
+
+inline std::string serialize_timer_entry(const QueuedTimer &q) {
+  char num[16];
+  std::string out = "id=" + q.entry_id + ";title=" + q.title + ";end=" + q.end_time + ";color=" + q.color +
+                     ";led_mode=";
+  snprintf(num, sizeof(num), "%d", q.led_mode);
+  out += num;
+  out += ";value_blink=";
+  out += q.value_blink ? "1" : "0";
+  out += ";seq=";
+  snprintf(num, sizeof(num), "%lu", (unsigned long) q.seq);
+  out += num;
+  out += ";added=";
+  snprintf(num, sizeof(num), "%lu", (unsigned long) q.added_epoch);
+  out += num;
+  out += ";notified=";
+  out += q.notified ? "1" : "0";
+  if (!q.arc_color.empty()) out += ";arc_color=" + q.arc_color;
+  return out;
+}
+
+// ------------------------------------------------------------------
+// Progress queue: same design again, but for a running "N%" bar instead of
+// a countdown. `value` (0..100) is the one field HA is expected to keep
+// re-sending as work progresses - adding with an `id` that's already in
+// the queue replaces that entry in place (upsert) rather than appending a
+// duplicate, so "id=dl1;title=...;value=42;..." sent repeatedly just
+// updates dl1's percentage. No on-device creation exists for Progress (no
+// physical input maps to "how far along is this"), so every field always
+// comes from HA - same key=value format as Notify/Timer.
+// ------------------------------------------------------------------
+struct QueuedProgress {
+  std::string entry_id, title;
+  float value;  // 0..100
+  std::string color;
+  int led_mode;
+  bool value_blink;
+  uint32_t seq;
+  bool notified;
+  uint32_t finished_at_ms;  // millis() when notified first flipped true - anchors Auto-Home
+  std::string arc_color;    // empty = default arc color
+};
+
+inline QueuedProgress parse_progress_entry(const std::string &line) {
+  QueuedProgress qp;
+  qp.value = 0.0f;
+  qp.color = "00FF00";
+  qp.led_mode = 2;
+  qp.value_blink = false;
+  qp.seq = 0;
+  qp.notified = false;
+  qp.finished_at_ms = 0;
+  size_t pos = 0;
+  while (pos < line.size()) {
+    size_t semi = line.find(';', pos);
+    std::string token = (semi == std::string::npos) ? line.substr(pos) : line.substr(pos, semi - pos);
+    pos = (semi == std::string::npos) ? line.size() : semi + 1;
+    size_t eq = token.find('=');
+    if (eq == std::string::npos) continue;
+    std::string key = token.substr(0, eq);
+    std::string value = token.substr(eq + 1);
+    if (key == "id") qp.entry_id = value;
+    else if (key == "title") qp.title = value;
+    else if (key == "value") {
+      float v = strtof(value.c_str(), nullptr);
+      qp.value = v < 0.0f ? 0.0f : (v > 100.0f ? 100.0f : v);
+    }
+    else if (key == "color") {
+      if (!value.empty() && value[0] == '#') value = value.substr(1);
+      qp.color = value.empty() ? "00FF00" : value;
+    } else if (key == "led_mode") {
+      qp.led_mode = value.empty() ? 2 : (value[0] - '0');
+      if (qp.led_mode < 0 || qp.led_mode > 2) qp.led_mode = 2;
+    } else if (key == "value_blink") {
+      qp.value_blink = value == "1";
+    } else if (key == "seq") {
+      qp.seq = (uint32_t) strtoul(value.c_str(), nullptr, 10);
+    } else if (key == "notified") {
+      qp.notified = value == "1";
+    } else if (key == "finished_at_ms") {
+      qp.finished_at_ms = (uint32_t) strtoul(value.c_str(), nullptr, 10);
+    } else if (key == "arc_color") {
+      if (!value.empty() && value[0] == '#') value = value.substr(1);
+      qp.arc_color = value;
+    }
+  }
+  return qp;
+}
+
+inline std::vector<QueuedProgress> parse_progress_queue(const std::string &raw) {
+  std::vector<QueuedProgress> out;
+  size_t pos = 0;
+  while (pos < raw.size()) {
+    size_t nl = raw.find('\n', pos);
+    std::string line = (nl == std::string::npos) ? raw.substr(pos) : raw.substr(pos, nl - pos);
+    pos = (nl == std::string::npos) ? raw.size() : nl + 1;
+    if (line.empty()) continue;
+    QueuedProgress qp = parse_progress_entry(line);
+    if (qp.entry_id.empty() || qp.title.empty()) continue;
+    out.push_back(qp);
+  }
+  std::sort(out.begin(), out.end(),
+            [](const QueuedProgress &a, const QueuedProgress &b) { return a.seq < b.seq; });
+  return out;
+}
+
+inline std::string serialize_progress_entry(const QueuedProgress &q) {
+  char num[16];
+  std::string out = "id=" + q.entry_id + ";title=" + q.title + ";value=";
+  snprintf(num, sizeof(num), "%.1f", q.value);
+  out += num;
+  out += ";color=" + q.color + ";led_mode=";
+  snprintf(num, sizeof(num), "%d", q.led_mode);
+  out += num;
+  out += ";value_blink=";
+  out += q.value_blink ? "1" : "0";
+  out += ";seq=";
+  snprintf(num, sizeof(num), "%lu", (unsigned long) q.seq);
+  out += num;
+  out += ";notified=";
+  out += q.notified ? "1" : "0";
+  out += ";finished_at_ms=";
+  snprintf(num, sizeof(num), "%lu", (unsigned long) q.finished_at_ms);
+  out += num;
+  if (!q.arc_color.empty()) out += ";arc_color=" + q.arc_color;
+  return out;
+}
+
+// ------------------------------------------------------------------
+// Shared status-LED lookup for Timer (ui_context 8) / Progress (9) /
+// Notify (10): all three now carry their own led_mode/color per queue
+// entry, so update_status_led (thermostat_240.yaml) just needs to know
+// which entry is "current" for whichever screen is active. Timer/Progress
+// only report a mode once their entry is actually finished (countdown at
+// 0 / value at 100) - Notify has no such gate, its LED reflects led_mode
+// as soon as it's queued.
+// ------------------------------------------------------------------
+inline int current_screen_led_mode(int ui_context, const std::string &timer_queue, int timer_index,
+                                    const std::string &progress_queue, int progress_index,
+                                    const std::string &notify_queue, int notify_index, bool notify_finished,
+                                    const esphome::ESPTime &now) {
+  if (ui_context == 8) {
+    auto items = parse_timer_queue(timer_queue);
+    int total = (int) items.size();
+    if (timer_index >= total) return 0;
+    auto &qt = items[timer_index];
+    if (timer_remaining_seconds(qt.end_time, now) > 0) return 0;
+    return qt.led_mode;
+  }
+  if (ui_context == 9) {
+    auto items = parse_progress_queue(progress_queue);
+    int total = (int) items.size();
+    if (progress_index >= total) return 0;
+    auto &qp = items[progress_index];
+    if (qp.value < 100.0f) return 0;
+    return qp.led_mode;
+  }
+  if (ui_context == 10 && notify_finished) {
+    auto items = parse_notify_queue(notify_queue);
+    int total = (int) items.size();
+    if (total <= 0) return 0;
+    int idx = notify_index < 0 ? 0 : (notify_index >= total ? total - 1 : notify_index);
+    return items[idx].led_mode;
+  }
+  return 0;
+}
+
+inline LedColor current_screen_led_color(int ui_context, const std::string &timer_queue, int timer_index,
+                                          const std::string &progress_queue, int progress_index,
+                                          const std::string &notify_queue, int notify_index) {
+  if (ui_context == 8) {
+    auto items = parse_timer_queue(timer_queue);
+    int total = (int) items.size();
+    if (timer_index < total) return hex_to_led_color(items[timer_index].color);
+  } else if (ui_context == 9) {
+    auto items = parse_progress_queue(progress_queue);
+    int total = (int) items.size();
+    if (progress_index < total) return hex_to_led_color(items[progress_index].color);
+  } else if (ui_context == 10) {
+    auto items = parse_notify_queue(notify_queue);
+    int total = (int) items.size();
+    if (total > 0) {
+      int idx = notify_index < 0 ? 0 : (notify_index >= total ? total - 1 : notify_index);
+      return hex_to_led_color(items[idx].color);
+    }
+  }
+  return {0.0f, 1.0f, 0.0f};
 }
 
 // ------------------------------------------------------------------

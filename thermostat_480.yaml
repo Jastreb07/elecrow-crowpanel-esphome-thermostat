@@ -1064,6 +1064,10 @@ lvgl:
         - script.execute: open_settings
       on_swipe_right:
         - script.execute: open_entity_overview
+      on_swipe_up:
+        - script.execute: timer_next
+      on_swipe_down:
+        - script.execute: timer_previous
       widgets:
         - button:
             id: button_timer_background
@@ -1162,6 +1166,31 @@ lvgl:
             text_align: CENTER
             hidden: true
 
+        - label:
+            id: label_timer_arrow_prev
+            text: "\U000F0143"
+            text_font: icons_70
+            text_color: 0xCDBEEC
+            align: TOP_MID
+            y: 34
+            hidden: true
+        - label:
+            id: label_timer_arrow_next
+            text: "\U000F0140"
+            text_font: icons_70
+            text_color: 0xCDBEEC
+            align: BOTTOM_MID
+            y: -34
+            hidden: true
+        - label:
+            id: label_timer_page
+            text: ""
+            text_font: rajdhani_medium_22
+            text_color: 0xCDBEEC
+            align: TOP_MID
+            y: 90
+            hidden: true
+
     # ================= Progress =================
     - id: screen_progress
       bg_color: "0x000000"
@@ -1169,6 +1198,10 @@ lvgl:
         - script.execute: open_settings
       on_swipe_right:
         - script.execute: open_entity_overview
+      on_swipe_up:
+        - script.execute: progress_next
+      on_swipe_down:
+        - script.execute: progress_previous
       widgets:
         - button:
             id: button_progress_background
@@ -1242,6 +1275,31 @@ lvgl:
             width: 340
             text_align: CENTER
             long_mode: SCROLL_CIRCULAR
+            hidden: true
+
+        - label:
+            id: label_progress_arrow_prev
+            text: "\U000F0143"
+            text_font: icons_70
+            text_color: 0xCDBEEC
+            align: TOP_MID
+            y: 34
+            hidden: true
+        - label:
+            id: label_progress_arrow_next
+            text: "\U000F0140"
+            text_font: icons_70
+            text_color: 0xCDBEEC
+            align: BOTTOM_MID
+            y: -34
+            hidden: true
+        - label:
+            id: label_progress_page
+            text: ""
+            text_font: rajdhani_medium_22
+            text_color: 0xCDBEEC
+            align: TOP_MID
+            y: 90
             hidden: true
 
     # ================= Notify =================

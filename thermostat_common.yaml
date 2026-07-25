@@ -212,10 +212,10 @@ interval:
             lambda: 'return id(ui_context) == 5 && id(ha_lights).consume_dirty();'
           then:
             - script.execute: refresh_light
-  # Keeps the timer countdown (and the Notify screen's Auto-Home arc) live
-  # while their screen is actually showing. Progress needs no ticker - it
-  # only changes when Home Assistant pushes a new value, handled by
-  # progress_value_num's on_value.
+  # Keeps the Timer/Notify countdown arcs live while their screen is
+  # actually showing. Progress needs no ticker - it only changes when Home
+  # Assistant pushes a new value (via progress_add_to_queue), which already
+  # calls refresh_progress itself.
   - interval: 1s
     then:
       - if:
@@ -383,52 +383,17 @@ globals:
     restore_value: false
     initial_value: "0"
 
-  # Captured automatically whenever timer_end_time_txt changes (see its
-  # on_value); used only to compute the timer arc's fill fraction, never
-  # exposed as its own entity.
-  - id: timer_start_epoch
-    type: uint32_t
-    restore_value: false
-    initial_value: "0"
-
-  # "Finished" tracking for the Timer/Progress post-completion effects
-  # (auto-return-home delay, LED/value blink). *_finished latches once the
-  # countdown/value crosses into "done" and only clears when a fresh
-  # end time / a value below 100 is set again. *_finished_at_ms anchors the
-  # auto-home delay. blink_led_on is the shared on/off phase for both the
-  # status LED and the value-label blink (one physical LED, so one phase is
-  # enough even if timer and progress finish at the same time).
-  - id: timer_finished
-    type: bool
-    restore_value: false
-    initial_value: "false"
-
-  - id: timer_finished_at_ms
-    type: uint32_t
-    restore_value: false
-    initial_value: "0"
-
-  # True for exactly one check_finish_effects tick - the one where
-  # *_finished just latched to true. Drives the (optional) auto-show-screen
-  # action, which needs to fire once on the transition, not on every tick.
-  - id: timer_just_finished
-    type: bool
-    restore_value: false
-    initial_value: "false"
-
-  - id: progress_just_finished
-    type: bool
-    restore_value: false
-    initial_value: "false"
-
+  # blink_led_on is the shared on/off phase for both the status LED and the
+  # value-label blink (one physical LED, so one phase is enough even if
+  # several Timer/Progress/Notify entries finish at the same time).
   - id: blink_led_on
     type: bool
     restore_value: false
     initial_value: "false"
 
   # Cancel-confirmation dialog on the Timer screen: a single click shows it,
-  # a second click within 5s cancels the timer, otherwise it disappears on
-  # its own (see check_finish_effects).
+  # a second click within 5s removes the currently displayed queue entry,
+  # otherwise it disappears on its own (see check_finish_effects).
   - id: timer_cancel_confirm_pending
     type: bool
     restore_value: false
@@ -439,22 +404,81 @@ globals:
     restore_value: false
     initial_value: "0"
 
-  # Scratch value for writing a new timer_end_time_txt after the knob
-  # adjusts it (see the ui_context == 8 encoder branch).
+  # Scratch value for the Timer screen's last swipe page (the "add a new
+  # timer directly on the device" page) - the knob adjusts this preview
+  # end-datetime, a click confirms it and appends it to timer_queue (see
+  # the ui_context == 8 encoder branch and timer_click).
   - id: timer_edit_value
     type: std::string
     restore_value: false
     initial_value: '""'
 
-  - id: progress_finished
+  # Position within the timer queue currently shown on the Timer screen.
+  # Can equal parse_timer_queue(...).size() - that means "on the empty add
+  # page" (see refresh_timer). Reset to 0 whenever the screen is entered.
+  - id: timer_queue_index
+    type: int
+    restore_value: false
+    initial_value: "0"
+
+  # Internal-only queue storage, same design as notify_queue below: HA adds
+  # one entry at a time via timer_add_txt/timer_add_btn (appended here with
+  # an auto-assigned seq) and removes one by id via
+  # timer_remove_id_txt/timer_remove_btn. Entries can also be appended
+  # directly on the device via the Timer screen's add page.
+  - id: timer_queue
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+
+  - id: timer_queue_seq
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+
+  # True for exactly one check_finish_effects tick - the one where any
+  # timer queue entry's `notified` flag just flipped from false to true
+  # (i.e. it just crossed into "finished"). Drives the (optional) auto-
+  # show-screen action, which needs to fire once per entry, not every tick.
+  - id: timer_just_finished_any
     type: bool
     restore_value: false
     initial_value: "false"
 
-  - id: progress_finished_at_ms
+  # Index (within the freshly-parsed queue) of the entry that triggered
+  # timer_just_finished_any/progress_just_finished_any this tick - lets the
+  # auto-show action jump straight to it instead of always index 0.
+  - id: timer_last_finished_index
+    type: int
+    restore_value: false
+    initial_value: "0"
+
+  - id: progress_last_finished_index
+    type: int
+    restore_value: false
+    initial_value: "0"
+
+  # Position within the progress queue currently shown on the Progress
+  # screen. Reset to 0 whenever the screen is entered.
+  - id: progress_queue_index
+    type: int
+    restore_value: false
+    initial_value: "0"
+
+  - id: progress_queue
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+
+  - id: progress_queue_seq
     type: uint32_t
     restore_value: false
     initial_value: "0"
+
+  - id: progress_just_finished_any
+    type: bool
+    restore_value: false
+    initial_value: "false"
 
   # Notify: unlike Timer/Progress there's no countdown/threshold - "finished"
   # simply means "the queue has at least one entry", latched true the moment
@@ -662,12 +686,6 @@ switch:
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
 
-  - platform: template
-    name: "[Progress] Progress LED Blink"
-    id: progress_finish_blink_switch
-    optimistic: true
-    restore_mode: RESTORE_DEFAULT_ON
-
   # Whether the big value label itself also blinks (same phase as the LED)
   # once finished. On by default, independent of the LED blink switch above.
   - platform: template
@@ -676,23 +694,13 @@ switch:
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
 
-  - platform: template
-    name: "[Progress] Progress Value Blink"
-    id: progress_value_blink_switch
-    optimistic: true
-    restore_mode: RESTORE_DEFAULT_ON
-
-  # Whether finishing auto-switches the display to the respective screen
-  # (see check_finish_effects). On by default.
+  # Whether finishing auto-switches the display to the Timer screen (see
+  # check_finish_effects). On by default. Progress/Notify have no such
+  # switch - they always auto-show, since their LED/blink settings are
+  # per-queue-entry rather than a single global "the" timer/progress/notify.
   - platform: template
     name: "[Timer] Timer Show Screen"
     id: timer_show_on_finish_switch
-    optimistic: true
-    restore_mode: RESTORE_DEFAULT_ON
-
-  - platform: template
-    name: "[Progress] Progress Show Screen"
-    id: progress_show_on_finish_switch
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
 
@@ -745,15 +753,6 @@ select:
   - platform: template
     name: "[Timer] Timer Blink LED Color"
     id: timer_blink_led_color_select
-    optimistic: true
-    restore_value: true
-    options: ["Green", "Red", "Blue", "Yellow", "Orange", "Purple", "Cyan", "Magenta", "White", "Pink"]
-    initial_option: "Green"
-    icon: "mdi:eyedropper"
-
-  - platform: template
-    name: "[Progress] Progress Blink LED Color"
-    id: progress_blink_led_color_select
     optimistic: true
     restore_value: true
     options: ["Green", "Red", "Blue", "Yellow", "Orange", "Purple", "Cyan", "Magenta", "White", "Pink"]
@@ -850,25 +849,6 @@ number:
               lambda: 'return id(ui_context) == 2 || id(ui_context) == 3 || id(ui_context) == 4;'
             then:
               - script.execute: update_settings_labels
-
-  # Progress screen value, set from Home Assistant (e.g. a print job, backup,
-  # or download percentage). Considered "running" (visible in the entity
-  # menu) while strictly between 0 and 100 - see progress_is_running().
-  - platform: template
-    name: "[Standard] Progress"
-    id: progress_value_num
-    icon: "mdi:progress-check"
-    optimistic: true
-    restore_value: false
-    initial_value: 0
-    min_value: 0
-    max_value: 100
-    step: 1
-    unit_of_measurement: "%"
-    mode: box
-    on_value:
-      then:
-        - script.execute: refresh_progress
 
   # 0 = never auto-return home after the Timer/Progress screen finishes; any
   # other value is the delay in seconds. See check_finish_effects.
@@ -1010,6 +990,38 @@ button:
     on_press:
       then:
         - script.execute: notify_remove_from_queue
+
+  - platform: template
+    name: "[Timer] Add to Queue"
+    id: timer_add_btn
+    icon: "mdi:timer-plus-outline"
+    on_press:
+      then:
+        - script.execute: timer_add_to_queue
+
+  - platform: template
+    name: "[Timer] Remove from Queue"
+    id: timer_remove_btn
+    icon: "mdi:timer-minus-outline"
+    on_press:
+      then:
+        - script.execute: timer_remove_from_queue
+
+  - platform: template
+    name: "[Progress] Add to Queue"
+    id: progress_add_btn
+    icon: "mdi:progress-check"
+    on_press:
+      then:
+        - script.execute: progress_add_to_queue
+
+  - platform: template
+    name: "[Progress] Remove from Queue"
+    id: progress_remove_btn
+    icon: "mdi:progress-close"
+    on_press:
+      then:
+        - script.execute: progress_remove_from_queue
 
   # Jump straight to the Home/Timer/Progress screen from Home Assistant (an
   # automation, dashboard button, etc.) - same idea as pressing restart_btn
@@ -1287,18 +1299,21 @@ sensor:
               - script.execute: send_cover_update
         - if:
             condition:
-              lambda: 'return id(encoder_delta) != 0 && id(ui_context) == 8;'
+              lambda: |-
+                return id(encoder_delta) != 0 && id(ui_context) == 8 &&
+                       id(timer_queue_index) >= (int) parse_timer_queue(id(timer_queue)).size();
             then:
-              # Turning the knob moves the end time by one knob-step per
-              # detent - from "now" if no timer is set yet (manually
-              # starting one), or from the current remaining time if one is
-              # already counting down (extend/shorten it). Writing through
-              # timer_end_time_txt reuses its existing on_value handler
-              # (resets start_epoch/finished/blink and refreshes the screen).
+              # Only the empty "add a new timer" page (the last swipe page)
+              # reacts to the knob - turning it moves a preview end-time by
+              # one knob-step per detent, from "now" the first turn or from
+              # the current preview if already mid-edit (extend/shorten
+              # before confirming). A click on timer_click then adds it to
+              # the queue; existing queued timers can no longer be extended
+              # by turning the knob (remove + re-add instead).
               - lambda: |-
                   auto now = id(ha_time).now();
                   if (!now.is_valid()) return;
-                  long remaining = timer_remaining_seconds(id(timer_end_time_txt).state, now);
+                  long remaining = id(timer_edit_value).empty() ? 0 : timer_remaining_seconds(id(timer_edit_value), now);
                   long base = remaining > 0 ? remaining : 0;
                   int step = (int) id(timer_knob_step_num).state;
                   int d = id(encoder_delta) > 0 ? 1 : -1;
@@ -1307,9 +1322,7 @@ sensor:
                   long now_secs = civil_seconds(now.year, now.month, now.day_of_month,
                                                  now.hour, now.minute, now.second);
                   id(timer_edit_value) = format_civil_datetime(now_secs + new_remaining);
-              - text.set:
-                  id: timer_end_time_txt
-                  value: !lambda 'return id(timer_edit_value);'
+              - script.execute: refresh_timer
         - if:
             condition:
               lambda: 'return id(encoder_delta) != 0 && id(ui_context) == 2;'
@@ -1322,8 +1335,8 @@ sensor:
               lambda: 'return id(encoder_delta) != 0 && id(ui_context) == 6;'
             then:
               - lambda: |-
-                  int timer_count = 1;  // Timer is always listed, running or not.
-                  int progress_count = progress_is_running(id(progress_value_num).state) ? 1 : 0;
+                  int timer_count = !parse_timer_queue(id(timer_queue)).empty() ? 1 : 0;
+                  int progress_count = !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0;
                   int notify_count = id(notify_finished) ? 1 : 0;
                   int count = (int) id(ha_climates).size() + (int) id(ha_lights).size() +
                               (int) id(ha_covers).size() + timer_count + progress_count + notify_count + 2;
@@ -1348,7 +1361,6 @@ sensor:
                     case 1:
                     case 13:
                     case 25:
-                    case 28:
                       id(submenu_index) = menu_scroll_index(id(submenu_index), id(encoder_delta), id(submenu_count));
                       break;
                     case 2:
@@ -1356,8 +1368,8 @@ sensor:
                       break;
                     case 3: case 4: case 7:
                     case 16: case 17:
-                    case 19: case 21:
-                    case 23: case 24: case 26: case 27:
+                    case 19:
+                    case 23: case 26:
                       id(submenu_index) = 1 - id(submenu_index);
                       break;
                     case 8:
@@ -1468,52 +1480,58 @@ text:
     max_length: 255
     mode: text
 
-  # Timer/Progress: plain local entities, set from Home Assistant like any
-  # other ESPHome text/number/button, no JSON config list involved. Start
-  # time is never configured - it's captured as "now" whenever a new end
-  # time is written, purely to compute the timer arc's fill fraction.
+  # Timer: the queue itself is internal-only (id(timer_queue), not an HA
+  # entity), same design as the Notify queue below. HA adds one timer at a
+  # time here as "id=xxx;title=...;end=YYYY-MM-DD HH:MM:SS;color=RRGGBB;
+  # led_mode=0..2;value_blink=0|1;arc_color=RRGGBB" (end is required,
+  # arc_color is optional - empty keeps the default purple arc), then
+  # presses "Add to Queue" to append it. Timers can also be created directly
+  # on the device via the Timer screen's last swipe page - see timer_click.
   - platform: template
-    name: "[Timer] Timer End Time"
-    id: timer_end_time_txt
-    icon: "mdi:timer-outline"
+    name: "[Timer] Add Timer"
+    id: timer_add_txt
+    icon: "mdi:timer-plus-outline"
     optimistic: true
-    restore_value: true
+    restore_value: false
     initial_value: ""
-    max_length: 32
+    max_length: 255
     mode: text
-    on_value:
-      then:
-        - lambda: |-
-            id(timer_start_epoch) = id(ha_time).now().timestamp;
-            id(timer_finished) = false;
-            id(blink_led_on) = false;
-        - script.execute: refresh_timer
 
   - platform: template
-    name: "[Timer] Timer Title"
-    id: timer_title_txt
-    icon: "mdi:format-title"
+    name: "[Timer] Remove Timer ID"
+    id: timer_remove_id_txt
+    icon: "mdi:timer-minus-outline"
     optimistic: true
-    restore_value: true
-    initial_value: "Timer"
-    max_length: 32
+    restore_value: false
+    initial_value: ""
+    max_length: 64
     mode: text
-    on_value:
-      then:
-        - script.execute: refresh_timer
+
+  # Progress: same internal-only queue design. HA adds/updates one entry at
+  # a time here as "id=xxx;title=...;value=0..100;color=RRGGBB;
+  # led_mode=0..2;value_blink=0|1;arc_color=RRGGBB" (arc_color optional,
+  # empty keeps the default purple arc) - sending the same id again
+  # replaces that entry (upsert), which is how HA updates a running
+  # percentage.
+  - platform: template
+    name: "[Progress] Add/Update Progress"
+    id: progress_add_txt
+    icon: "mdi:progress-check"
+    optimistic: true
+    restore_value: false
+    initial_value: ""
+    max_length: 255
+    mode: text
 
   - platform: template
-    name: "[Progress] Progress Title"
-    id: progress_title_txt
-    icon: "mdi:format-title"
+    name: "[Progress] Remove Progress ID"
+    id: progress_remove_id_txt
+    icon: "mdi:progress-close"
     optimistic: true
-    restore_value: true
-    initial_value: "Progress"
-    max_length: 32
+    restore_value: false
+    initial_value: ""
+    max_length: 64
     mode: text
-    on_value:
-      then:
-        - script.execute: refresh_progress
 
   # Notify: the queue itself is internal-only (id(notify_queue), not an HA
   # entity - see globals above) so it never has to fit HA's 255-char text
@@ -1523,9 +1541,10 @@ text:
   # unique string the caller picks, color = a 6-digit hex RGB, led_mode =
   # 0 off/1 on/2 blink, priority = 0 low/1 medium/2 high; `end` is optional -
   # if set, the entry shows a Timer-style countdown arc while it's the one
-  # displayed, and deletes itself once that time passes), then presses
-  # "Add to Queue" to append it. See parse_notify_entry() in
-  # thermostat_helpers.h.
+  # displayed, and deletes itself once that time passes; `arc_color` is also
+  # optional, a 6-digit hex RGB for that countdown arc - empty keeps the
+  # default purple), then presses "Add to Queue" to append it. See
+  # parse_notify_entry() in thermostat_helpers.h.
   - platform: template
     name: "[Notify] Add Notification"
     id: notify_add_txt
@@ -1942,13 +1961,15 @@ script:
                 (int) id(ha_climates).size() + (int) id(ha_lights).size() + (int) id(ha_covers).size();
           } else if (id(ui_context) == 9) {
             id(entity_return_kind) = 5;
+            int timer_count = !parse_timer_queue(id(timer_queue)).empty() ? 1 : 0;
             id(entity_menu_index) = (int) id(ha_climates).size() + (int) id(ha_lights).size() +
-                                     (int) id(ha_covers).size() + 1;  // + Timer (always listed)
+                                     (int) id(ha_covers).size() + timer_count;
           } else if (id(ui_context) == 10) {
             id(entity_return_kind) = 6;
+            int timer_count = !parse_timer_queue(id(timer_queue)).empty() ? 1 : 0;
+            int progress_count = !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0;
             id(entity_menu_index) = (int) id(ha_climates).size() + (int) id(ha_lights).size() +
-                                     (int) id(ha_covers).size() + 1 +
-                                     (progress_is_running(id(progress_value_num).state) ? 1 : 0);
+                                     (int) id(ha_covers).size() + timer_count + progress_count;
           }
           id(thermostat_quick_stage) = 0;
           id(ui_context) = 6;
@@ -1985,13 +2006,7 @@ script:
                       condition:
                         lambda: 'return id(entity_return_kind) == 4;'
                       then:
-                        - lambda: |-
-                            id(ui_context) = 8;
-                            // Re-viewing an already-finished timer should not
-                            // instantly trigger auto-home from a stale
-                            // finished_at_ms - treat arriving on screen as the
-                            // start of the auto-home delay.
-                            if (id(timer_finished)) id(timer_finished_at_ms) = millis();
+                        - lambda: 'id(ui_context) = 8; id(timer_queue_index) = 0;'
                         - script.execute: refresh_timer
                         - lvgl.page.show:
                             id: screen_timer
@@ -2001,9 +2016,7 @@ script:
                             condition:
                               lambda: 'return id(entity_return_kind) == 5;'
                             then:
-                              - lambda: |-
-                                  id(ui_context) = 9;
-                                  if (id(progress_finished)) id(progress_finished_at_ms) = millis();
+                              - lambda: 'id(ui_context) = 9; id(progress_queue_index) = 0;'
                               - script.execute: refresh_progress
                               - lvgl.page.show:
                                   id: screen_progress
@@ -2058,8 +2071,8 @@ script:
           int climates = (int) id(ha_climates).size();
           int lights = (int) id(ha_lights).size();
           int covers = (int) id(ha_covers).size();
-          int timer_count = 1;  // Timer is always listed, running or not.
-          int progress_count = progress_is_running(id(progress_value_num).state) ? 1 : 0;
+          int timer_count = !parse_timer_queue(id(timer_queue)).empty() ? 1 : 0;
+          int progress_count = !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0;
           int notify_count = id(notify_finished) ? 1 : 0;
           int total = climates + lights + covers + timer_count + progress_count + notify_count + 2;
           id(entity_menu_index) = ((id(entity_menu_index) % total) + total) % total;
@@ -2102,40 +2115,38 @@ script:
                         - if:
                             condition:
                               lambda: |-
-                                return id(entity_menu_index) == (int) id(ha_climates).size() +
-                                    (int) id(ha_lights).size() + (int) id(ha_covers).size();
+                                bool timer_present = !parse_timer_queue(id(timer_queue)).empty();
+                                return timer_present &&
+                                       id(entity_menu_index) == (int) id(ha_climates).size() +
+                                           (int) id(ha_lights).size() + (int) id(ha_covers).size();
                             then:
-                              - lambda: |-
-                                  id(ui_context) = 8;
-                                  if (id(timer_finished)) id(timer_finished_at_ms) = millis();
+                              - lambda: 'id(ui_context) = 8; id(timer_queue_index) = 0;'
                               - script.execute: refresh_timer
                               - lvgl.page.show: screen_timer
                             else:
                               - if:
                                   condition:
                                     lambda: |-
-                                      bool progress_running =
-                                          progress_is_running(id(progress_value_num).state);
-                                      return progress_running &&
+                                      int timer_count = !parse_timer_queue(id(timer_queue)).empty() ? 1 : 0;
+                                      bool progress_present = !parse_progress_queue(id(progress_queue)).empty();
+                                      return progress_present &&
                                              id(entity_menu_index) == (int) id(ha_climates).size() +
                                                  (int) id(ha_lights).size() +
-                                                 (int) id(ha_covers).size() + 1;
+                                                 (int) id(ha_covers).size() + timer_count;
                                   then:
-                                    - lambda: |-
-                                        id(ui_context) = 9;
-                                        if (id(progress_finished)) id(progress_finished_at_ms) = millis();
+                                    - lambda: 'id(ui_context) = 9; id(progress_queue_index) = 0;'
                                     - script.execute: refresh_progress
                                     - lvgl.page.show: screen_progress
                                   else:
                                     - if:
                                         condition:
                                           lambda: |-
-                                            int progress_count =
-                                                progress_is_running(id(progress_value_num).state) ? 1 : 0;
+                                            int timer_count = !parse_timer_queue(id(timer_queue)).empty() ? 1 : 0;
+                                            int progress_count = !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0;
                                             return id(notify_finished) &&
                                                    id(entity_menu_index) == (int) id(ha_climates).size() +
                                                        (int) id(ha_lights).size() + (int) id(ha_covers).size() +
-                                                       1 + progress_count;
+                                                       timer_count + progress_count;
                                         then:
                                           - lambda: |-
                                               id(ui_context) = 10;
@@ -2147,12 +2158,12 @@ script:
                                           - if:
                                               condition:
                                                 lambda: |-
-                                                  int progress_count =
-                                                      progress_is_running(id(progress_value_num).state) ? 1 : 0;
+                                                  int timer_count = !parse_timer_queue(id(timer_queue)).empty() ? 1 : 0;
+                                                  int progress_count = !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0;
                                                   int notify_count = id(notify_finished) ? 1 : 0;
                                                   return id(entity_menu_index) == (int) id(ha_climates).size() +
                                                       (int) id(ha_lights).size() + (int) id(ha_covers).size() +
-                                                      1 + progress_count + notify_count;
+                                                      timer_count + progress_count + notify_count;
                                               then:
                                                 - script.execute: open_settings
                                               else:
@@ -2576,43 +2587,70 @@ script:
           data:
             entity_id: !lambda 'return id(ha_covers).get(id(cover_index)).entity_id;'
 
-  # Timer/Progress: single fixed screens, no per-entity index. Values come
-  # straight from the text/number entities above; these scripts just push
-  # them onto the LVGL widgets and, if the entity-overview list happens to
-  # be open right now, refresh it too so a timer finishing (or a progress
-  # reaching 0/100) disappears from the menu immediately.
+  # Timer/Progress: queues of entries, browsed with swipe like Notify. The
+  # Timer screen has one extra "page" past the real entries (index == total)
+  # - an empty add page for creating a new timer directly on the device
+  # (see timer_click / the ui_context == 8 encoder branch).
   - id: refresh_timer
     then:
-      - lvgl.label.update:
-          id: label_timer_value
-          text: !lambda |-
-            auto now = id(ha_time).now();
-            const std::string &end_str = id(timer_end_time_txt).state;
-            if (end_str.empty()) return std::string("--:--:--");
-            long remaining = timer_remaining_seconds(end_str, now);
+      - lambda: |-
+          auto items = parse_timer_queue(id(timer_queue));
+          int total = (int) items.size();
+          int idx = clamp(id(timer_queue_index), 0, total);
+          bool on_add_page = (idx == total);
+          auto now = id(ha_time).now();
+          char value[16];
+          if (on_add_page) {
+            long remaining = id(timer_edit_value).empty() ? 0 : timer_remaining_seconds(id(timer_edit_value), now);
             if (remaining < 0) remaining = 0;
-            char value[16];
             snprintf(value, sizeof(value), "%ld:%02ld:%02ld", remaining / 3600,
                      (remaining % 3600) / 60, remaining % 60);
-            return std::string(value);
-      - lambda: |-
-          if (!id(timer_title_txt).state.empty()) {
-            lv_label_set_text(id(label_timer_title), id(timer_title_txt).state.c_str());
+            lv_label_set_text(id(label_timer_value), id(timer_edit_value).empty() ? "--:--:--" : value);
+            lv_label_set_text(id(label_timer_title), id(i18n_translations).translate("timer.add_hint").c_str());
             lv_obj_clear_flag(id(label_timer_title), LV_OBJ_FLAG_HIDDEN);
+            lv_arc_set_value(id(arc_timer_value), 0);
+            lv_obj_add_flag(id(arc_timer_track), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(arc_timer_value), LV_OBJ_FLAG_HIDDEN);
           } else {
-            lv_obj_add_flag(id(label_timer_title), LV_OBJ_FLAG_HIDDEN);
+            auto &qt = items[idx];
+            long remaining = timer_remaining_seconds(qt.end_time, now);
+            if (remaining < 0) remaining = 0;
+            snprintf(value, sizeof(value), "%ld:%02ld:%02ld", remaining / 3600,
+                     (remaining % 3600) / 60, remaining % 60);
+            lv_label_set_text(id(label_timer_value), value);
+            if (!qt.title.empty()) {
+              lv_label_set_text(id(label_timer_title), qt.title.c_str());
+              lv_obj_clear_flag(id(label_timer_title), LV_OBJ_FLAG_HIDDEN);
+            } else {
+              lv_obj_add_flag(id(label_timer_title), LV_OBJ_FLAG_HIDDEN);
+            }
+            uint32_t elapsed = (now.is_valid() && now.timestamp > qt.added_epoch)
+                                    ? now.timestamp - qt.added_epoch : 0;
+            uint32_t total_secs = elapsed + (uint32_t) remaining;
+            int percent = total_secs > 0
+                              ? (int) clamp((float) elapsed / (float) total_secs * 100.0f, 0.0f, 100.0f)
+                              : 0;
+            lv_arc_set_value(id(arc_timer_value), percent);
+            lv_obj_clear_flag(id(arc_timer_track), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(id(arc_timer_value), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_style_arc_color(id(arc_timer_value), lv_color_hex(arc_color_or_default(qt.arc_color)),
+                                        LV_PART_INDICATOR);
           }
-      - lambda: |-
-          auto now = id(ha_time).now();
-          const std::string &end_str = id(timer_end_time_txt).state;
-          long remaining = end_str.empty() ? -1 : timer_remaining_seconds(end_str, now);
-          uint32_t elapsed = (now.is_valid() && now.timestamp > id(timer_start_epoch))
-                                  ? now.timestamp - id(timer_start_epoch) : 0;
-          uint32_t total = elapsed + (uint32_t) (remaining > 0 ? remaining : 0);
-          int percent = total > 0
-                            ? (int) clamp((float) elapsed / (float) total * 100.0f, 0.0f, 100.0f)
-                            : 0;
-          lv_arc_set_value(id(arc_timer_value), percent);
+          int page_total = total + 1;
+          if (page_total > 1) {
+            char page[20];
+            snprintf(page, sizeof(page), "%d / %d", idx + 1, page_total);
+            lv_label_set_text(id(label_timer_page), page);
+            lv_obj_clear_flag(id(label_timer_page), LV_OBJ_FLAG_HIDDEN);
+            if (idx > 0) lv_obj_clear_flag(id(label_timer_arrow_prev), LV_OBJ_FLAG_HIDDEN);
+            else lv_obj_add_flag(id(label_timer_arrow_prev), LV_OBJ_FLAG_HIDDEN);
+            if (idx < page_total - 1) lv_obj_clear_flag(id(label_timer_arrow_next), LV_OBJ_FLAG_HIDDEN);
+            else lv_obj_add_flag(id(label_timer_arrow_next), LV_OBJ_FLAG_HIDDEN);
+          } else {
+            lv_obj_add_flag(id(label_timer_page), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(label_timer_arrow_prev), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(label_timer_arrow_next), LV_OBJ_FLAG_HIDDEN);
+          }
       - if:
           condition:
             lambda: 'return id(ui_context) == 6;'
@@ -2621,21 +2659,46 @@ script:
 
   - id: refresh_progress
     then:
-      - lvgl.label.update:
-          id: label_progress_value
-          text: !lambda |-
+      - lambda: |-
+          auto items = parse_progress_queue(id(progress_queue));
+          int total = (int) items.size();
+          if (total > 0) {
+            int idx = clamp(id(progress_queue_index), 0, total - 1);
+            auto &qp = items[idx];
             char value[8];
-            snprintf(value, sizeof(value), "%.0f%%", id(progress_value_num).state);
-            return std::string(value);
-      - lambda: |-
-          if (!id(progress_title_txt).state.empty()) {
-            lv_label_set_text(id(label_progress_title), id(progress_title_txt).state.c_str());
-            lv_obj_clear_flag(id(label_progress_title), LV_OBJ_FLAG_HIDDEN);
+            snprintf(value, sizeof(value), "%.0f%%", qp.value);
+            lv_label_set_text(id(label_progress_value), value);
+            if (!qp.title.empty()) {
+              lv_label_set_text(id(label_progress_title), qp.title.c_str());
+              lv_obj_clear_flag(id(label_progress_title), LV_OBJ_FLAG_HIDDEN);
+            } else {
+              lv_obj_add_flag(id(label_progress_title), LV_OBJ_FLAG_HIDDEN);
+            }
+            lv_arc_set_value(id(arc_progress_value), (int) roundf(qp.value));
+            lv_obj_set_style_arc_color(id(arc_progress_value), lv_color_hex(arc_color_or_default(qp.arc_color)),
+                                        LV_PART_INDICATOR);
+            if (total > 1) {
+              char page[20];
+              snprintf(page, sizeof(page), "%d / %d", idx + 1, total);
+              lv_label_set_text(id(label_progress_page), page);
+              lv_obj_clear_flag(id(label_progress_page), LV_OBJ_FLAG_HIDDEN);
+              if (idx > 0) lv_obj_clear_flag(id(label_progress_arrow_prev), LV_OBJ_FLAG_HIDDEN);
+              else lv_obj_add_flag(id(label_progress_arrow_prev), LV_OBJ_FLAG_HIDDEN);
+              if (idx < total - 1) lv_obj_clear_flag(id(label_progress_arrow_next), LV_OBJ_FLAG_HIDDEN);
+              else lv_obj_add_flag(id(label_progress_arrow_next), LV_OBJ_FLAG_HIDDEN);
+            } else {
+              lv_obj_add_flag(id(label_progress_page), LV_OBJ_FLAG_HIDDEN);
+              lv_obj_add_flag(id(label_progress_arrow_prev), LV_OBJ_FLAG_HIDDEN);
+              lv_obj_add_flag(id(label_progress_arrow_next), LV_OBJ_FLAG_HIDDEN);
+            }
           } else {
+            lv_label_set_text(id(label_progress_value), "0%");
             lv_obj_add_flag(id(label_progress_title), LV_OBJ_FLAG_HIDDEN);
+            lv_arc_set_value(id(arc_progress_value), 0);
+            lv_obj_add_flag(id(label_progress_page), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(label_progress_arrow_prev), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(label_progress_arrow_next), LV_OBJ_FLAG_HIDDEN);
           }
-      - lambda: |-
-          lv_arc_set_value(id(arc_progress_value), (int) roundf(id(progress_value_num).state));
       - if:
           condition:
             lambda: 'return id(ui_context) == 6;'
@@ -2704,6 +2767,9 @@ script:
           if (show_arc) {
             lv_obj_clear_flag(id(arc_notify_track), LV_OBJ_FLAG_HIDDEN);
             lv_obj_clear_flag(id(arc_notify_value), LV_OBJ_FLAG_HIDDEN);
+            int qi = clamp(id(notify_queue_index), 0, notify_total - 1);
+            lv_obj_set_style_arc_color(id(arc_notify_value),
+                lv_color_hex(arc_color_or_default(notify_items[qi].arc_color)), LV_PART_INDICATOR);
           } else {
             lv_obj_add_flag(id(arc_notify_track), LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(id(arc_notify_value), LV_OBJ_FLAG_HIDDEN);
@@ -2725,55 +2791,95 @@ script:
   - id: activate_timer_screen
     then:
       - script.execute: wake_display
-      - lambda: |-
-          id(ui_context) = 8;
-          if (id(timer_finished)) id(timer_finished_at_ms) = millis();
+      - lambda: 'id(ui_context) = 8; id(timer_queue_index) = 0;'
       - script.execute: refresh_timer
       - lvgl.page.show: screen_timer
 
-  # Short knob press on the Timer screen. First press shows a "cancel?"
-  # confirmation overlay (auto-dismissed after 5s by check_finish_effects),
-  # hiding the arc/value/title while it's up; a second press while it's
-  # showing confirms the cancel - clears both the end time (stops the
-  # countdown) and the title.
+  # Short knob press on the Timer screen. Behavior depends on which page is
+  # currently shown:
+  # - The empty add page (timer_queue_index == total): a click confirms the
+  #   knob-previewed duration and appends a new timer to the queue, using
+  #   the Timer settings-menu's LED/blink defaults (no cancel-confirm dialog
+  #   here - creating one is cheap/reversible, no need to double-confirm).
+  # - A real entry: unchanged two-click cancel-confirm dialog (auto-
+  #   dismissed after 5s by check_finish_effects), except the second click
+  #   now removes that specific queue entry instead of clearing a single
+  #   global timer.
   - id: timer_click
     then:
       - if:
           condition:
-            lambda: 'return id(timer_cancel_confirm_pending);'
+            lambda: 'return id(timer_queue_index) >= (int) parse_timer_queue(id(timer_queue)).size();'
           then:
-            - lambda: |-
-                id(timer_cancel_confirm_pending) = false;
-                lv_obj_add_flag(id(timer_cancel_backdrop), LV_OBJ_FLAG_HIDDEN);
-                lv_obj_add_flag(id(label_timer_cancel_confirm), LV_OBJ_FLAG_HIDDEN);
-                lv_obj_clear_flag(id(arc_timer_track), LV_OBJ_FLAG_HIDDEN);
-                lv_obj_clear_flag(id(arc_timer_value), LV_OBJ_FLAG_HIDDEN);
-                lv_obj_clear_flag(id(label_timer_value), LV_OBJ_FLAG_HIDDEN);
-            - text.set: {id: timer_end_time_txt, value: ""}
-            - text.set: {id: timer_title_txt, value: ""}
+            - if:
+                condition:
+                  lambda: 'return !id(timer_edit_value).empty();'
+                then:
+                  - lambda: |-
+                      QueuedTimer qt;
+                      char idbuf[24];
+                      snprintf(idbuf, sizeof(idbuf), "dev%lu", (unsigned long) id(timer_queue_seq));
+                      qt.entry_id = idbuf;
+                      qt.title = "";
+                      qt.end_time = id(timer_edit_value);
+                      qt.color = blink_led_color_hex(id(timer_blink_led_color_select).state);
+                      qt.led_mode = id(timer_finish_blink_switch).state ? 2 : 0;
+                      qt.value_blink = id(timer_value_blink_switch).state;
+                      qt.seq = id(timer_queue_seq)++;
+                      qt.added_epoch = id(ha_time).now().timestamp;
+                      qt.notified = false;
+                      if (!id(timer_queue).empty()) id(timer_queue) += "\n";
+                      id(timer_queue) += serialize_timer_entry(qt);
+                      id(timer_edit_value) = "";
+                      int total = (int) parse_timer_queue(id(timer_queue)).size();
+                      id(timer_queue_index) = total - 1;
+                  - script.execute: refresh_timer
           else:
-            - lambda: |-
-                id(timer_cancel_confirm_pending) = true;
-                id(timer_cancel_confirm_started_ms) = millis();
-                lv_obj_clear_flag(id(timer_cancel_backdrop), LV_OBJ_FLAG_HIDDEN);
-                lv_obj_clear_flag(id(label_timer_cancel_confirm), LV_OBJ_FLAG_HIDDEN);
-                lv_obj_add_flag(id(arc_timer_track), LV_OBJ_FLAG_HIDDEN);
-                lv_obj_add_flag(id(arc_timer_value), LV_OBJ_FLAG_HIDDEN);
-                lv_obj_add_flag(id(label_timer_value), LV_OBJ_FLAG_HIDDEN);
-                lv_obj_add_flag(id(label_timer_title), LV_OBJ_FLAG_HIDDEN);
-                char cancel_body[48];
-                snprintf(cancel_body, sizeof(cancel_body),
-                         id(i18n_translations).translate("timer.cancel_confirm_body").c_str(), 5);
-                std::string cancel_msg =
-                    id(i18n_translations).translate("timer.cancel_confirm_title") + "\n" + cancel_body;
-                lv_label_set_text(id(label_timer_cancel_confirm), cancel_msg.c_str());
+            - if:
+                condition:
+                  lambda: 'return id(timer_cancel_confirm_pending);'
+                then:
+                  - lambda: |-
+                      id(timer_cancel_confirm_pending) = false;
+                      lv_obj_add_flag(id(timer_cancel_backdrop), LV_OBJ_FLAG_HIDDEN);
+                      lv_obj_add_flag(id(label_timer_cancel_confirm), LV_OBJ_FLAG_HIDDEN);
+                      lv_obj_clear_flag(id(arc_timer_track), LV_OBJ_FLAG_HIDDEN);
+                      lv_obj_clear_flag(id(arc_timer_value), LV_OBJ_FLAG_HIDDEN);
+                      lv_obj_clear_flag(id(label_timer_value), LV_OBJ_FLAG_HIDDEN);
+                      auto items = parse_timer_queue(id(timer_queue));
+                      int idx = clamp(id(timer_queue_index), 0, (int) items.size() - 1);
+                      std::string target = items.empty() ? "" : items[idx].entry_id;
+                      std::string rebuilt;
+                      for (auto &qt : items) {
+                        if (qt.entry_id == target) continue;
+                        if (!rebuilt.empty()) rebuilt += "\n";
+                        rebuilt += serialize_timer_entry(qt);
+                      }
+                      id(timer_queue) = rebuilt;
+                      int total = (int) parse_timer_queue(id(timer_queue)).size();
+                      id(timer_queue_index) = clamp(id(timer_queue_index), 0, total);
+                  - script.execute: refresh_timer
+                else:
+                  - lambda: |-
+                      id(timer_cancel_confirm_pending) = true;
+                      id(timer_cancel_confirm_started_ms) = millis();
+                      lv_obj_clear_flag(id(timer_cancel_backdrop), LV_OBJ_FLAG_HIDDEN);
+                      lv_obj_clear_flag(id(label_timer_cancel_confirm), LV_OBJ_FLAG_HIDDEN);
+                      lv_obj_add_flag(id(arc_timer_track), LV_OBJ_FLAG_HIDDEN);
+                      lv_obj_add_flag(id(arc_timer_value), LV_OBJ_FLAG_HIDDEN);
+                      lv_obj_add_flag(id(label_timer_value), LV_OBJ_FLAG_HIDDEN);
+                      lv_obj_add_flag(id(label_timer_title), LV_OBJ_FLAG_HIDDEN);
+                      char cancel_body[48];
+                      snprintf(cancel_body, sizeof(cancel_body),
+                               id(i18n_translations).translate("timer.cancel_confirm_body").c_str(), 5);
+                      std::string cancel_msg =
+                          id(i18n_translations).translate("timer.cancel_confirm_title") + "\n" + cancel_body;
+                      lv_label_set_text(id(label_timer_cancel_confirm), cancel_msg.c_str());
 
   - id: activate_progress_screen
     then:
       - script.execute: wake_display
-      - lambda: |-
-          id(ui_context) = 9;
-          if (id(progress_finished)) id(progress_finished_at_ms) = millis();
+      - lambda: 'id(ui_context) = 9; id(progress_queue_index) = 0;'
       - script.execute: refresh_progress
       - lvgl.page.show: screen_progress
 
@@ -2806,11 +2912,6 @@ script:
           id(notify_queue_index) = menu_scroll_index(id(notify_queue_index), 1, total);
       - script.execute: refresh_notify
 
-  # HA writes one entry's fields (no id/seq needed from HA's side beyond the
-  # id it picks) to notify_add_txt as
-  # "id|title|subtitle|color|led_mode|priority|value_blink", then presses
-  # this button. Appends the entry's own seq (assigned here, not by HA) to
-  # the internal queue and clears the input field.
   # HA's input is a human-readable "id=...;title=...;color=RRGGBB;..." string
   # (see parse_notify_entry() in thermostat_helpers.h for the full key
   # list/example) - this just validates it has an id+title, tags on the
@@ -2851,6 +2952,131 @@ script:
           id(notify_queue_index) = clamp(id(notify_queue_index), 0, total > 0 ? total - 1 : 0);
       - script.execute: refresh_notify
 
+  # HA's input is "id=...;title=...;end=YYYY-MM-DD HH:MM:SS;color=RRGGBB;
+  # led_mode=0..2;value_blink=0|1" (see parse_timer_entry() in
+  # thermostat_helpers.h) - validates id/title/end are present, tags on the
+  # ESP-assigned seq/added timestamp, and appends it to the queue.
+  - id: timer_add_to_queue
+    then:
+      - lambda: |-
+          std::string raw = id(timer_add_txt).state;
+          if (raw.empty()) return;
+          QueuedTimer qt = parse_timer_entry(raw);
+          if (qt.entry_id.empty() || qt.title.empty() || qt.end_time.empty()) return;
+          qt.seq = id(timer_queue_seq)++;
+          qt.added_epoch = id(ha_time).now().timestamp;
+          if (!id(timer_queue).empty()) id(timer_queue) += "\n";
+          id(timer_queue) += serialize_timer_entry(qt);
+          int total = (int) parse_timer_queue(id(timer_queue)).size();
+          id(timer_queue_index) = total - 1;
+      - text.set: {id: timer_add_txt, value: ""}
+      - script.execute: refresh_timer
+
+  # HA writes the target entry's id to timer_remove_id_txt, then presses
+  # this button. Same rebuild-without-the-matching-entry pattern as Notify.
+  - id: timer_remove_from_queue
+    then:
+      - lambda: |-
+          std::string target = id(timer_remove_id_txt).state;
+          if (target.empty()) return;
+          auto items = parse_timer_queue(id(timer_queue));
+          std::string rebuilt;
+          for (auto &qt : items) {
+            if (qt.entry_id == target) continue;
+            if (!rebuilt.empty()) rebuilt += "\n";
+            rebuilt += serialize_timer_entry(qt);
+          }
+          id(timer_queue) = rebuilt;
+      - text.set: {id: timer_remove_id_txt, value: ""}
+      - lambda: |-
+          int total = (int) parse_timer_queue(id(timer_queue)).size();
+          id(timer_queue_index) = clamp(id(timer_queue_index), 0, total);
+      - script.execute: refresh_timer
+
+  # HA's input is "id=...;title=...;value=0..100;color=RRGGBB;led_mode=0..2;
+  # value_blink=0|1" - sending the same id again replaces that entry
+  # (upsert), which is how HA updates a running percentage over time.
+  - id: progress_add_to_queue
+    then:
+      - lambda: |-
+          std::string raw = id(progress_add_txt).state;
+          if (raw.empty()) return;
+          QueuedProgress qp = parse_progress_entry(raw);
+          if (qp.entry_id.empty() || qp.title.empty()) return;
+          auto items = parse_progress_queue(id(progress_queue));
+          bool replaced = false;
+          std::string rebuilt;
+          for (auto &existing : items) {
+            if (existing.entry_id == qp.entry_id) {
+              qp.seq = existing.seq;
+              replaced = true;
+            }
+            if (!rebuilt.empty()) rebuilt += "\n";
+            rebuilt += serialize_progress_entry(existing.entry_id == qp.entry_id ? qp : existing);
+          }
+          if (!replaced) {
+            qp.seq = id(progress_queue_seq)++;
+            if (!rebuilt.empty()) rebuilt += "\n";
+            rebuilt += serialize_progress_entry(qp);
+          }
+          id(progress_queue) = rebuilt;
+      - text.set: {id: progress_add_txt, value: ""}
+      - script.execute: refresh_progress
+
+  - id: progress_remove_from_queue
+    then:
+      - lambda: |-
+          std::string target = id(progress_remove_id_txt).state;
+          if (target.empty()) return;
+          auto items = parse_progress_queue(id(progress_queue));
+          std::string rebuilt;
+          for (auto &qp : items) {
+            if (qp.entry_id == target) continue;
+            if (!rebuilt.empty()) rebuilt += "\n";
+            rebuilt += serialize_progress_entry(qp);
+          }
+          id(progress_queue) = rebuilt;
+      - text.set: {id: progress_remove_id_txt, value: ""}
+      - lambda: |-
+          int total = (int) parse_progress_queue(id(progress_queue)).size();
+          id(progress_queue_index) = clamp(id(progress_queue_index), 0, total > 0 ? total - 1 : 0);
+      - script.execute: refresh_progress
+
+  # Swipe navigation on the Timer screen. Unlike Notify/Progress, the Timer
+  # queue has one extra virtual slot past the real entries (index == total)
+  # - the empty "add a new timer" page - so it scrolls one step further.
+  - id: timer_previous
+    then:
+      - script.execute: wake_display
+      - lambda: |-
+          int total = (int) parse_timer_queue(id(timer_queue)).size();
+          id(timer_queue_index) = menu_scroll_index(id(timer_queue_index), -1, total + 1);
+      - script.execute: refresh_timer
+
+  - id: timer_next
+    then:
+      - script.execute: wake_display
+      - lambda: |-
+          int total = (int) parse_timer_queue(id(timer_queue)).size();
+          id(timer_queue_index) = menu_scroll_index(id(timer_queue_index), 1, total + 1);
+      - script.execute: refresh_timer
+
+  - id: progress_previous
+    then:
+      - script.execute: wake_display
+      - lambda: |-
+          int total = (int) parse_progress_queue(id(progress_queue)).size();
+          id(progress_queue_index) = menu_scroll_index(id(progress_queue_index), -1, total);
+      - script.execute: refresh_progress
+
+  - id: progress_next
+    then:
+      - script.execute: wake_display
+      - lambda: |-
+          int total = (int) parse_progress_queue(id(progress_queue)).size();
+          id(progress_queue_index) = menu_scroll_index(id(progress_queue_index), 1, total);
+      - script.execute: refresh_progress
+
   # Runs every 500ms (see the interval: block). Handles what happens once a
   # timer/progress has finished: an optional status-LED blink (in the
   # respective *_blink_led_color_select color, only while still on that
@@ -2863,33 +3089,54 @@ script:
   - id: check_finish_effects
     then:
       - lambda: |-
-          // Latch "finished" the first time the countdown reaches zero /
-          // the value reaches 100. Runs unconditionally (not just while the
-          // respective screen is open), otherwise a timer/progress that
-          // finishes while the user is elsewhere would never be detected -
-          // needed for auto-home, the LED blink once back on screen, and the
-          // auto-show-screen action below. *timer_just_finished is true for
-          // exactly this one tick, driving that action.
-          id(timer_just_finished) = false;
-          const std::string &end_str = id(timer_end_time_txt).state;
-          if (!end_str.empty() && !id(timer_finished)) {
-            long remaining = timer_remaining_seconds(end_str, id(ha_time).now());
-            if (remaining <= 0) {
-              id(timer_finished) = true;
-              id(timer_finished_at_ms) = millis();
-              id(timer_just_finished) = true;
+          // Timer: each entry's "finished" state is computed live from its
+          // own end_time (remaining <= 0) - no stored finished flag needed.
+          // `notified` is a one-shot flag serialized into the entry itself,
+          // flipped the first time it crosses zero, so the auto-show action
+          // below fires once per entry instead of every tick. Entries stay
+          // in the queue (blinking/counting as finished) until removed -
+          // no self-delete, unlike Notify's optional "end" field.
+          id(timer_just_finished_any) = false;
+          {
+            auto items = parse_timer_queue(id(timer_queue));
+            auto now = id(ha_time).now();
+            bool any_newly_notified = false;
+            std::string rebuilt;
+            for (size_t i = 0; i < items.size(); i++) {
+              auto &qt = items[i];
+              if (!qt.notified && timer_remaining_seconds(qt.end_time, now) <= 0) {
+                qt.notified = true;
+                any_newly_notified = true;
+                id(timer_just_finished_any) = true;
+                id(timer_last_finished_index) = (int) i;
+              }
+              if (!rebuilt.empty()) rebuilt += "\n";
+              rebuilt += serialize_timer_entry(qt);
             }
+            if (any_newly_notified) id(timer_queue) = rebuilt;
           }
-          id(progress_just_finished) = false;
-          float progress_v = id(progress_value_num).state;
-          if (progress_v >= 100.0f) {
-            if (!id(progress_finished)) {
-              id(progress_finished) = true;
-              id(progress_finished_at_ms) = millis();
-              id(progress_just_finished) = true;
+          // Progress: same one-shot notified pattern, "finished" = value >= 100.
+          // finished_at_ms is captured here (Progress has no end-time to derive
+          // elapsed-since-finished from the way Timer can) and anchors its
+          // Auto-Home delay below.
+          id(progress_just_finished_any) = false;
+          {
+            auto items = parse_progress_queue(id(progress_queue));
+            bool any_newly_notified = false;
+            std::string rebuilt;
+            for (size_t i = 0; i < items.size(); i++) {
+              auto &qp = items[i];
+              if (!qp.notified && qp.value >= 100.0f) {
+                qp.notified = true;
+                qp.finished_at_ms = millis();
+                any_newly_notified = true;
+                id(progress_just_finished_any) = true;
+                id(progress_last_finished_index) = (int) i;
+              }
+              if (!rebuilt.empty()) rebuilt += "\n";
+              rebuilt += serialize_progress_entry(qp);
             }
-          } else {
-            id(progress_finished) = false;
+            if (any_newly_notified) id(progress_queue) = rebuilt;
           }
           // Self-deleting entries (those with an "end" date-time) drop
           // themselves from the queue once that time passes - same
@@ -2941,21 +3188,26 @@ script:
       - if:
           condition:
             lambda: |-
-              return id(connection_ready) && id(timer_just_finished) &&
+              return id(connection_ready) && id(timer_just_finished_any) &&
                      id(timer_show_on_finish_switch).state;
           then:
             - script.execute: wake_display
-            - lambda: 'id(ui_context) = 8;'
+            - lambda: |-
+                id(ui_context) = 8;
+                id(timer_queue_index) = id(timer_last_finished_index);
             - script.execute: refresh_timer
             - lvgl.page.show: screen_timer
+      # Progress always auto-shows once an entry finishes - no toggle for
+      # this anymore, same as Notify (the per-entry LED settings replaced
+      # the old global Progress switches, including the show-on-finish one).
       - if:
           condition:
-            lambda: |-
-              return id(connection_ready) && id(progress_just_finished) &&
-                     id(progress_show_on_finish_switch).state;
+            lambda: 'return id(connection_ready) && id(progress_just_finished_any);'
           then:
             - script.execute: wake_display
-            - lambda: 'id(ui_context) = 9;'
+            - lambda: |-
+                id(ui_context) = 9;
+                id(progress_queue_index) = id(progress_last_finished_index);
             - script.execute: refresh_progress
             - lvgl.page.show: screen_progress
       # Notify always auto-shows once at least one notification is queued -
@@ -2971,27 +3223,41 @@ script:
                 id(notify_queue_index) = 0;
             - script.execute: refresh_notify
             - lvgl.page.show: screen_notify
-      # A finished timer/progress that isn't (or is no longer) being looked
-      # at resets itself, so it doesn't linger "finished" forever and doesn't
-      # reappear stale (see the Timer Auto-Home / Progress Auto-Home delay
-      # below, which needs a fresh finished_at_ms, not this old one).
-      - if:
-          condition:
-            lambda: 'return id(timer_finished) && id(ui_context) != 8;'
-          then:
-            - text.set: {id: timer_end_time_txt, value: ""}
-            - text.set: {id: timer_title_txt, value: ""}
-      - if:
-          condition:
-            lambda: 'return id(progress_finished) && id(ui_context) != 9;'
-          then:
-            - number.set: {id: progress_value_num, value: 0}
-            - text.set: {id: progress_title_txt, value: ""}
+      # LED/value-label blinking and Auto-Home both read whichever entry is
+      # currently displayed on its screen - live-computed "finished" state
+      # (Timer: remaining <= 0; Progress: value >= 100) plus that entry's own
+      # led_mode/value_blink fields (Notify already worked this way). A
+      # finished entry that isn't being looked at keeps counting/blinking in
+      # the queue - it's simply not driving the LED/value label right now.
       - lambda: |-
-          bool timer_led_blinking = id(ui_context) == 8 && id(timer_finished) &&
-                                     id(timer_finish_blink_switch).state;
-          bool progress_led_blinking = id(ui_context) == 9 && id(progress_finished) &&
-                                        id(progress_finish_blink_switch).state;
+          auto timer_items = parse_timer_queue(id(timer_queue));
+          int timer_total = (int) timer_items.size();
+          bool timer_finished_now = false;
+          int timer_led_mode = 0;
+          bool timer_value_blink_enabled = false;
+          long timer_remaining = 0;
+          if (id(ui_context) == 8 && id(timer_queue_index) < timer_total) {
+            auto &qt = timer_items[id(timer_queue_index)];
+            timer_remaining = timer_remaining_seconds(qt.end_time, id(ha_time).now());
+            timer_finished_now = timer_remaining <= 0;
+            timer_led_mode = qt.led_mode;
+            timer_value_blink_enabled = qt.value_blink;
+          }
+          bool timer_led_blinking = timer_finished_now && timer_led_mode == 2;
+
+          auto progress_items = parse_progress_queue(id(progress_queue));
+          int progress_total = (int) progress_items.size();
+          bool progress_finished_now = false;
+          int progress_led_mode = 0;
+          bool progress_value_blink_enabled = false;
+          if (id(ui_context) == 9 && id(progress_queue_index) < progress_total) {
+            auto &qp = progress_items[id(progress_queue_index)];
+            progress_finished_now = qp.value >= 100.0f;
+            progress_led_mode = qp.led_mode;
+            progress_value_blink_enabled = qp.value_blink;
+          }
+          bool progress_led_blinking = progress_finished_now && progress_led_mode == 2;
+
           // Both the LED mode (off/on/blink) and whether the value label
           // also blinks come from the currently shown queue entry itself.
           auto notify_queue_items = parse_notify_queue(id(notify_queue));
@@ -3008,15 +3274,13 @@ script:
                                   ? !id(blink_led_on) : false;
 
           lv_obj_t *timer_value = id(label_timer_value);
-          bool timer_value_blinking = id(ui_context) == 8 && id(timer_finished) &&
-                                       id(timer_value_blink_switch).state;
+          bool timer_value_blinking = timer_finished_now && timer_value_blink_enabled;
           lv_obj_set_style_text_opa(timer_value,
               (timer_value_blinking && !id(blink_led_on)) ? LV_OPA_TRANSP : LV_OPA_COVER,
               LV_PART_MAIN);
 
           lv_obj_t *progress_value = id(label_progress_value);
-          bool progress_value_blinking = id(ui_context) == 9 && id(progress_finished) &&
-                                          id(progress_value_blink_switch).state;
+          bool progress_value_blinking = progress_finished_now && progress_value_blink_enabled;
           lv_obj_set_style_text_opa(progress_value,
               (progress_value_blinking && !id(blink_led_on)) ? LV_OPA_TRANSP : LV_OPA_COVER,
               LV_PART_MAIN);
@@ -3029,17 +3293,24 @@ script:
       - if:
           condition:
             lambda: |-
+              auto items = parse_timer_queue(id(timer_queue));
+              int total = (int) items.size();
               int delay = (int) id(timer_auto_home_num).state;
-              return id(ui_context) == 8 && id(timer_finished) && delay > 0 &&
-                     millis() - id(timer_finished_at_ms) >= (uint32_t) delay * 1000;
+              if (id(ui_context) != 8 || delay <= 0 || id(timer_queue_index) >= total) return false;
+              long remaining = timer_remaining_seconds(items[id(timer_queue_index)].end_time, id(ha_time).now());
+              return remaining <= 0 && -remaining >= delay;
           then:
             - script.execute: activate_home_screen
       - if:
           condition:
             lambda: |-
+              auto items = parse_progress_queue(id(progress_queue));
+              int total = (int) items.size();
               int delay = (int) id(progress_auto_home_num).state;
-              return id(ui_context) == 9 && id(progress_finished) && delay > 0 &&
-                     millis() - id(progress_finished_at_ms) >= (uint32_t) delay * 1000;
+              if (id(ui_context) != 9 || delay <= 0 || id(progress_queue_index) >= total) return false;
+              auto &qp = items[id(progress_queue_index)];
+              return qp.value >= 100.0f && qp.finished_at_ms != 0 &&
+                     millis() - qp.finished_at_ms >= (uint32_t) delay * 1000;
           then:
             - script.execute: activate_home_screen
       - if:
@@ -3067,11 +3338,7 @@ script:
                       id(timer_cancel_confirm_pending) = false;
                       lv_obj_add_flag(id(timer_cancel_backdrop), LV_OBJ_FLAG_HIDDEN);
                       lv_obj_add_flag(id(label_timer_cancel_confirm), LV_OBJ_FLAG_HIDDEN);
-                      lv_obj_clear_flag(id(arc_timer_track), LV_OBJ_FLAG_HIDDEN);
-                      lv_obj_clear_flag(id(arc_timer_value), LV_OBJ_FLAG_HIDDEN);
-                      lv_obj_clear_flag(id(label_timer_value), LV_OBJ_FLAG_HIDDEN);
-                      if (!id(timer_title_txt).state.empty())
-                        lv_obj_clear_flag(id(label_timer_title), LV_OBJ_FLAG_HIDDEN);
+                  - script.execute: refresh_timer
                 else:
                   - lambda: |-
                       uint32_t elapsed = millis() - id(timer_cancel_confirm_started_ms);
@@ -3656,12 +3923,9 @@ script:
             case 11: id(num_preview) = (int) id(timer_auto_home_num).state; break;
             case 19: id(submenu_index) = id(timer_finish_blink_switch).state ? 1 : 0; break;
             case 20: id(num_preview) = (int) id(progress_auto_home_num).state; break;
-            case 21: id(submenu_index) = id(progress_finish_blink_switch).state ? 1 : 0; break;
             case 22: id(num_preview) = (int) id(timer_knob_step_num).state; break;
             case 23: id(submenu_index) = id(timer_value_blink_switch).state ? 1 : 0; break;
-            case 24: id(submenu_index) = id(progress_value_blink_switch).state ? 1 : 0; break;
             case 26: id(submenu_index) = id(timer_show_on_finish_switch).state ? 1 : 0; break;
-            case 27: id(submenu_index) = id(progress_show_on_finish_switch).state ? 1 : 0; break;
             case 29: id(num_preview) = (int) id(timer_blink_led_brightness_num).state; break;
             case 30: id(num_preview) = (int) id(progress_blink_led_brightness_num).state; break;
             case 31: id(num_preview) = (int) id(notify_auto_home_num).state; break;
@@ -3669,13 +3933,6 @@ script:
             case 25: {
               id(submenu_count) = BLINK_LED_COLOR_COUNT;
               const std::string &cur_name = id(timer_blink_led_color_select).state;
-              for (int i = 0; i < BLINK_LED_COLOR_COUNT; i++)
-                if (cur_name == blink_led_color_name(i)) { id(submenu_index) = i; break; }
-              break;
-            }
-            case 28: {
-              id(submenu_count) = BLINK_LED_COLOR_COUNT;
-              const std::string &cur_name = id(progress_blink_led_color_select).state;
               for (int i = 0; i < BLINK_LED_COLOR_COUNT; i++)
                 if (cur_name == blink_led_color_name(i)) { id(submenu_index) = i; break; }
               break;
@@ -3727,22 +3984,15 @@ script:
             case 11: id(apply_service) = 25; break;
             case 19: id(apply_service) = id(submenu_index) ? 26 : 27; break;
             case 20: id(apply_service) = 28; break;
-            case 21: id(apply_service) = id(submenu_index) ? 29 : 30; break;
             case 22: id(apply_service) = 31; break;
             case 23: id(apply_service) = id(submenu_index) ? 32 : 33; break;
-            case 24: id(apply_service) = id(submenu_index) ? 34 : 35; break;
             case 25:
               id(pending_mode_holder) = blink_led_color_name(id(submenu_index));
               id(apply_service) = 36;
               break;
             case 26: id(apply_service) = id(submenu_index) ? 37 : 38; break;
-            case 27: id(apply_service) = id(submenu_index) ? 39 : 40; break;
             case 29: id(apply_service) = 41; break;
             case 30: id(apply_service) = 42; break;
-            case 28:
-              id(pending_mode_holder) = blink_led_color_name(id(submenu_index));
-              id(apply_service) = 43;
-              break;
             case 31: id(apply_service) = 44; break;
             case 34: id(apply_service) = 48; break;
             default: break;
@@ -3822,12 +4072,6 @@ script:
           condition: {lambda: 'return id(apply_service) == 28;'}
           then: [{number.set: {id: progress_auto_home_num, value: !lambda 'return id(num_preview);'}}]
       - if:
-          condition: {lambda: 'return id(apply_service) == 29;'}
-          then: [switch.turn_on: progress_finish_blink_switch]
-      - if:
-          condition: {lambda: 'return id(apply_service) == 30;'}
-          then: [switch.turn_off: progress_finish_blink_switch]
-      - if:
           condition: {lambda: 'return id(apply_service) == 31;'}
           then: [{number.set: {id: timer_knob_step_num, value: !lambda 'return id(num_preview);'}}]
       - if:
@@ -3836,12 +4080,6 @@ script:
       - if:
           condition: {lambda: 'return id(apply_service) == 33;'}
           then: [switch.turn_off: timer_value_blink_switch]
-      - if:
-          condition: {lambda: 'return id(apply_service) == 34;'}
-          then: [switch.turn_on: progress_value_blink_switch]
-      - if:
-          condition: {lambda: 'return id(apply_service) == 35;'}
-          then: [switch.turn_off: progress_value_blink_switch]
       - if:
           condition: {lambda: 'return id(apply_service) == 36;'}
           then:
@@ -3855,23 +4093,11 @@ script:
           condition: {lambda: 'return id(apply_service) == 38;'}
           then: [switch.turn_off: timer_show_on_finish_switch]
       - if:
-          condition: {lambda: 'return id(apply_service) == 39;'}
-          then: [switch.turn_on: progress_show_on_finish_switch]
-      - if:
-          condition: {lambda: 'return id(apply_service) == 40;'}
-          then: [switch.turn_off: progress_show_on_finish_switch]
-      - if:
           condition: {lambda: 'return id(apply_service) == 41;'}
           then: [{number.set: {id: timer_blink_led_brightness_num, value: !lambda 'return id(num_preview);'}}]
       - if:
           condition: {lambda: 'return id(apply_service) == 42;'}
           then: [{number.set: {id: progress_blink_led_brightness_num, value: !lambda 'return id(num_preview);'}}]
-      - if:
-          condition: {lambda: 'return id(apply_service) == 43;'}
-          then:
-            - select.set:
-                id: progress_blink_led_color_select
-                option: !lambda 'return id(pending_mode_holder);'
       - if:
           condition: {lambda: 'return id(apply_service) == 44;'}
           then: [{number.set: {id: notify_auto_home_num, value: !lambda 'return id(num_preview);'}}]
@@ -3898,8 +4124,8 @@ script:
             int climates = (int) id(ha_climates).size();
             int lights = (int) id(ha_lights).size();
             int covers = (int) id(ha_covers).size();
-            int timers = 1;  // Timer is always listed, running or not.
-            int progresses = progress_is_running(id(progress_value_num).state) ? 1 : 0;
+            int timers = !parse_timer_queue(id(timer_queue)).empty() ? 1 : 0;
+            int progresses = !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0;
             int notifies = id(notify_finished) ? 1 : 0;
             int count = climates + lights + covers + timers + progresses + notifies + 2;
             auto entity_name = [climates, lights, covers, timers, progresses, notifies,
@@ -3909,13 +4135,9 @@ script:
               if (p < climates + lights) return id(ha_lights).get(p - climates).name;
               if (p < climates + lights + covers) return id(ha_covers).get(p - climates - lights).name;
               if (p < climates + lights + covers + timers)
-                return id(timer_title_txt).state.empty()
-                           ? id(i18n_translations).translate("settings.group.timer")
-                           : id(timer_title_txt).state;
+                return id(i18n_translations).translate("settings.group.timer");
               if (p < climates + lights + covers + timers + progresses)
-                return id(progress_title_txt).state.empty()
-                           ? id(i18n_translations).translate("settings.group.progress")
-                           : id(progress_title_txt).state;
+                return id(i18n_translations).translate("settings.group.progress");
               if (p < climates + lights + covers + timers + progresses + notifies)
                 return id(i18n_translations).translate("settings.group.notify");
               return p == climates + lights + covers + timers + progresses + notifies
@@ -4008,18 +4230,10 @@ script:
                 else { snprintf(buf, sizeof(buf), "%ds", v); val = buf; }
                 break;
               }
-              case 21:
-                val = id(i18n_translations).translate(
-                    id(progress_finish_blink_switch).state ? "common.on" : "common.off");
-                break;
               case 22: snprintf(buf, sizeof(buf), "%ds", (int) id(timer_knob_step_num).state); val = buf; break;
               case 23:
                 val = id(i18n_translations).translate(
                     id(timer_value_blink_switch).state ? "common.on" : "common.off");
-                break;
-              case 24:
-                val = id(i18n_translations).translate(
-                    id(progress_value_blink_switch).state ? "common.on" : "common.off");
                 break;
               case 25:
                 val = id(i18n_translations).translate(
@@ -4028,14 +4242,6 @@ script:
               case 26:
                 val = id(i18n_translations).translate(
                     id(timer_show_on_finish_switch).state ? "common.on" : "common.off");
-                break;
-              case 27:
-                val = id(i18n_translations).translate(
-                    id(progress_show_on_finish_switch).state ? "common.on" : "common.off");
-                break;
-              case 28:
-                val = id(i18n_translations).translate(
-                    blink_led_color_key_for_name(id(progress_blink_led_color_select).state));
                 break;
               case 29: snprintf(buf, sizeof(buf), "%d%%", (int) id(timer_blink_led_brightness_num).state); val = buf; break;
               case 30: snprintf(buf, sizeof(buf), "%d%%", (int) id(progress_blink_led_brightness_num).state); val = buf; break;
@@ -4196,8 +4402,7 @@ script:
                 cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next; val = m.value;
                 break;
               }
-              case 19:
-              case 21: {
+              case 19: {
                 auto m = bool_menu_window(id(submenu_index),
                                            id(i18n_translations).translate("common.off").c_str(),
                                            id(i18n_translations).translate("common.on").c_str());
@@ -4211,16 +4416,14 @@ script:
                 cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next; val = m.value;
                 break;
               }
-              case 23:
-              case 24: {
+              case 23: {
                 auto m = bool_menu_window(id(submenu_index),
                                            id(i18n_translations).translate("common.off").c_str(),
                                            id(i18n_translations).translate("common.on").c_str());
                 cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next; val = m.value;
                 break;
               }
-              case 26:
-              case 27: {
+              case 26: {
                 auto m = bool_menu_window(id(submenu_index),
                                            id(i18n_translations).translate("common.off").c_str(),
                                            id(i18n_translations).translate("common.on").c_str());
@@ -4236,8 +4439,7 @@ script:
                 cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next; val = m.value;
                 break;
               }
-              case 25:
-              case 28: {
+              case 25: {
                 auto m = menu_window(id(submenu_index), BLINK_LED_COLOR_COUNT, false,
                                       [](int p) -> std::string {
                                         return id(i18n_translations).translate(blink_led_color_key(p));
@@ -4261,8 +4463,8 @@ script:
             if (id(ui_context) == 6)
               return std::string(entity_menu_icon(id(entity_menu_index) - 2,
                   (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size(),
-                  1,  // Timer is always listed, running or not.
-                  progress_is_running(id(progress_value_num).state) ? 1 : 0,
+                  !parse_timer_queue(id(timer_queue)).empty() ? 1 : 0,
+                  !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0,
                   id(notify_finished) ? 1 : 0));
             if (id(ui_context) == 2)
               return std::string(settings_root_icon(id(menu_index) - 2));
@@ -4277,8 +4479,8 @@ script:
             if (id(ui_context) == 6)
               return std::string(entity_menu_icon(id(entity_menu_index) - 1,
                   (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size(),
-                  1,  // Timer is always listed, running or not.
-                  progress_is_running(id(progress_value_num).state) ? 1 : 0,
+                  !parse_timer_queue(id(timer_queue)).empty() ? 1 : 0,
+                  !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0,
                   id(notify_finished) ? 1 : 0));
             if (id(ui_context) == 2)
               return std::string(settings_root_icon(id(menu_index) - 1));
@@ -4293,8 +4495,8 @@ script:
             if (id(ui_context) == 6)
               return std::string(entity_menu_icon(id(entity_menu_index),
                   (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size(),
-                  1,  // Timer is always listed, running or not.
-                  progress_is_running(id(progress_value_num).state) ? 1 : 0,
+                  !parse_timer_queue(id(timer_queue)).empty() ? 1 : 0,
+                  !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0,
                   id(notify_finished) ? 1 : 0));
             if (id(ui_context) == 2)
               return std::string(settings_root_icon(id(menu_index)));
@@ -4309,8 +4511,8 @@ script:
             if (id(ui_context) == 6)
               return std::string(entity_menu_icon(id(entity_menu_index) + 1,
                   (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size(),
-                  1,  // Timer is always listed, running or not.
-                  progress_is_running(id(progress_value_num).state) ? 1 : 0,
+                  !parse_timer_queue(id(timer_queue)).empty() ? 1 : 0,
+                  !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0,
                   id(notify_finished) ? 1 : 0));
             if (id(ui_context) == 2)
               return std::string(settings_root_icon(id(menu_index) + 1));
@@ -4325,8 +4527,8 @@ script:
             if (id(ui_context) == 6)
               return std::string(entity_menu_icon(id(entity_menu_index) + 2,
                   (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size(),
-                  1,  // Timer is always listed, running or not.
-                  progress_is_running(id(progress_value_num).state) ? 1 : 0,
+                  !parse_timer_queue(id(timer_queue)).empty() ? 1 : 0,
+                  !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0,
                   id(notify_finished) ? 1 : 0));
             if (id(ui_context) == 2)
               return std::string(settings_root_icon(id(menu_index) + 2));
@@ -4416,16 +4618,12 @@ script:
           add_bool("t24", id(time_24h).state);
           add_bool("led", id(led_enabled).state);
           add_bool("tfb", id(timer_finish_blink_switch).state);
-          add_bool("pfb", id(progress_finish_blink_switch).state);
           add_bool("tvb", id(timer_value_blink_switch).state);
-          add_bool("pvb", id(progress_value_blink_switch).state);
           add_bool("tss", id(timer_show_on_finish_switch).state);
-          add_bool("pss", id(progress_show_on_finish_switch).state);
           add_chr("lang", id(language_select).current_option() == "Deutsch" ? 'd' : 'e');
           add_chr("unit", id(unit_select).current_option() == "Fahrenheit" ? 'F' : 'C');
           out += "kstep="; out += id(knob_step_select).current_option(); out += ";";
           add_chr("tcol", blink_led_color_letter(id(timer_blink_led_color_select).state));
-          add_chr("pcol", blink_led_color_letter(id(progress_blink_led_color_select).state));
           add_num("idle", id(idle_home_num).state);
           add_num("dimd", id(dim_delay_num).state);
           add_num("diml", id(dim_level_num).state);
@@ -4464,16 +4662,12 @@ script:
             if (key == "t24") { if (bv) id(time_24h).turn_on(); else id(time_24h).turn_off(); }
             else if (key == "led") { if (bv) id(led_enabled).turn_on(); else id(led_enabled).turn_off(); }
             else if (key == "tfb") { if (bv) id(timer_finish_blink_switch).turn_on(); else id(timer_finish_blink_switch).turn_off(); }
-            else if (key == "pfb") { if (bv) id(progress_finish_blink_switch).turn_on(); else id(progress_finish_blink_switch).turn_off(); }
             else if (key == "tvb") { if (bv) id(timer_value_blink_switch).turn_on(); else id(timer_value_blink_switch).turn_off(); }
-            else if (key == "pvb") { if (bv) id(progress_value_blink_switch).turn_on(); else id(progress_value_blink_switch).turn_off(); }
             else if (key == "tss") { if (bv) id(timer_show_on_finish_switch).turn_on(); else id(timer_show_on_finish_switch).turn_off(); }
-            else if (key == "pss") { if (bv) id(progress_show_on_finish_switch).turn_on(); else id(progress_show_on_finish_switch).turn_off(); }
             else if (key == "lang") { id(language_select).make_call().set_option(cv == 'd' ? "Deutsch" : "English").perform(); }
             else if (key == "unit") { id(unit_select).make_call().set_option(cv == 'F' ? "Fahrenheit" : "Celsius").perform(); }
             else if (key == "kstep") { id(knob_step_select).make_call().set_option(val).perform(); }
             else if (key == "tcol") { id(timer_blink_led_color_select).make_call().set_option(blink_led_color_from_letter(cv)).perform(); }
-            else if (key == "pcol") { id(progress_blink_led_color_select).make_call().set_option(blink_led_color_from_letter(cv)).perform(); }
             else if (key == "idle") { id(idle_home_num).make_call().set_value(fv).perform(); }
             else if (key == "dimd") { id(dim_delay_num).make_call().set_value(fv).perform(); }
             else if (key == "diml") { id(dim_level_num).make_call().set_value(fv).perform(); }

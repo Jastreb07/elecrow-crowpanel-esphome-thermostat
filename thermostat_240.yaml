@@ -993,6 +993,10 @@ lvgl:
         - script.execute: open_settings
       on_swipe_up:
         - script.execute: open_entity_overview
+      on_swipe_left:
+        - script.execute: timer_next
+      on_swipe_right:
+        - script.execute: timer_previous
       widgets:
         - button:
             id: button_timer_background
@@ -1091,6 +1095,33 @@ lvgl:
             text_align: CENTER
             hidden: true
 
+        # Shown only while more than one page (real entries + the add page)
+        # is available - same glyphs/positions as the Notify screen's.
+        - label:
+            id: label_timer_arrow_prev
+            text: "\U000F0143"
+            text_font: icons_38
+            text_color: 0xCDBEEC
+            align: TOP_MID
+            y: 18
+            hidden: true
+        - label:
+            id: label_timer_arrow_next
+            text: "\U000F0140"
+            text_font: icons_38
+            text_color: 0xCDBEEC
+            align: BOTTOM_MID
+            y: -18
+            hidden: true
+        - label:
+            id: label_timer_page
+            text: ""
+            text_font: rajdhani_medium_16
+            text_color: 0xCDBEEC
+            align: TOP_MID
+            y: 45
+            hidden: true
+
     # ================= Progress =================
     - id: screen_progress
       bg_color: "0x000000"
@@ -1098,6 +1129,10 @@ lvgl:
         - script.execute: open_settings
       on_swipe_up:
         - script.execute: open_entity_overview
+      on_swipe_left:
+        - script.execute: progress_next
+      on_swipe_right:
+        - script.execute: progress_previous
       widgets:
         - button:
             id: button_progress_background
@@ -1171,6 +1206,31 @@ lvgl:
             width: 180
             text_align: CENTER
             long_mode: SCROLL_CIRCULAR
+            hidden: true
+
+        - label:
+            id: label_progress_arrow_prev
+            text: "\U000F0143"
+            text_font: icons_38
+            text_color: 0xCDBEEC
+            align: TOP_MID
+            y: 18
+            hidden: true
+        - label:
+            id: label_progress_arrow_next
+            text: "\U000F0140"
+            text_font: icons_38
+            text_color: 0xCDBEEC
+            align: BOTTOM_MID
+            y: -18
+            hidden: true
+        - label:
+            id: label_progress_page
+            text: ""
+            text_font: rajdhani_medium_16
+            text_color: 0xCDBEEC
+            align: TOP_MID
+            y: 45
             hidden: true
 
     # ================= Notify =================
@@ -1522,37 +1582,26 @@ script:
             lambda: 'return !id(app_booted);'
           then: []
           else:
-            # Timer/Progress/Notify finish blink takes priority over the
-            # normal HVAC-color display - it's a deliberate alert, so it
-            # ignores led_enabled/display_dimmed the same way the old
-            # forced-backlight blink used to. Only while still on the
-            # respective screen - leaving it (even with the timer/progress/
-            # notify still finished) stops the blink.
-            # Notify's LED comes from the currently shown queue entry's own
-            # led_mode (0 off / 1 on-solid / 2 blink) and color - there is no
-            # separate global switch/select for it anymore.
+            # Timer/Progress/Notify finish LED takes priority over the normal
+            # HVAC-color display - it's a deliberate alert, so it ignores
+            # led_enabled/display_dimmed the same way the old forced-
+            # backlight blink used to. Only while still on the respective
+            # screen - leaving it (even with the entry still finished) stops
+            # the effect. All three read led_mode (0 off/1 on-solid/2 blink)
+            # and color from whichever queue entry is currently displayed -
+            # there is no separate global switch/select for any of them.
             - if:
                 condition:
                   lambda: |-
-                    bool timer_blinking = id(ui_context) == 8 && id(timer_finished) &&
-                                           id(timer_finish_blink_switch).state;
-                    bool progress_blinking = id(ui_context) == 9 && id(progress_finished) &&
-                                              id(progress_finish_blink_switch).state;
-                    int notify_led_mode = 0;
-                    if (id(ui_context) == 10 && id(notify_finished)) {
-                      auto q = parse_notify_queue(id(notify_queue));
-                      int total = (int) q.size();
-                      if (total > 0) notify_led_mode = q[clamp(id(notify_queue_index), 0, total - 1)].led_mode;
-                    }
-                    return timer_blinking || progress_blinking || notify_led_mode == 2;
+                    return current_screen_led_mode(id(ui_context), id(timer_queue), id(timer_queue_index),
+                                                     id(progress_queue), id(progress_queue_index),
+                                                     id(notify_queue), id(notify_queue_index),
+                                                     id(notify_finished), id(ha_time).now()) == 2;
                 then:
                   - if:
                       condition:
                         lambda: 'return id(blink_led_on);'
                       then:
-                        # Timer blinks while ui_context == 8, progress while == 9,
-                        # notify while == 10 - the outer condition already
-                        # guarantees exactly one of the three.
                         - light.turn_on:
                             id: status_led
                             brightness: !lambda |-
@@ -1560,51 +1609,47 @@ script:
                                 if (id(ui_context) == 9) return id(progress_blink_led_brightness_num).state / 100.0f;
                                 return id(notify_blink_led_brightness_num).state / 100.0f;
                             red: !lambda |-
-                                if (id(ui_context) == 8) return blink_led_color_rgb(id(timer_blink_led_color_select).state).r;
-                                if (id(ui_context) == 9) return blink_led_color_rgb(id(progress_blink_led_color_select).state).r;
-                                auto q = parse_notify_queue(id(notify_queue));
-                                int total = (int) q.size();
-                                return total > 0 ? hex_to_led_color(q[clamp(id(notify_queue_index), 0, total - 1)].color).r : 0.0f;
+                                return current_screen_led_color(id(ui_context), id(timer_queue), id(timer_queue_index),
+                                                                 id(progress_queue), id(progress_queue_index),
+                                                                 id(notify_queue), id(notify_queue_index)).r;
                             green: !lambda |-
-                                if (id(ui_context) == 8) return blink_led_color_rgb(id(timer_blink_led_color_select).state).g;
-                                if (id(ui_context) == 9) return blink_led_color_rgb(id(progress_blink_led_color_select).state).g;
-                                auto q = parse_notify_queue(id(notify_queue));
-                                int total = (int) q.size();
-                                return total > 0 ? hex_to_led_color(q[clamp(id(notify_queue_index), 0, total - 1)].color).g : 1.0f;
+                                return current_screen_led_color(id(ui_context), id(timer_queue), id(timer_queue_index),
+                                                                 id(progress_queue), id(progress_queue_index),
+                                                                 id(notify_queue), id(notify_queue_index)).g;
                             blue: !lambda |-
-                                if (id(ui_context) == 8) return blink_led_color_rgb(id(timer_blink_led_color_select).state).b;
-                                if (id(ui_context) == 9) return blink_led_color_rgb(id(progress_blink_led_color_select).state).b;
-                                auto q = parse_notify_queue(id(notify_queue));
-                                int total = (int) q.size();
-                                return total > 0 ? hex_to_led_color(q[clamp(id(notify_queue_index), 0, total - 1)].color).b : 0.0f;
+                                return current_screen_led_color(id(ui_context), id(timer_queue), id(timer_queue_index),
+                                                                 id(progress_queue), id(progress_queue_index),
+                                                                 id(notify_queue), id(notify_queue_index)).b;
                       else:
                         - light.turn_off: status_led
                 else:
                   - if:
-                      # Notify's "on" (solid, not blinking) mode.
+                      # "On" (solid, not blinking) mode.
                       condition:
                         lambda: |-
-                          if (id(ui_context) != 10 || !id(notify_finished)) return false;
-                          auto q = parse_notify_queue(id(notify_queue));
-                          int total = (int) q.size();
-                          if (total <= 0) return false;
-                          return q[clamp(id(notify_queue_index), 0, total - 1)].led_mode == 1;
+                          return current_screen_led_mode(id(ui_context), id(timer_queue), id(timer_queue_index),
+                                                          id(progress_queue), id(progress_queue_index),
+                                                          id(notify_queue), id(notify_queue_index),
+                                                          id(notify_finished), id(ha_time).now()) == 1;
                       then:
                         - light.turn_on:
                             id: status_led
-                            brightness: !lambda 'return id(notify_blink_led_brightness_num).state / 100.0f;'
+                            brightness: !lambda |-
+                                if (id(ui_context) == 8) return id(timer_blink_led_brightness_num).state / 100.0f;
+                                if (id(ui_context) == 9) return id(progress_blink_led_brightness_num).state / 100.0f;
+                                return id(notify_blink_led_brightness_num).state / 100.0f;
                             red: !lambda |-
-                                auto q = parse_notify_queue(id(notify_queue));
-                                int total = (int) q.size();
-                                return hex_to_led_color(q[clamp(id(notify_queue_index), 0, total - 1)].color).r;
+                                return current_screen_led_color(id(ui_context), id(timer_queue), id(timer_queue_index),
+                                                                 id(progress_queue), id(progress_queue_index),
+                                                                 id(notify_queue), id(notify_queue_index)).r;
                             green: !lambda |-
-                                auto q = parse_notify_queue(id(notify_queue));
-                                int total = (int) q.size();
-                                return hex_to_led_color(q[clamp(id(notify_queue_index), 0, total - 1)].color).g;
+                                return current_screen_led_color(id(ui_context), id(timer_queue), id(timer_queue_index),
+                                                                 id(progress_queue), id(progress_queue_index),
+                                                                 id(notify_queue), id(notify_queue_index)).g;
                             blue: !lambda |-
-                                auto q = parse_notify_queue(id(notify_queue));
-                                int total = (int) q.size();
-                                return hex_to_led_color(q[clamp(id(notify_queue_index), 0, total - 1)].color).b;
+                                return current_screen_led_color(id(ui_context), id(timer_queue), id(timer_queue_index),
+                                                                 id(progress_queue), id(progress_queue_index),
+                                                                 id(notify_queue), id(notify_queue_index)).b;
                       else:
                         - if:
                             condition:
