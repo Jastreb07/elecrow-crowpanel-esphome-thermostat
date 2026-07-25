@@ -1,7 +1,0 @@
-node_modules
-docs/.vitepress
-old-website
-.venv
-.idea
-.claude
-.agents
