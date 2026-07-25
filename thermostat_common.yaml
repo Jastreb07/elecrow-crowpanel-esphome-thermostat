@@ -67,7 +67,14 @@ external_components:
   - source:
       type: local
       path: components
-    components: [ha_climate_controller, ha_light_controller, ha_cover_controller]
+    components: [ha_climate_controller, ha_light_controller, ha_cover_controller, i18n]
+
+i18n:
+  id: i18n_translations
+  sources:
+    - translations/en.yaml
+    - translations/de.yaml
+  default_locale: en
 
 ha_climate_controller:
   id: ha_climates
@@ -463,11 +470,6 @@ globals:
     restore_value: false
     initial_value: "0"
 
-  - id: notify_just_finished
-    type: bool
-    restore_value: false
-    initial_value: "false"
-
   - id: brightness_pct
     type: int
     restore_value: false
@@ -675,12 +677,6 @@ switch:
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
 
-  - platform: template
-    name: "[Notify] Notify Show Screen"
-    id: notify_show_on_finish_switch
-    optimistic: true
-    restore_mode: RESTORE_DEFAULT_ON
-
 select:
   - platform: template
     name: "[System] Language"
@@ -691,10 +687,17 @@ select:
     initial_option: "English"
     on_value:
       then:
+        - lambda: |-
+            id(i18n_translations).set_current_locale(x == "Deutsch" ? "de" : "en");
         - script.execute: refresh_status
         - script.execute: refresh_connection
         - script.execute: update_clock_labels
         - script.execute: update_settings_labels
+        - script.execute: refresh_light
+        - script.execute: refresh_cover
+        - script.execute: refresh_timer
+        - script.execute: refresh_progress
+        - script.execute: refresh_notify
 
   - platform: template
     name: "[Thermostat] Temperature Unit"
@@ -777,7 +780,7 @@ number:
     id: dim_level_num
     optimistic: true
     restore_value: true
-    initial_value: 20
+    initial_value: 40
     min_value: 0
     max_value: 100
     step: 5
@@ -1330,7 +1333,7 @@ sensor:
                     case 16: case 17:
                     case 19: case 21:
                     case 23: case 24: case 26: case 27:
-                    case 32: case 35: case 36:
+                    case 32: case 35:
                       id(submenu_index) = 1 - id(submenu_index);
                       break;
                     case 8:
@@ -2251,17 +2254,17 @@ script:
           id: label_light_mode
           text: !lambda |-
             int mode = id(ha_lights).ensure_mode(id(light_index));
-            std::string text = "Helligkeit";
-            if (mode == esphome::ha_light_controller::LIGHT_TEMPERATURE) text = "Kelvin";
-            else if (mode == esphome::ha_light_controller::LIGHT_COLOR) text = "Farbe";
-            return ha_text_or_placeholder(id(connection_ready), text, 8);
+            std::string key = "light.mode_brightness";
+            if (mode == esphome::ha_light_controller::LIGHT_TEMPERATURE) key = "light.mode_kelvin";
+            else if (mode == esphome::ha_light_controller::LIGHT_COLOR) key = "light.mode_color";
+            return ha_text_or_placeholder(id(connection_ready), id(i18n_translations).translate(key), 8);
       - lvgl.label.update:
           id: label_light_value
           text: !lambda |-
             if (!id(connection_ready))
               return ha_text_or_placeholder(false, std::string(), 3);
             const auto &light = id(ha_lights).get(id(light_index));
-            if (light.state != "on") return std::string("OFF");
+            if (light.state != "on") return id(i18n_translations).translate("light.value_off");
             int mode = id(ha_lights).ensure_mode(id(light_index));
             char value[20];
             if (mode == esphome::ha_light_controller::LIGHT_TEMPERATURE)
@@ -2288,10 +2291,10 @@ script:
             if (!id(connection_ready))
               return ha_text_or_placeholder(false, std::string(), 4);
             const auto &state = id(ha_lights).get(id(light_index)).state;
-            if (state == "on") return std::string("On");
-            if (state == "off") return std::string("Off");
-            if (state == "unavailable") return std::string("Unavailable");
-            return std::string("Loading...");
+            if (state == "on") return id(i18n_translations).translate("light.state_on");
+            if (state == "off") return id(i18n_translations).translate("light.state_off");
+            if (state == "unavailable") return id(i18n_translations).translate("light.state_unavailable");
+            return id(i18n_translations).translate("light.state_loading");
       - lvgl.label.update:
           id: label_light_page
           text: !lambda |-
@@ -2461,11 +2464,11 @@ script:
           text: !lambda |-
             if (!id(connection_ready)) return ha_text_or_placeholder(false, std::string(), 8);
             const std::string &state = id(ha_covers).get(id(cover_index)).state;
-            if (state == "opening") return std::string("Öffnet");
-            if (state == "closing") return std::string("Schließt");
-            if (state == "open") return std::string("Geöffnet");
-            if (state == "closed") return std::string("Geschlossen");
-            return std::string("Rollo");
+            if (state == "opening") return id(i18n_translations).translate("cover.opening");
+            if (state == "closing") return id(i18n_translations).translate("cover.closing");
+            if (state == "open") return id(i18n_translations).translate("cover.open");
+            if (state == "closed") return id(i18n_translations).translate("cover.closed");
+            return id(i18n_translations).translate("cover.label_default");
       - lvgl.label.update:
           id: label_cover_value
           text: !lambda |-
@@ -2686,7 +2689,12 @@ script:
                 lv_obj_add_flag(id(arc_timer_value), LV_OBJ_FLAG_HIDDEN);
                 lv_obj_add_flag(id(label_timer_value), LV_OBJ_FLAG_HIDDEN);
                 lv_obj_add_flag(id(label_timer_title), LV_OBJ_FLAG_HIDDEN);
-                lv_label_set_text(id(label_timer_cancel_confirm), "Cancel timer?\nPress again to confirm (5s)");
+                char cancel_body[48];
+                snprintf(cancel_body, sizeof(cancel_body),
+                         id(i18n_translations).translate("timer.cancel_confirm_body").c_str(), 5);
+                std::string cancel_msg =
+                    id(i18n_translations).translate("timer.cancel_confirm_title") + "\n" + cancel_body;
+                lv_label_set_text(id(label_timer_cancel_confirm), cancel_msg.c_str());
 
   - id: activate_progress_screen
     then:
@@ -2747,13 +2755,14 @@ script:
             id(progress_finished) = false;
           }
           // Notify has no threshold to cross - it's "finished" (active) the
-          // instant a title is set, and stays that way until dismissed.
-          id(notify_just_finished) = false;
+          // instant a title is set, and stays that way until dismissed. Unlike
+          // Timer/Progress it never auto-shows its screen (only the "Show
+          // Notify Screen" button does that), so there's no "just finished"
+          // one-shot to track here.
           if (!id(notify_title_txt).state.empty()) {
             if (!id(notify_finished)) {
               id(notify_finished) = true;
               id(notify_finished_at_ms) = millis();
-              id(notify_just_finished) = true;
             }
           } else {
             id(notify_finished) = false;
@@ -2783,16 +2792,6 @@ script:
             - lambda: 'id(ui_context) = 9;'
             - script.execute: refresh_progress
             - lvgl.page.show: screen_progress
-      - if:
-          condition:
-            lambda: |-
-              return id(connection_ready) && id(notify_just_finished) &&
-                     id(notify_show_on_finish_switch).state;
-          then:
-            - script.execute: wake_display
-            - lambda: 'id(ui_context) = 10;'
-            - script.execute: refresh_notify
-            - lvgl.page.show: screen_notify
       # A finished timer/progress that isn't (or is no longer) being looked
       # at resets itself, so it doesn't linger "finished" forever and doesn't
       # reappear stale (see the Timer Auto-Home / Progress Auto-Home delay
@@ -2897,9 +2896,12 @@ script:
                       uint32_t elapsed = millis() - id(timer_cancel_confirm_started_ms);
                       int remaining = 5 - (int) (elapsed / 1000);
                       if (remaining < 0) remaining = 0;
-                      char buf[64];
-                      snprintf(buf, sizeof(buf), "Cancel timer?\nPress again to confirm (%ds)", remaining);
-                      lv_label_set_text(id(label_timer_cancel_confirm), buf);
+                      char cancel_body[48];
+                      snprintf(cancel_body, sizeof(cancel_body),
+                               id(i18n_translations).translate("timer.cancel_confirm_body").c_str(), remaining);
+                      std::string cancel_msg =
+                          id(i18n_translations).translate("timer.cancel_confirm_title") + "\n" + cancel_body;
+                      lv_label_set_text(id(label_timer_cancel_confirm), cancel_msg.c_str());
 
   - id: toggle_adjust_target
     then:
@@ -3149,23 +3151,31 @@ script:
       - lvgl.label.update:
           id: label_hvac_mode
           text: !lambda |-
-            return ha_text_or_placeholder(id(connection_ready),
-                                          ha_hvac_mode_label(id(current_hvac_raw), false), 6);
+            std::string hvac_key = ha_hvac_mode_key(id(current_hvac_raw));
+            std::string hvac_label = hvac_key.empty() ? "-" : id(i18n_translations).translate(hvac_key);
+            return ha_text_or_placeholder(id(connection_ready), hvac_label, 6);
       - lvgl.label.update:
           id: label_home_hvac_mode
           text: !lambda |-
-            return ha_text_or_placeholder(id(connection_ready),
-                                          ha_hvac_mode_label(id(current_hvac_raw), false), 6);
+            std::string hvac_key = ha_hvac_mode_key(id(current_hvac_raw));
+            std::string hvac_label = hvac_key.empty() ? "-" : id(i18n_translations).translate(hvac_key);
+            return ha_text_or_placeholder(id(connection_ready), hvac_label, 6);
       - lvgl.label.update:
           id: label_preset
           text: !lambda |-
-            return ha_text_or_placeholder(id(connection_ready),
-                                          ha_preset_label(id(current_preset_raw), false), 6);
+            std::string preset_key = ha_preset_key(id(current_preset_raw));
+            std::string preset_label = !preset_key.empty()
+                ? id(i18n_translations).translate(preset_key)
+                : (id(current_preset_raw).empty() ? std::string("-") : id(current_preset_raw));
+            return ha_text_or_placeholder(id(connection_ready), preset_label, 6);
       - lvgl.label.update:
           id: label_home_preset
           text: !lambda |-
-            return ha_text_or_placeholder(id(connection_ready),
-                                          ha_preset_label(id(current_preset_raw), false), 6);
+            std::string preset_key = ha_preset_key(id(current_preset_raw));
+            std::string preset_label = !preset_key.empty()
+                ? id(i18n_translations).translate(preset_key)
+                : (id(current_preset_raw).empty() ? std::string("-") : id(current_preset_raw));
+            return ha_text_or_placeholder(id(connection_ready), preset_label, 6);
       - lvgl.label.update:
           id: icon_mode_thermo
           text: !lambda |-
@@ -3299,22 +3309,22 @@ script:
       - lvgl.label.update:
           id: label_conn_thermo
           text: !lambda |-
-            return ha_connection_label(id(connection_message),
-                                       id(language_select).current_option() == "Deutsch");
+            std::string conn_key = ha_connection_key(id(connection_message));
+            return conn_key.empty() ? id(connection_message) : id(i18n_translations).translate(conn_key);
       - lvgl.label.update:
           id: label_conn_home
           text: !lambda |-
-            return ha_connection_label(id(connection_message),
-                                       id(language_select).current_option() == "Deutsch");
+            std::string conn_key = ha_connection_key(id(connection_message));
+            return conn_key.empty() ? id(connection_message) : id(i18n_translations).translate(conn_key);
       - lvgl.label.update:
           id: label_loading_status
           text: !lambda |-
-            return ha_connection_label(id(connection_message),
-                                       id(language_select).current_option() == "Deutsch");
+            std::string conn_key = ha_connection_key(id(connection_message));
+            return conn_key.empty() ? id(connection_message) : id(i18n_translations).translate(conn_key);
       - lvgl.label.update:
           id: label_loading_reboot_hint
           text: !lambda |-
-            return reboot_hint_label(id(language_select).current_option() == "Deutsch");
+            return id(i18n_translations).translate("reboot.hint");
       - if:
           condition:
             lambda: 'return id(connection_message) == "Smart Knob config not found";'
@@ -3477,7 +3487,6 @@ script:
             case 32: id(submenu_index) = id(notify_finish_blink_switch).state ? 1 : 0; break;
             case 34: id(num_preview) = (int) id(notify_blink_led_brightness_num).state; break;
             case 35: id(submenu_index) = id(notify_value_blink_switch).state ? 1 : 0; break;
-            case 36: id(submenu_index) = id(notify_show_on_finish_switch).state ? 1 : 0; break;
             case 25: {
               id(submenu_count) = BLINK_LED_COLOR_COUNT;
               const std::string &cur_name = id(timer_blink_led_color_select).state;
@@ -3570,7 +3579,6 @@ script:
               break;
             case 34: id(apply_service) = 48; break;
             case 35: id(apply_service) = id(submenu_index) ? 49 : 50; break;
-            case 36: id(apply_service) = id(submenu_index) ? 51 : 52; break;
             default: break;
           }
           id(ui_context) = id(thermostat_quick_stage) != 0 ? 1 : 3;
@@ -3723,12 +3731,6 @@ script:
           condition: {lambda: 'return id(apply_service) == 50;'}
           then: [switch.turn_off: notify_value_blink_switch]
       - if:
-          condition: {lambda: 'return id(apply_service) == 51;'}
-          then: [switch.turn_on: notify_show_on_finish_switch]
-      - if:
-          condition: {lambda: 'return id(apply_service) == 52;'}
-          then: [switch.turn_off: notify_show_on_finish_switch]
-      - if:
           condition:
             lambda: 'return id(thermostat_quick_stage) != 0;'
           then:
@@ -3743,7 +3745,6 @@ script:
   - id: update_settings_labels
     then:
       - lambda: |-
-          bool de = false;
           char buf[64];
           if (id(ui_context) == 6) {
             int climates = (int) id(ha_climates).size();
@@ -3760,18 +3761,23 @@ script:
               if (p < climates + lights) return id(ha_lights).get(p - climates).name;
               if (p < climates + lights + covers) return id(ha_covers).get(p - climates - lights).name;
               if (p < climates + lights + covers + timers)
-                return id(timer_title_txt).state.empty() ? std::string("Timer") : id(timer_title_txt).state;
+                return id(timer_title_txt).state.empty()
+                           ? id(i18n_translations).translate("settings.group.timer")
+                           : id(timer_title_txt).state;
               if (p < climates + lights + covers + timers + progresses)
-                return id(progress_title_txt).state.empty() ? std::string("Progress")
-                                                              : id(progress_title_txt).state;
+                return id(progress_title_txt).state.empty()
+                           ? id(i18n_translations).translate("settings.group.progress")
+                           : id(progress_title_txt).state;
               if (p < climates + lights + covers + timers + progresses + notifies)
-                return id(notify_title_txt).state.empty() ? std::string("Notify") : id(notify_title_txt).state;
+                return id(notify_title_txt).state.empty()
+                           ? id(i18n_translations).translate("settings.group.notify")
+                           : id(notify_title_txt).state;
               return p == climates + lights + covers + timers + progresses + notifies
-                         ? std::string("Settings")
-                         : std::string("Back");
+                         ? id(i18n_translations).translate("common.settings")
+                         : id(i18n_translations).translate("common.back");
             };
             auto m = menu_window(id(entity_menu_index), count, ${settings_extra_rows}, entity_name);
-            id(set_title) = "Entities";
+            id(set_title) = id(i18n_translations).translate("common.entities");
             id(set_prev2) = m.prev2;
             id(set_prev) = m.prev;
             id(set_cur) = m.cur;
@@ -3780,8 +3786,10 @@ script:
             id(set_value) = m.value;
           } else if (id(ui_context) == 2) {
             auto m = menu_window(id(menu_index), SETTINGS_ROOT_COUNT, ${settings_extra_rows},
-                                  [](int p) -> std::string { return settings_root_name(p); });
-            id(set_title) = "Settings";
+                                  [](int p) -> std::string {
+                                    return id(i18n_translations).translate(settings_root_name(p));
+                                  });
+            id(set_title) = id(i18n_translations).translate("common.settings");
             id(set_prev2) = m.prev2;
             id(set_prev) = m.prev;
             id(set_cur) = m.cur;
@@ -3793,12 +3801,14 @@ script:
             int count = settings_group_entry_count(group);
             int i = ((id(group_item_index) % count) + count) % count;
             int t = settings_group_entry_type_at(group, i);
-            auto entry_name = [group, de](int position) -> std::string {
+            auto entry_name = [group](int position) -> std::string {
               int type = settings_group_entry_type_at(group, position);
-              return type < 0 ? std::string("Back") : std::string(settings_menu_name(type, de));
+              if (type < 0) return id(i18n_translations).translate("common.back");
+              const char *key = settings_menu_name(type);
+              return key[0] ? id(i18n_translations).translate(key) : std::string("-");
             };
             auto m = menu_window(id(group_item_index), count, ${settings_extra_rows}, entry_name);
-            id(set_title) = SETTINGS_GROUP_NAMES[group];
+            id(set_title) = id(i18n_translations).translate(SETTINGS_GROUP_KEYS[group]);
             id(set_prev2) = m.prev2;
             id(set_prev) = m.prev;
             id(set_cur) = m.cur;
@@ -3807,10 +3817,22 @@ script:
             id(set_value) = m.value;
             std::string val;
             switch (t) {
-              case 0: val = ha_hvac_mode_label(id(current_hvac_raw), de); break;
-              case 1: val = ha_preset_label(id(current_preset_raw), de); break;
+              case 0: {
+                std::string key = ha_hvac_mode_key(id(current_hvac_raw));
+                val = key.empty() ? "-" : id(i18n_translations).translate(key);
+                break;
+              }
+              case 1: {
+                std::string key = ha_preset_key(id(current_preset_raw));
+                val = !key.empty() ? id(i18n_translations).translate(key)
+                                    : (id(current_preset_raw).empty() ? std::string("-") : id(current_preset_raw));
+                break;
+              }
               case 2: snprintf(buf, sizeof(buf), "%d%%", id(brightness_pct)); val = buf; break;
-              case 3: val = id(time_24h).state ? "24h" : "12h"; break;
+              case 3:
+                val = id(i18n_translations).translate(
+                    id(time_24h).state ? "common.clock_24h" : "common.clock_12h");
+                break;
               case 4: val = id(language_select).current_option(); break;
               case 7: val = id(unit_select).current_option() == "Fahrenheit" ? "°F" : "°C"; break;
               case 8: snprintf(buf, sizeof(buf), "%ds", (int) id(idle_home_num).state); val = buf; break;
@@ -3820,49 +3842,91 @@ script:
               case 14: val = id(wifi_ssid_txt).state; break;
               case 15: val = id(fw_version).state; break;
               case 16: val = ""; break;
-              case 17: val = id(led_enabled).state ? "On" : "Off"; break;
+              case 17:
+                val = id(i18n_translations).translate(id(led_enabled).state ? "common.on" : "common.off");
+                break;
               case 18: snprintf(buf, sizeof(buf), "%d%%", (int) id(led_brightness_num).state); val = buf; break;
               case 11: {
                 int v = (int) id(timer_auto_home_num).state;
-                if (v <= 0) { val = "Off"; } else { snprintf(buf, sizeof(buf), "%ds", v); val = buf; }
+                if (v <= 0) { val = id(i18n_translations).translate("common.off"); }
+                else { snprintf(buf, sizeof(buf), "%ds", v); val = buf; }
                 break;
               }
-              case 19: val = id(timer_finish_blink_switch).state ? "On" : "Off"; break;
+              case 19:
+                val = id(i18n_translations).translate(
+                    id(timer_finish_blink_switch).state ? "common.on" : "common.off");
+                break;
               case 20: {
                 int v = (int) id(progress_auto_home_num).state;
-                if (v <= 0) { val = "Off"; } else { snprintf(buf, sizeof(buf), "%ds", v); val = buf; }
+                if (v <= 0) { val = id(i18n_translations).translate("common.off"); }
+                else { snprintf(buf, sizeof(buf), "%ds", v); val = buf; }
                 break;
               }
-              case 21: val = id(progress_finish_blink_switch).state ? "On" : "Off"; break;
+              case 21:
+                val = id(i18n_translations).translate(
+                    id(progress_finish_blink_switch).state ? "common.on" : "common.off");
+                break;
               case 22: snprintf(buf, sizeof(buf), "%ds", (int) id(timer_knob_step_num).state); val = buf; break;
-              case 23: val = id(timer_value_blink_switch).state ? "On" : "Off"; break;
-              case 24: val = id(progress_value_blink_switch).state ? "On" : "Off"; break;
-              case 25: val = id(timer_blink_led_color_select).state; break;
-              case 26: val = id(timer_show_on_finish_switch).state ? "On" : "Off"; break;
-              case 27: val = id(progress_show_on_finish_switch).state ? "On" : "Off"; break;
-              case 28: val = id(progress_blink_led_color_select).state; break;
+              case 23:
+                val = id(i18n_translations).translate(
+                    id(timer_value_blink_switch).state ? "common.on" : "common.off");
+                break;
+              case 24:
+                val = id(i18n_translations).translate(
+                    id(progress_value_blink_switch).state ? "common.on" : "common.off");
+                break;
+              case 25:
+                val = id(i18n_translations).translate(
+                    blink_led_color_key_for_name(id(timer_blink_led_color_select).state));
+                break;
+              case 26:
+                val = id(i18n_translations).translate(
+                    id(timer_show_on_finish_switch).state ? "common.on" : "common.off");
+                break;
+              case 27:
+                val = id(i18n_translations).translate(
+                    id(progress_show_on_finish_switch).state ? "common.on" : "common.off");
+                break;
+              case 28:
+                val = id(i18n_translations).translate(
+                    blink_led_color_key_for_name(id(progress_blink_led_color_select).state));
+                break;
               case 29: snprintf(buf, sizeof(buf), "%d%%", (int) id(timer_blink_led_brightness_num).state); val = buf; break;
               case 30: snprintf(buf, sizeof(buf), "%d%%", (int) id(progress_blink_led_brightness_num).state); val = buf; break;
               case 31: {
                 int v = (int) id(notify_auto_home_num).state;
-                if (v <= 0) { val = "Off"; } else { snprintf(buf, sizeof(buf), "%ds", v); val = buf; }
+                if (v <= 0) { val = id(i18n_translations).translate("common.off"); }
+                else { snprintf(buf, sizeof(buf), "%ds", v); val = buf; }
                 break;
               }
-              case 32: val = id(notify_finish_blink_switch).state ? "On" : "Off"; break;
-              case 33: val = id(notify_blink_led_color_select).state; break;
+              case 32:
+                val = id(i18n_translations).translate(
+                    id(notify_finish_blink_switch).state ? "common.on" : "common.off");
+                break;
+              case 33:
+                val = id(i18n_translations).translate(
+                    blink_led_color_key_for_name(id(notify_blink_led_color_select).state));
+                break;
               case 34: snprintf(buf, sizeof(buf), "%d%%", (int) id(notify_blink_led_brightness_num).state); val = buf; break;
-              case 35: val = id(notify_value_blink_switch).state ? "On" : "Off"; break;
-              case 36: val = id(notify_show_on_finish_switch).state ? "On" : "Off"; break;
+              case 35:
+                val = id(i18n_translations).translate(
+                    id(notify_value_blink_switch).state ? "common.on" : "common.off");
+                break;
             }
             (void) val;
           } else {
             int t = id(submenu_type);
-            id(set_title) = settings_menu_name(t, de);
+            {
+              const char *title_key = settings_menu_name(t);
+              id(set_title) = title_key[0] ? id(i18n_translations).translate(title_key) : std::string("-");
+            }
             int group = settings_group_wrap(id(menu_index));
             int gcount = settings_group_entry_count(group);
-            auto entry_name = [group, de](int position) -> std::string {
+            auto entry_name = [group](int position) -> std::string {
               int type = settings_group_entry_type_at(group, position);
-              return type < 0 ? std::string("Back") : std::string(settings_menu_name(type, de));
+              if (type < 0) return id(i18n_translations).translate("common.back");
+              const char *key = settings_menu_name(type);
+              return key[0] ? id(i18n_translations).translate(key) : std::string("-");
             };
             auto gm = menu_window(id(group_item_index), gcount, ${settings_extra_rows}, entry_name);
             id(set_prev2) = gm.prev2;
@@ -3887,14 +3951,20 @@ script:
                 }
                 id(submenu_count) = (int) vec.size();
                 if (vec.empty()) {
-                  cur = t == 0 ? "No HVAC modes" : "No presets";
-                  val = "Home Assistant unavailable";
+                  cur = id(i18n_translations).translate(t == 0 ? "common.no_hvac_modes" : "common.no_presets");
+                  val = id(i18n_translations).translate("common.ha_unavailable");
                   break;
                 }
-                auto option_name = [t, &vec, de](int p) -> std::string {
+                auto option_name = [t, &vec](int p) -> std::string {
                   int n = (int) vec.size();
                   p = ((p % n) + n) % n;
-                  return t == 0 ? ha_hvac_mode_label(vec[p], de) : ha_preset_label(vec[p], de);
+                  if (t == 0) {
+                    std::string key = ha_hvac_mode_key(vec[p]);
+                    return key.empty() ? "-" : id(i18n_translations).translate(key);
+                  }
+                  std::string key = ha_preset_key(vec[p]);
+                  return !key.empty() ? id(i18n_translations).translate(key)
+                                       : (vec[p].empty() ? std::string("-") : vec[p]);
                 };
                 auto m = menu_window(id(submenu_index), (int) vec.size(), false, option_name);
                 cur = m.cur;
@@ -3911,7 +3981,9 @@ script:
                 break;
               }
               case 3: {
-                auto m = bool_menu_window(id(submenu_index), "12h", "24h");
+                auto m = bool_menu_window(id(submenu_index),
+                                           id(i18n_translations).translate("common.clock_12h").c_str(),
+                                           id(i18n_translations).translate("common.clock_24h").c_str());
                 cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next; val = m.value;
                 break;
               }
@@ -3959,13 +4031,17 @@ script:
                 break;
               case 15: cur = id(fw_version).state; val = ""; break;
               case 16: {
-                auto m = bool_menu_window(id(submenu_index), "No", "Yes, reset");
+                auto m = bool_menu_window(id(submenu_index),
+                                           id(i18n_translations).translate("common.no").c_str(),
+                                           id(i18n_translations).translate("common.yes_reset").c_str());
                 cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next;
-                val = "Press = confirm";
+                val = id(i18n_translations).translate("common.press_confirm");
                 break;
               }
               case 17: {
-                auto m = bool_menu_window(id(submenu_index), "Off", "On");
+                auto m = bool_menu_window(id(submenu_index),
+                                           id(i18n_translations).translate("common.off").c_str(),
+                                           id(i18n_translations).translate("common.on").c_str());
                 cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next; val = m.value;
                 break;
               }
@@ -3980,7 +4056,7 @@ script:
               case 20:
               case 31: {
                 auto m = numeric_menu_window(id(num_preview), 0, 300, 5, [](int v) -> std::string {
-                  if (v <= 0) return "Off";
+                  if (v <= 0) return id(i18n_translations).translate("common.off");
                   char b[8]; snprintf(b, sizeof(b), "%ds", v); return b;
                 });
                 cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next; val = m.value;
@@ -3988,7 +4064,9 @@ script:
               }
               case 19:
               case 21: {
-                auto m = bool_menu_window(id(submenu_index), "Off", "On");
+                auto m = bool_menu_window(id(submenu_index),
+                                           id(i18n_translations).translate("common.off").c_str(),
+                                           id(i18n_translations).translate("common.on").c_str());
                 cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next; val = m.value;
                 break;
               }
@@ -4001,16 +4079,19 @@ script:
               }
               case 23:
               case 24: {
-                auto m = bool_menu_window(id(submenu_index), "Off", "On");
+                auto m = bool_menu_window(id(submenu_index),
+                                           id(i18n_translations).translate("common.off").c_str(),
+                                           id(i18n_translations).translate("common.on").c_str());
                 cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next; val = m.value;
                 break;
               }
               case 26:
               case 27:
               case 32:
-              case 35:
-              case 36: {
-                auto m = bool_menu_window(id(submenu_index), "Off", "On");
+              case 35: {
+                auto m = bool_menu_window(id(submenu_index),
+                                           id(i18n_translations).translate("common.off").c_str(),
+                                           id(i18n_translations).translate("common.on").c_str());
                 cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next; val = m.value;
                 break;
               }
@@ -4027,7 +4108,9 @@ script:
               case 28:
               case 33: {
                 auto m = menu_window(id(submenu_index), BLINK_LED_COLOR_COUNT, false,
-                                      [](int p) -> std::string { return blink_led_color_name(p); });
+                                      [](int p) -> std::string {
+                                        return id(i18n_translations).translate(blink_led_color_key(p));
+                                      });
                 cur = m.cur;
                 id(set_prev) = m.prev;
                 id(set_next) = m.next;
@@ -4150,21 +4233,25 @@ script:
       - lambda: |-
           auto now = id(ha_time).now();
           if (!now.is_valid()) return;
-          bool de = false;
-          static const char* const day_en[] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
-          static const char* const mon_en[] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
-          const char* day = day_en[(now.day_of_week - 1) % 7];
-          const char* month = mon_en[(now.month - 1) % 12];
+          static const char *const day_keys[] = {
+              "clock.day.sun", "clock.day.mon", "clock.day.tue", "clock.day.wed",
+              "clock.day.thu", "clock.day.fri", "clock.day.sat"};
+          static const char *const mon_keys[] = {
+              "clock.month.jan", "clock.month.feb", "clock.month.mar", "clock.month.apr",
+              "clock.month.may", "clock.month.jun", "clock.month.jul", "clock.month.aug",
+              "clock.month.sep", "clock.month.oct", "clock.month.nov", "clock.month.dec"};
+          std::string day = id(i18n_translations).translate(day_keys[(now.day_of_week - 1) % 7]);
+          std::string month = id(i18n_translations).translate(mon_keys[(now.month - 1) % 12]);
           char time_buf[12];
           if (id(time_24h).state) {
             snprintf(time_buf, sizeof(time_buf), "%02d:%02d", now.hour, now.minute);
           } else {
             int h12 = now.hour % 12; if (h12 == 0) h12 = 12;
-            snprintf(time_buf, sizeof(time_buf), "%d:%02d %s", h12, now.minute,
-                     now.hour < 12 ? "AM" : "PM");
+            std::string ampm = id(i18n_translations).translate(now.hour < 12 ? "clock.am" : "clock.pm");
+            snprintf(time_buf, sizeof(time_buf), "%d:%02d %s", h12, now.minute, ampm.c_str());
           }
           char date_buf[24];
-          snprintf(date_buf, sizeof(date_buf), "%02d %s", now.day_of_month, month);
+          snprintf(date_buf, sizeof(date_buf), "%02d %s", now.day_of_month, month.c_str());
           id(pending_clock_time) = time_buf;
           id(pending_clock_day) = day;
           id(pending_home_date) = date_buf;
@@ -4205,7 +4292,6 @@ script:
           add_bool("pss", id(progress_show_on_finish_switch).state);
           add_bool("nfb", id(notify_finish_blink_switch).state);
           add_bool("nvb", id(notify_value_blink_switch).state);
-          add_bool("nss", id(notify_show_on_finish_switch).state);
           add_chr("lang", id(language_select).current_option() == "Deutsch" ? 'd' : 'e');
           add_chr("unit", id(unit_select).current_option() == "Fahrenheit" ? 'F' : 'C');
           out += "kstep="; out += id(knob_step_select).current_option(); out += ";";
@@ -4257,7 +4343,6 @@ script:
             else if (key == "pss") { if (bv) id(progress_show_on_finish_switch).turn_on(); else id(progress_show_on_finish_switch).turn_off(); }
             else if (key == "nfb") { if (bv) id(notify_finish_blink_switch).turn_on(); else id(notify_finish_blink_switch).turn_off(); }
             else if (key == "nvb") { if (bv) id(notify_value_blink_switch).turn_on(); else id(notify_value_blink_switch).turn_off(); }
-            else if (key == "nss") { if (bv) id(notify_show_on_finish_switch).turn_on(); else id(notify_show_on_finish_switch).turn_off(); }
             else if (key == "lang") { id(language_select).make_call().set_option(cv == 'd' ? "Deutsch" : "English").perform(); }
             else if (key == "unit") { id(unit_select).make_call().set_option(cv == 'F' ? "Fahrenheit" : "Celsius").perform(); }
             else if (key == "kstep") { id(knob_step_select).make_call().set_option(val).perform(); }

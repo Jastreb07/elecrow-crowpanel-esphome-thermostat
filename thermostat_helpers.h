@@ -96,27 +96,23 @@ inline std::string ha_text_or_placeholder(bool ready, const std::string &text,
   return ready ? text : std::string(placeholder_count, '-');
 }
 
-// Keep connection states as stable English keys internally and translate only
-// their presentation. Error comparisons and actions therefore stay language
-// independent.
-inline std::string ha_connection_label(const std::string &status, bool de) {
-  if (!de) return status;
-  if (status == "WiFi connecting...") return "WLAN wird verbunden...";
-  if (status == "WiFi error") return "WLAN-Fehler";
-  if (status == "HA connecting...") return "Home Assistant wird verbunden...";
-  if (status == "HA unreachable") return "Home Assistant nicht erreichbar";
-  if (status == "Smart Knob config loading...") return "Smart-Knob-Konfiguration wird geladen...";
-  if (status == "Smart Knob config not found") return "Smart-Knob-Konfiguration nicht gefunden";
-  if (status == "Smart Knob config JSON error") return "Smart-Knob-Konfiguration: JSON-Fehler";
-  if (status == "No climate configured") return "Kein Thermostat konfiguriert";
-  if (status == "Climate entity loading...") return "Thermostat-Entität wird geladen...";
-  if (status == "Climate entity not found") return "Thermostat-Entität nicht gefunden";
-  return status;
-}
-
-inline std::string reboot_hint_label(bool de) {
-  return de ? "Knob drücken oder Display berühren zum Neustart"
-            : "Press knob or touch display to reboot";
+// Keep connection states as stable English keys internally (compared/set
+// all over the file) and only translate at render time. Returns the i18n key
+// for a known status, or "" if the status isn't a recognized message (the
+// caller should then fall back to showing `status` itself, e.g. while empty
+// before the first refresh_connection run).
+inline std::string ha_connection_key(const std::string &status) {
+  if (status == "WiFi connecting...") return "conn.wifi_connecting";
+  if (status == "WiFi error") return "conn.wifi_error";
+  if (status == "HA connecting...") return "conn.ha_connecting";
+  if (status == "HA unreachable") return "conn.ha_unreachable";
+  if (status == "Smart Knob config loading...") return "conn.config_loading";
+  if (status == "Smart Knob config not found") return "conn.config_not_found";
+  if (status == "Smart Knob config JSON error") return "conn.config_json_error";
+  if (status == "No climate configured") return "conn.no_climate";
+  if (status == "Climate entity loading...") return "conn.climate_loading";
+  if (status == "Climate entity not found") return "conn.climate_not_found";
+  return "";
 }
 
 // ------------------------------------------------------------------
@@ -138,10 +134,10 @@ static const char *const ICON_PALETTE = "\U000F03D8";                // mdi-pale
 static const char *const ICON_WINDOW_SHUTTER = "\U000F111C";         // mdi-window-shutter
 
 // Menu icons. Index matches the settings menu item. Indices 5/6 (formerly
-// Design/Icons) and 12 (formerly Mode) are permanently retired - removing a
-// feature leaves a gap rather than renumbering everything after it, same as
-// index 11 before it grew a use. Their icon/name slots stay as inert
-// placeholders.
+// Design/Icons), 12 (formerly Mode), and 36 (formerly Notify Show Screen)
+// are permanently retired - removing a feature leaves a gap rather than
+// renumbering everything after it, same as index 11 before it grew a use.
+// Their icon/name slots stay as inert placeholders.
 static const char *const MENU_ICONS[] = {
     "󰎓",  //  0 HVAC mode      mdi-thermostat
     "󰘮",  //  1 Preset         mdi-tune
@@ -179,7 +175,7 @@ static const char *const MENU_ICONS[] = {
     "\U000F020A",  // 33 Notify blink LED color      mdi-eyedropper (reused)
     "󰃟",  // 34 Notify blink LED brightness mdi-brightness-7 (reused)
     "󰌵",  // 35 Notify value blink     mdi-lightbulb (reused)
-    "\U000F05A8",  // 36 Notify show screen    mdi-white-balance-sunny (reused)
+    "",   // 36 removed (Notify Show Screen)
 };
 constexpr int SETTINGS_MENU_COUNT = 37;
 
@@ -187,15 +183,16 @@ constexpr int SETTINGS_MENU_COUNT = 37;
 // stable setting IDs used by the existing editor/apply logic.
 constexpr int SETTINGS_GROUP_COUNT = 5;
 constexpr int SETTINGS_ROOT_COUNT = SETTINGS_GROUP_COUNT + 1;  // + Back
-static const char *const SETTINGS_GROUP_NAMES[SETTINGS_GROUP_COUNT] = {
-    "Thermostat", "Timer", "Progress", "Notify", "System"};
+static const char *const SETTINGS_GROUP_KEYS[SETTINGS_GROUP_COUNT] = {
+    "settings.group.thermostat", "settings.group.timer", "settings.group.progress",
+    "settings.group.notify", "settings.group.system"};
 static const char *const SETTINGS_GROUP_ICONS[SETTINGS_GROUP_COUNT] = {
     MENU_ICONS[0], MENU_ICONS[8], MENU_ICONS[10], ICON_SUN, MENU_ICONS[14]};
 
 static constexpr int SETTINGS_GROUP_THERMOSTAT[] = {0, 1, 7, 13};
 static constexpr int SETTINGS_GROUP_TIMER[] = {11, 19, 25, 29, 23, 22, 26};
 static constexpr int SETTINGS_GROUP_PROGRESS[] = {20, 21, 28, 30, 24, 27};
-static constexpr int SETTINGS_GROUP_NOTIFY[] = {31, 32, 33, 34, 35, 36};
+static constexpr int SETTINGS_GROUP_NOTIFY[] = {31, 32, 33, 34, 35};
 static constexpr int SETTINGS_GROUP_SYSTEM[] = {
     2, 4, 3, 18, 17, 10, 9, 8, 14, 15, 16};
 
@@ -234,7 +231,7 @@ inline int settings_root_wrap(int position) {
 
 inline const char *settings_root_name(int position) {
   position = settings_root_wrap(position);
-  return position == SETTINGS_GROUP_COUNT ? "Back" : SETTINGS_GROUP_NAMES[position];
+  return position == SETTINGS_GROUP_COUNT ? "common.back" : SETTINGS_GROUP_KEYS[position];
 }
 
 inline const char *settings_root_icon(int position) {
@@ -384,46 +381,54 @@ inline const char *ha_preset_icon(const std::string &p) {
 // ------------------------------------------------------------------
 // Labels are intentionally English-only.
 // ------------------------------------------------------------------
-inline std::string ha_hvac_mode_label(std::string mode, bool de) {
-  (void) de;
-  if (mode == "heat") return "Heat";
-  if (mode == "cool") return "Cool";
-  if (mode == "heat_cool") return "Heat/Cool";
-  if (mode == "auto") return "Auto";
-  if (mode == "off") return "Off";
-  if (mode == "dry") return "Dry";
-  if (mode == "fan_only") return "Fan";
-  return "-";
+// Returns the i18n key for a known HVAC mode, or "" if `mode` isn't
+// recognized (caller falls back to "-", same as the old default branch).
+inline std::string ha_hvac_mode_key(const std::string &mode) {
+  if (mode == "heat") return "hvac.heat";
+  if (mode == "cool") return "hvac.cool";
+  if (mode == "heat_cool") return "hvac.heat_cool";
+  if (mode == "auto") return "hvac.auto";
+  if (mode == "off") return "hvac.off";
+  if (mode == "dry") return "hvac.dry";
+  if (mode == "fan_only") return "hvac.fan_only";
+  return "";
 }
 
-inline std::string ha_preset_label(const std::string &p, bool de) {
-  (void) de;
-  if (p == "none") return "No preset";
-  if (p == "eco") return "Eco";
-  if (p == "comfort") return "Comfort";
-  if (p == "home") return "Home";
-  if (p == "away") return "Away";
-  if (p == "sleep") return "Sleep";
-  if (p == "boost") return "Boost";
-  if (p == "activity") return "Activity";
-  if (p.empty()) return "-";
-  return p;
+// Returns the i18n key for a known preset, or "" for both an empty preset
+// and a custom/unrecognized one - the caller distinguishes those (empty ->
+// "-", unrecognized -> show the raw preset name as-is), same as before.
+inline std::string ha_preset_key(const std::string &p) {
+  if (p == "none") return "preset.none";
+  if (p == "eco") return "preset.eco";
+  if (p == "comfort") return "preset.comfort";
+  if (p == "home") return "preset.home";
+  if (p == "away") return "preset.away";
+  if (p == "sleep") return "preset.sleep";
+  if (p == "boost") return "preset.boost";
+  if (p == "activity") return "preset.activity";
+  return "";
 }
 
-inline const char *settings_menu_name(int i, bool de) {
-  (void) de;
-  static const char *const EN[] = {
-      "HVAC Mode",  "Preset", "Brightness", "Clock",     "Language",   "-",
-      "-",          "Unit",   "Idle Time",  "Dim After", "Dim Level",  "Timer Auto-Home",
-      "-",          "Step",      "WiFi",    "Firmware",  "Reset",      "LED",
-      "LED Brightness", "Timer LED Blink", "Progress Auto-Home", "Progress LED Blink",
-      "Timer Knob Step", "Timer Value Blink", "Progress Value Blink", "Timer Blink LED Color",
-      "Timer Show Screen", "Progress Show Screen", "Progress Blink LED Color",
-      "Timer Blink Brightness", "Progress Blink Brightness", "Notify Auto-Home",
-      "Notify LED Blink", "Notify Blink LED Color", "Notify Blink Brightness",
-      "Notify Value Blink", "Notify Show Screen"};
-  if (i < 0 || i >= SETTINGS_MENU_COUNT) return "-";
-  return EN[i];
+// Returns the i18n key for a settings-menu item, or "" for the retired
+// placeholder slots (5, 6, 12, 36) and out-of-range indices - callers
+// translate non-empty keys and fall back to "-" for empty ones.
+inline const char *settings_menu_name(int i) {
+  static const char *const KEYS[] = {
+      "settings.item.hvac_mode", "settings.item.preset", "settings.item.brightness",
+      "settings.item.clock", "settings.item.language", "",
+      "", "settings.item.unit", "settings.item.idle_time",
+      "settings.item.dim_after", "settings.item.dim_level", "settings.item.timer_auto_home",
+      "", "settings.item.step", "settings.item.wifi",
+      "settings.item.firmware", "settings.item.reset", "settings.item.led",
+      "settings.item.led_brightness", "settings.item.timer_led_blink", "settings.item.progress_auto_home",
+      "settings.item.progress_led_blink", "settings.item.timer_knob_step", "settings.item.timer_value_blink",
+      "settings.item.progress_value_blink", "settings.item.timer_blink_color", "settings.item.timer_show_screen",
+      "settings.item.progress_show_screen", "settings.item.progress_blink_color", "settings.item.timer_blink_brightness",
+      "settings.item.progress_blink_brightness", "settings.item.notify_auto_home", "settings.item.notify_led_blink",
+      "settings.item.notify_blink_color", "settings.item.notify_blink_brightness", "settings.item.notify_value_blink",
+      ""};
+  if (i < 0 || i >= SETTINGS_MENU_COUNT) return "";
+  return KEYS[i];
 }
 
 // ------------------------------------------------------------------
@@ -467,6 +472,27 @@ static constexpr BlinkLedColor BLINK_LED_COLORS[BLINK_LED_COLOR_COUNT] = {
 inline const char *blink_led_color_name(int i) {
   i = ((i % BLINK_LED_COLOR_COUNT) + BLINK_LED_COLOR_COUNT) % BLINK_LED_COLOR_COUNT;
   return BLINK_LED_COLORS[i].name;
+}
+
+// i18n key for a color's on-screen display name. blink_led_color_name() above
+// stays the source of truth for the entity's actual (always-English) stored
+// option value - this is only for translating what the editor screen renders
+// while scrolling through the color list.
+inline const char *blink_led_color_key(int i) {
+  static const char *const KEYS[BLINK_LED_COLOR_COUNT] = {
+      "color.green", "color.red", "color.blue", "color.yellow", "color.orange",
+      "color.purple", "color.cyan", "color.magenta", "color.white", "color.pink"};
+  i = ((i % BLINK_LED_COLOR_COUNT) + BLINK_LED_COLOR_COUNT) % BLINK_LED_COLOR_COUNT;
+  return KEYS[i];
+}
+
+// Same as blink_led_color_key(), but looked up by the color's stored
+// (always-English) name instead of its index - for translating the group-
+// list preview value next to "Timer/Progress/Notify Blink LED Color".
+inline const char *blink_led_color_key_for_name(const std::string &name) {
+  for (int i = 0; i < BLINK_LED_COLOR_COUNT; i++)
+    if (name == BLINK_LED_COLORS[i].name) return blink_led_color_key(i);
+  return "color.green";
 }
 
 inline LedColor blink_led_color_rgb(const std::string &name) {
@@ -569,7 +595,7 @@ inline std::vector<std::string> ha_parse_list(const std::string &raw) {
 // character, so anything other than a plain mode word in there (stray enum
 // class names, punctuation runs, ...) would otherwise turn into its own
 // bogus entry and show up as an unlabeled "-" row. Keep only tokens that are
-// an actual HVACMode value, same set ha_hvac_mode_label() recognizes.
+// an actual HVACMode value, same set ha_hvac_mode_key() recognizes.
 inline bool ha_is_known_hvac_mode(const std::string &m) {
   return m == "off" || m == "heat" || m == "cool" || m == "heat_cool" ||
          m == "auto" || m == "dry" || m == "fan_only";
