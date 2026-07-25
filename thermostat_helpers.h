@@ -7,9 +7,11 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <algorithm>
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cmath>
 #include <functional>
 #include "esphome/core/time.h"
@@ -134,10 +136,12 @@ static const char *const ICON_PALETTE = "\U000F03D8";                // mdi-pale
 static const char *const ICON_WINDOW_SHUTTER = "\U000F111C";         // mdi-window-shutter
 
 // Menu icons. Index matches the settings menu item. Indices 5/6 (formerly
-// Design/Icons), 12 (formerly Mode), and 36 (formerly Notify Show Screen)
-// are permanently retired - removing a feature leaves a gap rather than
-// renumbering everything after it, same as index 11 before it grew a use.
-// Their icon/name slots stay as inert placeholders.
+// Design/Icons), 12 (formerly Mode), 32/33/35 (formerly the static Notify's
+// LED Blink/Blink Color/Value Blink - now per-queue-entry instead of a
+// global setting), and 36 (formerly Notify Show Screen) are permanently
+// retired - removing a feature leaves a gap rather than renumbering
+// everything after it, same as index 11 before it grew a use. Their
+// icon/name slots stay as inert placeholders.
 static const char *const MENU_ICONS[] = {
     "󰎓",  //  0 HVAC mode      mdi-thermostat
     "󰘮",  //  1 Preset         mdi-tune
@@ -171,10 +175,10 @@ static const char *const MENU_ICONS[] = {
     "󰃟",  // 29 Timer blink LED brightness    mdi-brightness-7 (reused)
     "󰃟",  // 30 Progress blink LED brightness mdi-brightness-7 (reused)
     "󰔟",  // 31 Notify auto-home       mdi-timer-sand (reused)
-    "󰌵",  // 32 Notify LED blink       mdi-lightbulb (reused)
-    "\U000F020A",  // 33 Notify blink LED color      mdi-eyedropper (reused)
+    "",   // 32 removed (Notify LED Blink)
+    "",   // 33 removed (Notify Blink LED Color)
     "󰃟",  // 34 Notify blink LED brightness mdi-brightness-7 (reused)
-    "󰌵",  // 35 Notify value blink     mdi-lightbulb (reused)
+    "",   // 35 removed (Notify Value Blink)
     "",   // 36 removed (Notify Show Screen)
 };
 constexpr int SETTINGS_MENU_COUNT = 37;
@@ -192,7 +196,7 @@ static const char *const SETTINGS_GROUP_ICONS[SETTINGS_GROUP_COUNT] = {
 static constexpr int SETTINGS_GROUP_THERMOSTAT[] = {0, 1, 7, 13};
 static constexpr int SETTINGS_GROUP_TIMER[] = {11, 19, 25, 29, 23, 22, 26};
 static constexpr int SETTINGS_GROUP_PROGRESS[] = {20, 21, 28, 30, 24, 27};
-static constexpr int SETTINGS_GROUP_NOTIFY[] = {31, 32, 33, 34, 35};
+static constexpr int SETTINGS_GROUP_NOTIFY[] = {31, 34};
 static constexpr int SETTINGS_GROUP_SYSTEM[] = {
     2, 4, 3, 18, 17, 10, 9, 8, 14, 15, 16};
 
@@ -410,8 +414,8 @@ inline std::string ha_preset_key(const std::string &p) {
 }
 
 // Returns the i18n key for a settings-menu item, or "" for the retired
-// placeholder slots (5, 6, 12, 36) and out-of-range indices - callers
-// translate non-empty keys and fall back to "-" for empty ones.
+// placeholder slots (5, 6, 12, 32, 33, 35, 36) and out-of-range indices -
+// callers translate non-empty keys and fall back to "-" for empty ones.
 inline const char *settings_menu_name(int i) {
   static const char *const KEYS[] = {
       "settings.item.hvac_mode", "settings.item.preset", "settings.item.brightness",
@@ -424,8 +428,8 @@ inline const char *settings_menu_name(int i) {
       "settings.item.progress_led_blink", "settings.item.timer_knob_step", "settings.item.timer_value_blink",
       "settings.item.progress_value_blink", "settings.item.timer_blink_color", "settings.item.timer_show_screen",
       "settings.item.progress_show_screen", "settings.item.progress_blink_color", "settings.item.timer_blink_brightness",
-      "settings.item.progress_blink_brightness", "settings.item.notify_auto_home", "settings.item.notify_led_blink",
-      "settings.item.notify_blink_color", "settings.item.notify_blink_brightness", "settings.item.notify_value_blink",
+      "settings.item.progress_blink_brightness", "settings.item.notify_auto_home", "",
+      "", "settings.item.notify_blink_brightness", "",
       ""};
   if (i < 0 || i >= SETTINGS_MENU_COUNT) return "";
   return KEYS[i];
@@ -516,6 +520,153 @@ inline const char *blink_led_color_from_letter(char c) {
   for (int i = 0; i < BLINK_LED_COLOR_COUNT; i++)
     if (c == letters[i]) return BLINK_LED_COLORS[i].name;
   return "Green";
+}
+
+// ------------------------------------------------------------------
+// Notify queue: internal storage (id(notify_queue), a plain global, not an
+// HA entity - no 255-char limit to worry about). Home Assistant never
+// writes this directly; it writes one notification's fields to
+// notify_add_txt as a human-readable "key=value;key=value;..." string and
+// presses "Add to Queue", which appends an ESP-assigned "seq=<n>" (an
+// insertion-order counter, not something HA provides) and stores the whole
+// entry as its own line in id(notify_queue). Removing one works the other
+// way: HA writes the entry's `id` to notify_remove_id_txt and presses
+// "Remove from Queue", which parses, drops the matching entry, and
+// re-serializes the rest.
+//
+// Recognized keys: id, title, subtitle, color (a 6-digit hex RGB string,
+// with or without a leading '#'), led_mode ("0"=off/"1"=on/"2"=blink),
+// priority ("0"=low/"1"=medium/"2"=high), value_blink ("1"/"0", whether the
+// title text itself also blinks), seq (insertion order, ESP-assigned), end
+// (optional - a "YYYY-MM-DD HH:MM:SS" or "HH:MM:SS" date-time, same format
+// as timer_end_time_txt; when set the entry is self-deleting: the Notify
+// screen shows a Timer-style countdown arc for it, and it's automatically
+// dropped from the queue once that time passes - see check_finish_effects),
+// added (ESP-assigned Unix timestamp captured when an `end` was set, used
+// as the countdown arc's start point - not meaningful without `end`).
+// Unknown keys are ignored; missing keys fall back to sane defaults.
+// Example HA input: "id=door1;title=Door open;subtitle=Garage;color=FF0000;
+// led_mode=2;priority=2;value_blink=1;end=2026-07-25 18:30:00"
+//
+// parse_notify_queue() always returns entries sorted highest-priority
+// first, and within the same priority, most-recently-added first.
+// ------------------------------------------------------------------
+struct QueuedNotify {
+  std::string entry_id;
+  std::string title, subtitle;
+  std::string color;  // 6-digit hex RGB, no '#'
+  int led_mode;
+  int priority;
+  bool value_blink;
+  uint32_t seq;
+  std::string end_time;   // empty = no self-delete/countdown
+  uint32_t added_epoch;   // Unix timestamp, only meaningful if end_time set
+};
+
+// Parses one "key=value;key=value;..." line into a QueuedNotify, applying
+// defaults for anything missing. Shared by parse_notify_queue() (splitting
+// the multi-line queue first) and notify_add_to_queue (validating/
+// normalizing a single freshly-entered entry before it's stored).
+inline QueuedNotify parse_notify_entry(const std::string &line) {
+  QueuedNotify qn;
+  qn.color = "00FF00";
+  qn.led_mode = 2;
+  qn.priority = 1;
+  qn.value_blink = false;
+  qn.seq = 0;
+  qn.added_epoch = 0;
+  size_t pos = 0;
+  while (pos < line.size()) {
+    size_t semi = line.find(';', pos);
+    std::string token = (semi == std::string::npos) ? line.substr(pos) : line.substr(pos, semi - pos);
+    pos = (semi == std::string::npos) ? line.size() : semi + 1;
+    size_t eq = token.find('=');
+    if (eq == std::string::npos) continue;
+    std::string key = token.substr(0, eq);
+    std::string value = token.substr(eq + 1);
+    if (key == "id") qn.entry_id = value;
+    else if (key == "title") qn.title = value;
+    else if (key == "subtitle") qn.subtitle = value;
+    else if (key == "color") {
+      if (!value.empty() && value[0] == '#') value = value.substr(1);
+      qn.color = value.empty() ? "00FF00" : value;
+    } else if (key == "led_mode") {
+      qn.led_mode = value.empty() ? 2 : (value[0] - '0');
+      if (qn.led_mode < 0 || qn.led_mode > 2) qn.led_mode = 2;
+    } else if (key == "priority") {
+      qn.priority = value.empty() ? 1 : (value[0] - '0');
+      if (qn.priority < 0 || qn.priority > 2) qn.priority = 1;
+    } else if (key == "value_blink") {
+      qn.value_blink = value == "1";
+    } else if (key == "seq") {
+      qn.seq = (uint32_t) strtoul(value.c_str(), nullptr, 10);
+    } else if (key == "end") {
+      qn.end_time = value;
+    } else if (key == "added") {
+      qn.added_epoch = (uint32_t) strtoul(value.c_str(), nullptr, 10);
+    }
+  }
+  return qn;
+}
+
+inline std::vector<QueuedNotify> parse_notify_queue(const std::string &raw) {
+  std::vector<QueuedNotify> out;
+  size_t pos = 0;
+  while (pos < raw.size()) {
+    size_t nl = raw.find('\n', pos);
+    std::string line = (nl == std::string::npos) ? raw.substr(pos) : raw.substr(pos, nl - pos);
+    pos = (nl == std::string::npos) ? raw.size() : nl + 1;
+    if (line.empty()) continue;
+    QueuedNotify qn = parse_notify_entry(line);
+    if (qn.entry_id.empty() || qn.title.empty()) continue;  // need at least id + title
+    out.push_back(qn);
+  }
+  std::sort(out.begin(), out.end(), [](const QueuedNotify &a, const QueuedNotify &b) {
+    if (a.priority != b.priority) return a.priority > b.priority;
+    return a.seq > b.seq;
+  });
+  return out;
+}
+
+// Inverse of parse_notify_entry() - rebuilds the "key=value;..." line, used
+// to write the queue back out after removing one entry from it.
+inline std::string serialize_notify_entry(const QueuedNotify &q) {
+  char num[16];
+  std::string out = "id=" + q.entry_id + ";title=" + q.title + ";subtitle=" + q.subtitle + ";color=" + q.color +
+                     ";led_mode=";
+  snprintf(num, sizeof(num), "%d", q.led_mode);
+  out += num;
+  out += ";priority=";
+  snprintf(num, sizeof(num), "%d", q.priority);
+  out += num;
+  out += ";value_blink=";
+  out += q.value_blink ? "1" : "0";
+  out += ";seq=";
+  snprintf(num, sizeof(num), "%lu", (unsigned long) q.seq);
+  out += num;
+  if (!q.end_time.empty()) {
+    out += ";end=" + q.end_time + ";added=";
+    snprintf(num, sizeof(num), "%lu", (unsigned long) q.added_epoch);
+    out += num;
+  }
+  return out;
+}
+
+// Parses a 6-digit hex RGB string (as stored in QueuedNotify::color, no '#')
+// into 0..1 float channels for light.turn_on. Invalid/short input falls
+// back to green, matching parse_notify_entry()'s default.
+inline LedColor hex_to_led_color(const std::string &hex) {
+  if (hex.size() != 6) return {0.0f, 1.0f, 0.0f};
+  auto nibble = [](char c) -> int {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return 0;
+  };
+  int r = (nibble(hex[0]) << 4) | nibble(hex[1]);
+  int g = (nibble(hex[2]) << 4) | nibble(hex[3]);
+  int b = (nibble(hex[4]) << 4) | nibble(hex[5]);
+  return {r / 255.0f, g / 255.0f, b / 255.0f};
 }
 
 // ------------------------------------------------------------------

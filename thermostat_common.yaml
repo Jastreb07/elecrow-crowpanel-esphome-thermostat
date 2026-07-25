@@ -457,15 +457,46 @@ globals:
     initial_value: "0"
 
   # Notify: unlike Timer/Progress there's no countdown/threshold - "finished"
-  # simply means "a notification is currently active" (notify_title_txt is
-  # non-empty), latched true the moment it's set so notify_finished_at_ms
-  # anchors the auto-home delay and the arc countdown consistently.
+  # simply means "the queue has at least one entry", latched true the moment
+  # one is added so notify_finished_at_ms anchors the auto-home delay and
+  # the arc countdown consistently.
   - id: notify_finished
     type: bool
     restore_value: false
     initial_value: "false"
 
   - id: notify_finished_at_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+
+  # True for exactly one check_finish_effects tick - the one where the queue
+  # goes from empty to non-empty. Drives the auto-show-screen action, which
+  # needs to fire once on the transition, not on every tick.
+  - id: notify_just_finished
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+  # Position within the notify queue currently shown on the Notify screen.
+  # Reset to 0 (start over) every time the screen is (re-)entered.
+  - id: notify_queue_index
+    type: int
+    restore_value: false
+    initial_value: "0"
+
+  # Internal-only queue storage - never written to directly by HA. HA adds
+  # one entry at a time via notify_add_txt/notify_add_btn (appended here with
+  # an auto-assigned seq) and removes one by id via
+  # notify_remove_id_txt/notify_remove_btn (filtered out and re-serialized).
+  - id: notify_queue
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+
+  # Insertion-order counter assigned to each newly-added notify entry, used
+  # as the priority tiebreaker (newest first within the same priority).
+  - id: notify_queue_seq
     type: uint32_t
     restore_value: false
     initial_value: "0"
@@ -665,18 +696,6 @@ switch:
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
 
-  - platform: template
-    name: "[Notify] Notify LED Blink"
-    id: notify_finish_blink_switch
-    optimistic: true
-    restore_mode: RESTORE_DEFAULT_ON
-
-  - platform: template
-    name: "[Notify] Notify Value Blink"
-    id: notify_value_blink_switch
-    optimistic: true
-    restore_mode: RESTORE_DEFAULT_ON
-
 select:
   - platform: template
     name: "[System] Language"
@@ -735,15 +754,6 @@ select:
   - platform: template
     name: "[Progress] Progress Blink LED Color"
     id: progress_blink_led_color_select
-    optimistic: true
-    restore_value: true
-    options: ["Green", "Red", "Blue", "Yellow", "Orange", "Purple", "Cyan", "Magenta", "White", "Pink"]
-    initial_option: "Green"
-    icon: "mdi:eyedropper"
-
-  - platform: template
-    name: "[Notify] Notify Blink LED Color"
-    id: notify_blink_led_color_select
     optimistic: true
     restore_value: true
     options: ["Green", "Red", "Blue", "Yellow", "Orange", "Purple", "Cyan", "Magenta", "White", "Pink"]
@@ -984,6 +994,22 @@ button:
     on_press:
       then:
         - script.execute: import_settings
+
+  - platform: template
+    name: "[Notify] Add to Queue"
+    id: notify_add_btn
+    icon: "mdi:bell-plus-outline"
+    on_press:
+      then:
+        - script.execute: notify_add_to_queue
+
+  - platform: template
+    name: "[Notify] Remove from Queue"
+    id: notify_remove_btn
+    icon: "mdi:bell-minus-outline"
+    on_press:
+      then:
+        - script.execute: notify_remove_from_queue
 
   # Jump straight to the Home/Timer/Progress screen from Home Assistant (an
   # automation, dashboard button, etc.) - same idea as pressing restart_btn
@@ -1323,7 +1349,6 @@ sensor:
                     case 13:
                     case 25:
                     case 28:
-                    case 33:
                       id(submenu_index) = menu_scroll_index(id(submenu_index), id(encoder_delta), id(submenu_count));
                       break;
                     case 2:
@@ -1333,7 +1358,6 @@ sensor:
                     case 16: case 17:
                     case 19: case 21:
                     case 23: case 24: case 26: case 27:
-                    case 32: case 35:
                       id(submenu_index) = 1 - id(submenu_index);
                       break;
                     case 8:
@@ -1491,34 +1515,37 @@ text:
       then:
         - script.execute: refresh_progress
 
-  # Notify: a one-shot message from Home Assistant, not a persisted default
-  # label like Timer/Progress Title - cleared on boot, and self-clears once
-  # dismissed (see check_finish_effects).
+  # Notify: the queue itself is internal-only (id(notify_queue), not an HA
+  # entity - see globals above) so it never has to fit HA's 255-char text
+  # limit. HA adds one notification at a time here as a human-readable
+  # "id=xxx;title=Hello world;subtitle=...;color=RRGGBB;led_mode=0..2;
+  # priority=0..2;value_blink=0|1;end=YYYY-MM-DD HH:MM:SS" string (id = any
+  # unique string the caller picks, color = a 6-digit hex RGB, led_mode =
+  # 0 off/1 on/2 blink, priority = 0 low/1 medium/2 high; `end` is optional -
+  # if set, the entry shows a Timer-style countdown arc while it's the one
+  # displayed, and deletes itself once that time passes), then presses
+  # "Add to Queue" to append it. See parse_notify_entry() in
+  # thermostat_helpers.h.
   - platform: template
-    name: "[Notify] Notify Title"
-    id: notify_title_txt
-    icon: "mdi:bell-outline"
+    name: "[Notify] Add Notification"
+    id: notify_add_txt
+    icon: "mdi:bell-plus-outline"
     optimistic: true
     restore_value: false
     initial_value: ""
-    max_length: 32
+    max_length: 255
     mode: text
-    on_value:
-      then:
-        - script.execute: refresh_notify
 
+  # The unique id of the queue entry to drop, then press "Remove from Queue".
   - platform: template
-    name: "[Notify] Notify Subtext"
-    id: notify_subtext_txt
-    icon: "mdi:bell-outline"
+    name: "[Notify] Remove Notification ID"
+    id: notify_remove_id_txt
+    icon: "mdi:bell-minus-outline"
     optimistic: true
     restore_value: false
     initial_value: ""
     max_length: 64
     mode: text
-    on_value:
-      then:
-        - script.execute: refresh_notify
 
 # ------------------------------------------------------------------
 # Scripts
@@ -1988,6 +2015,7 @@ script:
                                   then:
                                     - lambda: |-
                                         id(ui_context) = 10;
+                                        id(notify_queue_index) = 0;
                                         if (id(notify_finished)) id(notify_finished_at_ms) = millis();
                                     - script.execute: refresh_notify
                                     - lvgl.page.show:
@@ -2111,6 +2139,7 @@ script:
                                         then:
                                           - lambda: |-
                                               id(ui_context) = 10;
+                                              id(notify_queue_index) = 0;
                                               if (id(notify_finished)) id(notify_finished_at_ms) = millis();
                                           - script.execute: refresh_notify
                                           - lvgl.page.show: screen_notify
@@ -2615,27 +2644,70 @@ script:
 
   - id: refresh_notify
     then:
-      - lvgl.label.update:
-          id: label_notify_title
-          text: !lambda 'return id(notify_title_txt).state;'
       - lambda: |-
-          if (!id(notify_subtext_txt).state.empty()) {
-            lv_label_set_text(id(label_notify_subtext), id(notify_subtext_txt).state.c_str());
+          auto queue_items = parse_notify_queue(id(notify_queue));
+          int total = (int) queue_items.size();
+          std::string title, subtitle;
+          if (total > 0) {
+            int qi = clamp(id(notify_queue_index), 0, total - 1);
+            title = queue_items[qi].title;
+            subtitle = queue_items[qi].subtitle;
+          }
+          lv_label_set_text(id(label_notify_title), title.c_str());
+          if (!subtitle.empty()) {
+            lv_label_set_text(id(label_notify_subtext), subtitle.c_str());
             lv_obj_clear_flag(id(label_notify_subtext), LV_OBJ_FLAG_HIDDEN);
           } else {
             lv_obj_add_flag(id(label_notify_subtext), LV_OBJ_FLAG_HIDDEN);
           }
+          int idx = id(notify_queue_index);
+          if (idx < 0) idx = 0;
+          if (total > 0 && idx >= total) idx = total - 1;
+          if (total > 1) {
+            char page[20];
+            snprintf(page, sizeof(page), "%d / %d", idx + 1, total);
+            lv_label_set_text(id(label_notify_page), page);
+            lv_obj_clear_flag(id(label_notify_page), LV_OBJ_FLAG_HIDDEN);
+            if (idx > 0) lv_obj_clear_flag(id(label_notify_arrow_prev), LV_OBJ_FLAG_HIDDEN);
+            else lv_obj_add_flag(id(label_notify_arrow_prev), LV_OBJ_FLAG_HIDDEN);
+            if (idx < total - 1) lv_obj_clear_flag(id(label_notify_arrow_next), LV_OBJ_FLAG_HIDDEN);
+            else lv_obj_add_flag(id(label_notify_arrow_next), LV_OBJ_FLAG_HIDDEN);
+          } else {
+            lv_obj_add_flag(id(label_notify_page), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(label_notify_arrow_prev), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(label_notify_arrow_next), LV_OBJ_FLAG_HIDDEN);
+          }
       - lambda: |-
-          // No numeric value to show progress for, so the arc instead shows
-          // how far through the Auto-Home countdown we are (0 while off or
-          // not yet active).
-          int delay = (int) id(notify_auto_home_num).state;
+          // The arc only appears when the currently shown entry has an
+          // "end" date-time (a self-deleting notification) - then it counts
+          // down exactly like the Timer screen's arc, elapsed since the
+          // entry was added vs. remaining until end. No end set = no arc.
+          auto notify_items = parse_notify_queue(id(notify_queue));
+          int notify_total = (int) notify_items.size();
+          bool show_arc = false;
           int percent = 0;
-          if (delay > 0 && id(notify_finished)) {
-            uint32_t elapsed = millis() - id(notify_finished_at_ms);
-            percent = (int) clamp((float) elapsed / ((float) delay * 1000.0f) * 100.0f, 0.0f, 100.0f);
+          if (notify_total > 0) {
+            auto &qn = notify_items[clamp(id(notify_queue_index), 0, notify_total - 1)];
+            if (!qn.end_time.empty()) {
+              show_arc = true;
+              auto now = id(ha_time).now();
+              long remaining = timer_remaining_seconds(qn.end_time, now);
+              uint32_t elapsed = (now.is_valid() && now.timestamp > qn.added_epoch)
+                                      ? now.timestamp - qn.added_epoch : 0;
+              uint32_t total_secs = elapsed + (uint32_t) (remaining > 0 ? remaining : 0);
+              percent = total_secs > 0
+                            ? (int) clamp((float) elapsed / (float) total_secs * 100.0f, 0.0f, 100.0f)
+                            : 0;
+            }
           }
           lv_arc_set_value(id(arc_notify_value), percent);
+          if (show_arc) {
+            lv_obj_clear_flag(id(arc_notify_track), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(id(arc_notify_value), LV_OBJ_FLAG_HIDDEN);
+          } else {
+            lv_obj_add_flag(id(arc_notify_track), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(arc_notify_value), LV_OBJ_FLAG_HIDDEN);
+          }
       - if:
           condition:
             lambda: 'return id(ui_context) == 6;'
@@ -2710,9 +2782,74 @@ script:
       - script.execute: wake_display
       - lambda: |-
           id(ui_context) = 10;
+          id(notify_queue_index) = 0;
           if (id(notify_finished)) id(notify_finished_at_ms) = millis();
       - script.execute: refresh_notify
       - lvgl.page.show: screen_notify
+
+  # Swipe navigation between the static notify (if active) and any queued
+  # ones - same clamp-at-the-edges behavior as the rest of the menus (no
+  # wrap-around).
+  - id: notify_previous
+    then:
+      - script.execute: wake_display
+      - lambda: |-
+          int total = (int) parse_notify_queue(id(notify_queue)).size();
+          id(notify_queue_index) = menu_scroll_index(id(notify_queue_index), -1, total);
+      - script.execute: refresh_notify
+
+  - id: notify_next
+    then:
+      - script.execute: wake_display
+      - lambda: |-
+          int total = (int) parse_notify_queue(id(notify_queue)).size();
+          id(notify_queue_index) = menu_scroll_index(id(notify_queue_index), 1, total);
+      - script.execute: refresh_notify
+
+  # HA writes one entry's fields (no id/seq needed from HA's side beyond the
+  # id it picks) to notify_add_txt as
+  # "id|title|subtitle|color|led_mode|priority|value_blink", then presses
+  # this button. Appends the entry's own seq (assigned here, not by HA) to
+  # the internal queue and clears the input field.
+  # HA's input is a human-readable "id=...;title=...;color=RRGGBB;..." string
+  # (see parse_notify_entry() in thermostat_helpers.h for the full key
+  # list/example) - this just validates it has an id+title, tags on the
+  # ESP-assigned seq, and appends it as its own line in the queue.
+  - id: notify_add_to_queue
+    then:
+      - lambda: |-
+          std::string raw = id(notify_add_txt).state;
+          if (raw.empty()) return;
+          QueuedNotify qn = parse_notify_entry(raw);
+          if (qn.entry_id.empty() || qn.title.empty()) return;
+          qn.seq = id(notify_queue_seq)++;
+          if (!qn.end_time.empty()) qn.added_epoch = id(ha_time).now().timestamp;
+          if (!id(notify_queue).empty()) id(notify_queue) += "\n";
+          id(notify_queue) += serialize_notify_entry(qn);
+      - text.set: {id: notify_add_txt, value: ""}
+      - script.execute: refresh_notify
+
+  # HA writes the target entry's id to notify_remove_id_txt, then presses
+  # this button. Drops the matching entry (if any) and re-serializes the
+  # rest back into the queue.
+  - id: notify_remove_from_queue
+    then:
+      - lambda: |-
+          std::string target = id(notify_remove_id_txt).state;
+          if (target.empty()) return;
+          auto items = parse_notify_queue(id(notify_queue));
+          std::string rebuilt;
+          for (auto &qn : items) {
+            if (qn.entry_id == target) continue;
+            if (!rebuilt.empty()) rebuilt += "\n";
+            rebuilt += serialize_notify_entry(qn);
+          }
+          id(notify_queue) = rebuilt;
+      - text.set: {id: notify_remove_id_txt, value: ""}
+      - lambda: |-
+          int total = (int) parse_notify_queue(id(notify_queue)).size();
+          id(notify_queue_index) = clamp(id(notify_queue_index), 0, total > 0 ? total - 1 : 0);
+      - script.execute: refresh_notify
 
   # Runs every 500ms (see the interval: block). Handles what happens once a
   # timer/progress has finished: an optional status-LED blink (in the
@@ -2754,15 +2891,44 @@ script:
           } else {
             id(progress_finished) = false;
           }
+          // Self-deleting entries (those with an "end" date-time) drop
+          // themselves from the queue once that time passes - same
+          // countdown-to-zero semantics as the Timer screen, just per-entry.
+          // Rebuilt without re-sorting since storage order doesn't matter
+          // (parse_notify_queue() re-sorts on every read anyway).
+          {
+            auto notify_all = parse_notify_queue(id(notify_queue));
+            auto notify_now = id(ha_time).now();
+            bool notify_expired_any = false;
+            std::string notify_rebuilt;
+            for (auto &qn : notify_all) {
+              if (!qn.end_time.empty() && timer_remaining_seconds(qn.end_time, notify_now) <= 0) {
+                notify_expired_any = true;
+                continue;
+              }
+              if (!notify_rebuilt.empty()) notify_rebuilt += "\n";
+              notify_rebuilt += serialize_notify_entry(qn);
+            }
+            if (notify_expired_any) {
+              id(notify_queue) = notify_rebuilt;
+              int notify_new_total = (int) parse_notify_queue(id(notify_queue)).size();
+              id(notify_queue_index) = clamp(id(notify_queue_index), 0, notify_new_total > 0 ? notify_new_total - 1 : 0);
+              // Live-update the screen immediately if it's the one currently
+              // shown, instead of waiting for the next swipe/manual refresh.
+              if (id(ui_context) == 10) id(refresh_notify).execute();
+            }
+          }
           // Notify has no threshold to cross - it's "finished" (active) the
-          // instant a title is set, and stays that way until dismissed. Unlike
-          // Timer/Progress it never auto-shows its screen (only the "Show
-          // Notify Screen" button does that), so there's no "just finished"
-          // one-shot to track here.
-          if (!id(notify_title_txt).state.empty()) {
+          // instant the queue gets an entry, and stays that way until it's
+          // emptied again. notify_just_finished latches for exactly one tick
+          // on that empty->non-empty transition, driving the auto-show below.
+          id(notify_just_finished) = false;
+          bool notify_active = !parse_notify_queue(id(notify_queue)).empty();
+          if (notify_active) {
             if (!id(notify_finished)) {
               id(notify_finished) = true;
               id(notify_finished_at_ms) = millis();
+              id(notify_just_finished) = true;
             }
           } else {
             id(notify_finished) = false;
@@ -2792,6 +2958,19 @@ script:
             - lambda: 'id(ui_context) = 9;'
             - script.execute: refresh_progress
             - lvgl.page.show: screen_progress
+      # Notify always auto-shows once at least one notification is queued -
+      # there's no toggle for this (removing the queue's only entry and
+      # adding a new one re-triggers it, same as Timer/Progress finishing).
+      - if:
+          condition:
+            lambda: 'return id(connection_ready) && id(notify_just_finished);'
+          then:
+            - script.execute: wake_display
+            - lambda: |-
+                id(ui_context) = 10;
+                id(notify_queue_index) = 0;
+            - script.execute: refresh_notify
+            - lvgl.page.show: screen_notify
       # A finished timer/progress that isn't (or is no longer) being looked
       # at resets itself, so it doesn't linger "finished" forever and doesn't
       # reappear stale (see the Timer Auto-Home / Progress Auto-Home delay
@@ -2808,19 +2987,23 @@ script:
           then:
             - number.set: {id: progress_value_num, value: 0}
             - text.set: {id: progress_title_txt, value: ""}
-      - if:
-          condition:
-            lambda: 'return id(notify_finished) && id(ui_context) != 10;'
-          then:
-            - text.set: {id: notify_title_txt, value: ""}
-            - text.set: {id: notify_subtext_txt, value: ""}
       - lambda: |-
           bool timer_led_blinking = id(ui_context) == 8 && id(timer_finished) &&
                                      id(timer_finish_blink_switch).state;
           bool progress_led_blinking = id(ui_context) == 9 && id(progress_finished) &&
                                         id(progress_finish_blink_switch).state;
-          bool notify_led_blinking = id(ui_context) == 10 && id(notify_finished) &&
-                                      id(notify_finish_blink_switch).state;
+          // Both the LED mode (off/on/blink) and whether the value label
+          // also blinks come from the currently shown queue entry itself.
+          auto notify_queue_items = parse_notify_queue(id(notify_queue));
+          int notify_total = (int) notify_queue_items.size();
+          int notify_led_mode = 0;
+          bool notify_value_blink_enabled = false;
+          if (id(ui_context) == 10 && id(notify_finished) && notify_total > 0) {
+            int notify_qi = clamp(id(notify_queue_index), 0, notify_total - 1);
+            notify_led_mode = notify_queue_items[notify_qi].led_mode;
+            notify_value_blink_enabled = notify_queue_items[notify_qi].value_blink;
+          }
+          bool notify_led_blinking = notify_led_mode == 2;
           id(blink_led_on) = (timer_led_blinking || progress_led_blinking || notify_led_blinking)
                                   ? !id(blink_led_on) : false;
 
@@ -2839,10 +3022,8 @@ script:
               LV_PART_MAIN);
 
           lv_obj_t *notify_title = id(label_notify_title);
-          bool notify_value_blinking = id(ui_context) == 10 && id(notify_finished) &&
-                                        id(notify_value_blink_switch).state;
           lv_obj_set_style_text_opa(notify_title,
-              (notify_value_blinking && !id(blink_led_on)) ? LV_OPA_TRANSP : LV_OPA_COVER,
+              (notify_value_blink_enabled && !id(blink_led_on)) ? LV_OPA_TRANSP : LV_OPA_COVER,
               LV_PART_MAIN);
       - script.execute: update_status_led
       - if:
@@ -3484,9 +3665,7 @@ script:
             case 29: id(num_preview) = (int) id(timer_blink_led_brightness_num).state; break;
             case 30: id(num_preview) = (int) id(progress_blink_led_brightness_num).state; break;
             case 31: id(num_preview) = (int) id(notify_auto_home_num).state; break;
-            case 32: id(submenu_index) = id(notify_finish_blink_switch).state ? 1 : 0; break;
             case 34: id(num_preview) = (int) id(notify_blink_led_brightness_num).state; break;
-            case 35: id(submenu_index) = id(notify_value_blink_switch).state ? 1 : 0; break;
             case 25: {
               id(submenu_count) = BLINK_LED_COLOR_COUNT;
               const std::string &cur_name = id(timer_blink_led_color_select).state;
@@ -3497,13 +3676,6 @@ script:
             case 28: {
               id(submenu_count) = BLINK_LED_COLOR_COUNT;
               const std::string &cur_name = id(progress_blink_led_color_select).state;
-              for (int i = 0; i < BLINK_LED_COLOR_COUNT; i++)
-                if (cur_name == blink_led_color_name(i)) { id(submenu_index) = i; break; }
-              break;
-            }
-            case 33: {
-              id(submenu_count) = BLINK_LED_COLOR_COUNT;
-              const std::string &cur_name = id(notify_blink_led_color_select).state;
               for (int i = 0; i < BLINK_LED_COLOR_COUNT; i++)
                 if (cur_name == blink_led_color_name(i)) { id(submenu_index) = i; break; }
               break;
@@ -3572,13 +3744,7 @@ script:
               id(apply_service) = 43;
               break;
             case 31: id(apply_service) = 44; break;
-            case 32: id(apply_service) = id(submenu_index) ? 45 : 46; break;
-            case 33:
-              id(pending_mode_holder) = blink_led_color_name(id(submenu_index));
-              id(apply_service) = 47;
-              break;
             case 34: id(apply_service) = 48; break;
-            case 35: id(apply_service) = id(submenu_index) ? 49 : 50; break;
             default: break;
           }
           id(ui_context) = id(thermostat_quick_stage) != 0 ? 1 : 3;
@@ -3710,26 +3876,8 @@ script:
           condition: {lambda: 'return id(apply_service) == 44;'}
           then: [{number.set: {id: notify_auto_home_num, value: !lambda 'return id(num_preview);'}}]
       - if:
-          condition: {lambda: 'return id(apply_service) == 45;'}
-          then: [switch.turn_on: notify_finish_blink_switch]
-      - if:
-          condition: {lambda: 'return id(apply_service) == 46;'}
-          then: [switch.turn_off: notify_finish_blink_switch]
-      - if:
-          condition: {lambda: 'return id(apply_service) == 47;'}
-          then:
-            - select.set:
-                id: notify_blink_led_color_select
-                option: !lambda 'return id(pending_mode_holder);'
-      - if:
           condition: {lambda: 'return id(apply_service) == 48;'}
           then: [{number.set: {id: notify_blink_led_brightness_num, value: !lambda 'return id(num_preview);'}}]
-      - if:
-          condition: {lambda: 'return id(apply_service) == 49;'}
-          then: [switch.turn_on: notify_value_blink_switch]
-      - if:
-          condition: {lambda: 'return id(apply_service) == 50;'}
-          then: [switch.turn_off: notify_value_blink_switch]
       - if:
           condition:
             lambda: 'return id(thermostat_quick_stage) != 0;'
@@ -3769,9 +3917,7 @@ script:
                            ? id(i18n_translations).translate("settings.group.progress")
                            : id(progress_title_txt).state;
               if (p < climates + lights + covers + timers + progresses + notifies)
-                return id(notify_title_txt).state.empty()
-                           ? id(i18n_translations).translate("settings.group.notify")
-                           : id(notify_title_txt).state;
+                return id(i18n_translations).translate("settings.group.notify");
               return p == climates + lights + covers + timers + progresses + notifies
                          ? id(i18n_translations).translate("common.settings")
                          : id(i18n_translations).translate("common.back");
@@ -3899,19 +4045,7 @@ script:
                 else { snprintf(buf, sizeof(buf), "%ds", v); val = buf; }
                 break;
               }
-              case 32:
-                val = id(i18n_translations).translate(
-                    id(notify_finish_blink_switch).state ? "common.on" : "common.off");
-                break;
-              case 33:
-                val = id(i18n_translations).translate(
-                    blink_led_color_key_for_name(id(notify_blink_led_color_select).state));
-                break;
               case 34: snprintf(buf, sizeof(buf), "%d%%", (int) id(notify_blink_led_brightness_num).state); val = buf; break;
-              case 35:
-                val = id(i18n_translations).translate(
-                    id(notify_value_blink_switch).state ? "common.on" : "common.off");
-                break;
             }
             (void) val;
           } else {
@@ -4086,9 +4220,7 @@ script:
                 break;
               }
               case 26:
-              case 27:
-              case 32:
-              case 35: {
+              case 27: {
                 auto m = bool_menu_window(id(submenu_index),
                                            id(i18n_translations).translate("common.off").c_str(),
                                            id(i18n_translations).translate("common.on").c_str());
@@ -4105,8 +4237,7 @@ script:
                 break;
               }
               case 25:
-              case 28:
-              case 33: {
+              case 28: {
                 auto m = menu_window(id(submenu_index), BLINK_LED_COLOR_COUNT, false,
                                       [](int p) -> std::string {
                                         return id(i18n_translations).translate(blink_led_color_key(p));
@@ -4290,14 +4421,11 @@ script:
           add_bool("pvb", id(progress_value_blink_switch).state);
           add_bool("tss", id(timer_show_on_finish_switch).state);
           add_bool("pss", id(progress_show_on_finish_switch).state);
-          add_bool("nfb", id(notify_finish_blink_switch).state);
-          add_bool("nvb", id(notify_value_blink_switch).state);
           add_chr("lang", id(language_select).current_option() == "Deutsch" ? 'd' : 'e');
           add_chr("unit", id(unit_select).current_option() == "Fahrenheit" ? 'F' : 'C');
           out += "kstep="; out += id(knob_step_select).current_option(); out += ";";
           add_chr("tcol", blink_led_color_letter(id(timer_blink_led_color_select).state));
           add_chr("pcol", blink_led_color_letter(id(progress_blink_led_color_select).state));
-          add_chr("ncol", blink_led_color_letter(id(notify_blink_led_color_select).state));
           add_num("idle", id(idle_home_num).state);
           add_num("dimd", id(dim_delay_num).state);
           add_num("diml", id(dim_level_num).state);
@@ -4341,14 +4469,11 @@ script:
             else if (key == "pvb") { if (bv) id(progress_value_blink_switch).turn_on(); else id(progress_value_blink_switch).turn_off(); }
             else if (key == "tss") { if (bv) id(timer_show_on_finish_switch).turn_on(); else id(timer_show_on_finish_switch).turn_off(); }
             else if (key == "pss") { if (bv) id(progress_show_on_finish_switch).turn_on(); else id(progress_show_on_finish_switch).turn_off(); }
-            else if (key == "nfb") { if (bv) id(notify_finish_blink_switch).turn_on(); else id(notify_finish_blink_switch).turn_off(); }
-            else if (key == "nvb") { if (bv) id(notify_value_blink_switch).turn_on(); else id(notify_value_blink_switch).turn_off(); }
             else if (key == "lang") { id(language_select).make_call().set_option(cv == 'd' ? "Deutsch" : "English").perform(); }
             else if (key == "unit") { id(unit_select).make_call().set_option(cv == 'F' ? "Fahrenheit" : "Celsius").perform(); }
             else if (key == "kstep") { id(knob_step_select).make_call().set_option(val).perform(); }
             else if (key == "tcol") { id(timer_blink_led_color_select).make_call().set_option(blink_led_color_from_letter(cv)).perform(); }
             else if (key == "pcol") { id(progress_blink_led_color_select).make_call().set_option(blink_led_color_from_letter(cv)).perform(); }
-            else if (key == "ncol") { id(notify_blink_led_color_select).make_call().set_option(blink_led_color_from_letter(cv)).perform(); }
             else if (key == "idle") { id(idle_home_num).make_call().set_value(fv).perform(); }
             else if (key == "dimd") { id(dim_delay_num).make_call().set_value(fv).perform(); }
             else if (key == "diml") { id(dim_level_num).make_call().set_value(fv).perform(); }

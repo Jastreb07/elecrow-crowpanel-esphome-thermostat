@@ -84,10 +84,7 @@ settings:
     timer_blink_brightness: "Timer Blink Brightness"
     progress_blink_brightness: "Progress Blink Brightness"
     notify_auto_home: "Notify Auto-Home"
-    notify_led_blink: "Notify LED Blink"
-    notify_blink_color: "Notify Blink LED Color"
     notify_blink_brightness: "Notify Blink Brightness"
-    notify_value_blink: "Notify Value Blink"
 
 color:
   green: "Green"

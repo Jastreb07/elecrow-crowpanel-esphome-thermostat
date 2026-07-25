@@ -1254,6 +1254,11 @@ lvgl:
         - script.execute: open_settings
       on_swipe_right:
         - script.execute: open_entity_overview
+      # Same axis the Cover screen uses for its own open/close swipe action.
+      on_swipe_up:
+        - script.execute: notify_next
+      on_swipe_down:
+        - script.execute: notify_previous
       widgets:
         - button:
             id: button_notify_background
@@ -1267,6 +1272,9 @@ lvgl:
             on_click:
               - script.execute: wake_display
 
+        # Hidden by default - only shown for a queue entry that set an
+        # "end" date-time (see refresh_notify), same countdown behavior as
+        # the Timer screen's arc.
         - arc:
             id: arc_notify_track
             align: CENTER
@@ -1283,6 +1291,7 @@ lvgl:
             arc_rounded: true
             adjustable: false
             clickable: false
+            hidden: true
             indicator:
               arc_opa: TRANSP
 
@@ -1303,6 +1312,7 @@ lvgl:
             arc_rounded: true
             adjustable: false
             clickable: false
+            hidden: true
             indicator:
               arc_color: 0x6E4FBD
               arc_width: 30
@@ -1328,6 +1338,34 @@ lvgl:
             width: 340
             text_align: CENTER
             long_mode: SCROLL_CIRCULAR
+            hidden: true
+
+        # Shown only while more than one notification (static + queue) is
+        # available - same glyphs/positions as the Cover screen's direction
+        # hints, repurposed here for "swipe to browse".
+        - label:
+            id: label_notify_arrow_prev
+            text: "\U000F0143"
+            text_font: icons_70
+            text_color: 0xCDBEEC
+            align: TOP_MID
+            y: 34
+            hidden: true
+        - label:
+            id: label_notify_arrow_next
+            text: "\U000F0140"
+            text_font: icons_70
+            text_color: 0xCDBEEC
+            align: BOTTOM_MID
+            y: -34
+            hidden: true
+        - label:
+            id: label_notify_page
+            text: ""
+            text_font: rajdhani_medium_22
+            text_color: 0xCDBEEC
+            align: TOP_MID
+            y: 90
             hidden: true
 
     # ================= Settings menu =================
