@@ -105,6 +105,16 @@ esphome:
   on_boot:
     - priority: -100
       then:
+        # I18nComponent::setup() always resets its locale to the compiled-in
+        # default (English), regardless of what language_select's on_value
+        # already set it to during its own restore - this can run before or
+        # after language_select's setup depending on component ordering, so
+        # the restored language silently got lost until the user manually
+        # reselected it. on_boot runs after every component's setup(), so
+        # applying the restored option here always wins, no matter the order.
+        - lambda: |-
+            id(i18n_translations).set_current_locale(
+                id(language_select).current_option() == "Deutsch" ? "de" : "en");
         - lambda: |-
             int b = (int) roundf(id(brightness_num).state);
             id(brightness_pct) = clamp(b > 0 ? b : 50, 5, 100);
@@ -3035,7 +3045,14 @@ script:
                       char idbuf[24];
                       snprintf(idbuf, sizeof(idbuf), "dev%lu", (unsigned long) id(timer_queue_seq));
                       qt.entry_id = idbuf;
-                      qt.title = "";
+                      // parse_timer_queue() drops any entry with an empty
+                      // title (same requirement HA's timer_add_to_queue
+                      // enforces) - an empty title here silently made every
+                      // locally-created timer vanish immediately after being
+                      // added, and made timer_queue_index land on -1
+                      // (total - 1 with total == 0), which then crashed
+                      // check_finish_effects's out-of-bounds queue read.
+                      qt.title = id(i18n_translations).translate("timer.default_title");
                       long now_secs = civil_seconds(now.year, now.month, now.day_of_month,
                                                      now.hour, now.minute, now.second);
                       qt.end_time = format_civil_datetime(now_secs + id(timer_edit_seconds));
@@ -3707,7 +3724,7 @@ script:
           int timer_led_mode = 0;
           bool timer_value_blink_enabled = false;
           long timer_remaining = 0;
-          if (id(ui_context) == 8 && id(timer_queue_index) < timer_total) {
+          if (id(ui_context) == 8 && id(timer_queue_index) >= 0 && id(timer_queue_index) < timer_total) {
             auto &qt = timer_items[id(timer_queue_index)];
             timer_remaining = timer_remaining_seconds(qt.end_time, id(ha_time).now());
             timer_finished_now = timer_remaining <= 0;
@@ -3721,7 +3738,7 @@ script:
           bool progress_finished_now = false;
           int progress_led_mode = 0;
           bool progress_value_blink_enabled = false;
-          if (id(ui_context) == 9 && id(progress_queue_index) < progress_total) {
+          if (id(ui_context) == 9 && id(progress_queue_index) >= 0 && id(progress_queue_index) < progress_total) {
             auto &qp = progress_items[id(progress_queue_index)];
             progress_finished_now = qp.value >= 100.0f;
             progress_led_mode = qp.led_mode;
@@ -3767,7 +3784,8 @@ script:
               auto items = parse_timer_queue(id(timer_queue));
               int total = (int) items.size();
               int delay = (int) id(timer_auto_home_num).state;
-              if (id(ui_context) != 8 || delay <= 0 || id(timer_queue_index) >= total) return false;
+              if (id(ui_context) != 8 || delay <= 0 || id(timer_queue_index) < 0 ||
+                  id(timer_queue_index) >= total) return false;
               long remaining = timer_remaining_seconds(items[id(timer_queue_index)].end_time, id(ha_time).now());
               return remaining <= 0 && -remaining >= delay;
           then:
@@ -3778,7 +3796,8 @@ script:
               auto items = parse_progress_queue(id(progress_queue));
               int total = (int) items.size();
               int delay = (int) id(progress_auto_home_num).state;
-              if (id(ui_context) != 9 || delay <= 0 || id(progress_queue_index) >= total) return false;
+              if (id(ui_context) != 9 || delay <= 0 || id(progress_queue_index) < 0 ||
+                  id(progress_queue_index) >= total) return false;
               auto &qp = items[id(progress_queue_index)];
               return qp.value >= 100.0f && qp.finished_at_ms != 0 &&
                      millis() - qp.finished_at_ms >= (uint32_t) delay * 1000;

@@ -129,6 +129,7 @@ timer:
   cancel_confirm_body: "Erneut drücken zum Bestätigen (%ds)"
   add_hint: "Drehen zum Einstellen, drücken zum Hinzufügen"
   remove_hint: "Drücken zum Entfernen"
+  default_title: "Timer"
 
 light:
   mode_brightness: "Helligkeit"
