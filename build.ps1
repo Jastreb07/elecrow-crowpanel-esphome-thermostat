@@ -46,7 +46,7 @@ foreach ($board in $boards) {
     }
 
     $pioenvDir = Join-Path ".esphome" "build\$deviceName\.pioenvs\$deviceName"
-    $destDir = Join-Path "web-flasher\firmware" $board
+    $destDir = Join-Path "firmware" $board
     New-Item -ItemType Directory -Force -Path $destDir | Out-Null
 
     $src = Join-Path $pioenvDir "firmware.factory.bin"
@@ -62,6 +62,6 @@ foreach ($board in $boards) {
 }
 
 Write-Host "==> Done. Review the diff, then:"
-Write-Host "    git add web-flasher/firmware"
-Write-Host "    git commit -m `"chore(web-flasher): update firmware binaries`""
+Write-Host "    git add firmware"
+Write-Host "    git commit -m `"chore(firmware): update firmware binaries`""
 Write-Host "    git push"

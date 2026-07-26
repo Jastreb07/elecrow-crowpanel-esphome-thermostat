@@ -121,7 +121,6 @@ esphome:
         - light.turn_on:
             id: display_backlight
             brightness: !lambda 'return id(brightness_pct) / 100.0f;'
-        - lambda: 'ESP_LOGI("diag", "on_boot: setup_wizard_switch=%d", id(setup_wizard_switch).state);'
         - if:
             condition:
               lambda: 'return id(setup_wizard_switch).state;'
@@ -144,6 +143,16 @@ esphome:
 
 esp32:
   board: esp32-s3-devkitc-1
+  # Both CrowPanel variants ship with 16MB flash (see the boot log's
+  # "SPI Flash Size : 16MB"), but the esp32-s3-devkitc-1 board definition
+  # defaults to 4MB - which caps each OTA app slot at 1.75MB. The firmware
+  # has since grown past that (LVGL + i18n's two full translation tables +
+  # the wizard/timer/queue features), so declare the real size to get a
+  # partition table with app slots big enough to hold it, with headroom.
+  # Note: this shifts the nvs partition, so restored preferences (language,
+  # setup-wizard flag, brightness, ...) reset once on the first boot after
+  # flashing this change - expected, they'll persist normally afterwards.
+  flash_size: 16MB
   framework:
     type: esp-idf
     sdkconfig_options:
@@ -232,18 +241,6 @@ interval:
             lambda: 'return id(app_booted);'
           then:
             - script.execute: refresh_connection
-  # TEMP DIAGNOSTIC: logs every ui_context change regardless of which code
-  # path caused it, to pin down an otherwise-unlogged transition out of the
-  # Setup Wizard. Remove once the wizard-preemption bug is found.
-  - interval: 200ms
-    then:
-      - lambda: |-
-          static int prev = -999;
-          int cur = id(ui_context);
-          if (cur != prev) {
-            ESP_LOGI("diag", "ui_context changed: %d -> %d", prev, cur);
-            prev = cur;
-          }
   # Home Assistant light subscriptions are asynchronous. Redraw only while a
   # light page is visible and only after data actually changed.
   - interval: 100ms
@@ -1174,7 +1171,6 @@ binary_sensor:
     filters:
       - delayed_on_off: 10ms
     on_press:
-      - lambda: 'ESP_LOGI("diag", "encoder_button on_press, ui_context=%d", id(ui_context));'
       - if:
           condition:
             lambda: 'return id(connection_message) == "Smart Knob config not found";'
@@ -1206,7 +1202,6 @@ binary_sensor:
               condition:
                 lambda: 'return id(ui_context) == 11;'
               then:
-                - lambda: 'ESP_LOGI("diag", "encoder double-click, wizard_page=%d", id(wizard_page));'
                 - if:
                     condition:
                       lambda: 'return id(wizard_page) >= 11;'
@@ -1242,7 +1237,6 @@ binary_sensor:
               condition:
                 lambda: 'return id(ui_context) == 11;'
               then:
-                - lambda: 'ESP_LOGI("diag", "encoder single-click, wizard_page=%d", id(wizard_page));'
                 - if:
                     condition:
                       lambda: 'return id(wizard_page) >= 11;'
@@ -1517,7 +1511,7 @@ sensor:
               lambda: 'return id(encoder_delta) != 0 && id(ui_context) == 6;'
             then:
               - lambda: |-
-                  int timer_count = !parse_timer_queue(id(timer_queue)).empty() ? 1 : 0;
+                  int timer_count = 1;  // always present, see entity_menu_enter
                   int progress_count = !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0;
                   int notify_count = id(notify_finished) ? 1 : 0;
                   int count = (int) id(ha_climates).size() + (int) id(ha_lights).size() +
@@ -2255,7 +2249,10 @@ script:
           int climates = (int) id(ha_climates).size();
           int lights = (int) id(ha_lights).size();
           int covers = (int) id(ha_covers).size();
-          int timer_count = !parse_timer_queue(id(timer_queue)).empty() ? 1 : 0;
+          // Timer is always present (timer_count == 1) - it's the only way
+          // to reach the on-device "add a new timer" page, so it must be
+          // openable even while the queue is empty, unlike Progress/Notify.
+          int timer_count = 1;
           int progress_count = !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0;
           int notify_count = id(notify_finished) ? 1 : 0;
           int total = climates + lights + covers + timer_count + progress_count + notify_count + 2;
@@ -2333,9 +2330,8 @@ script:
                                           lambda: |-
                                             int progress_count = !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0;
                                             int notify_count = id(notify_finished) ? 1 : 0;
-                                            bool timer_present = !parse_timer_queue(id(timer_queue)).empty();
-                                            return timer_present &&
-                                                   id(entity_menu_index) == (int) id(ha_climates).size() +
+                                            // Timer is always present, no queue check.
+                                            return id(entity_menu_index) == (int) id(ha_climates).size() +
                                                        (int) id(ha_lights).size() + (int) id(ha_covers).size() +
                                                        progress_count + notify_count;
                                         then:
@@ -2346,12 +2342,12 @@ script:
                                           - if:
                                               condition:
                                                 lambda: |-
-                                                  int timer_count = !parse_timer_queue(id(timer_queue)).empty() ? 1 : 0;
                                                   int progress_count = !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0;
                                                   int notify_count = id(notify_finished) ? 1 : 0;
+                                                  // Settings sits right after the always-present Timer.
                                                   return id(entity_menu_index) == (int) id(ha_climates).size() +
                                                       (int) id(ha_lights).size() + (int) id(ha_covers).size() +
-                                                      timer_count + progress_count + notify_count;
+                                                      1 + progress_count + notify_count;
                                               then:
                                                 - script.execute: open_settings
                                               else:
@@ -2997,7 +2993,6 @@ script:
           condition:
             lambda: 'return id(ui_context) != 11;'
           then:
-            - lambda: 'ESP_LOGI("diag", "activate_home_screen: switching (was ui_context=%d)", id(ui_context));'
             - script.execute: wake_display
             - lambda: 'id(ui_context) = 0;'
             - script.execute: refresh_temps
@@ -3276,7 +3271,6 @@ script:
           bool blocked = (step == 1 && !id(wifi_id).is_connected()) ||
                           (step == 5 && !id(ha_connected));
           if (!blocked) id(wizard_page) = menu_scroll_index(page, 1, 12);
-          ESP_LOGI("diag", "wizard_next: %d -> %d (blocked=%d)", page, id(wizard_page), blocked);
       - script.execute: refresh_wizard
 
   # Turning the knob backward on a step page (pages 2-11). Always allowed,
@@ -3302,7 +3296,6 @@ script:
   - id: wizard_finish
     then:
       - lambda: |-
-          ESP_LOGI("diag", "wizard_finish: page=%d connection_ready=%d", id(wizard_page), id(connection_ready));
           id(setup_wizard_switch).turn_off();
           global_preferences->sync();
       - if:
@@ -4288,7 +4281,6 @@ script:
           then:
             - script.execute: refresh_temps
             - script.execute: refresh_light
-            - lambda: 'ESP_LOGI("diag", "connection_state_changed: connection_ready=%d ui_context=%d", id(connection_ready), id(ui_context));'
             # Never yank the screen away while the Setup Wizard is up - it
             # runs in the background regardless of ui_context, so Home
             # Assistant becoming reachable mid-wizard must not interrupt it.
@@ -4623,13 +4615,10 @@ script:
             int climates = (int) id(ha_climates).size();
             int lights = (int) id(ha_lights).size();
             int covers = (int) id(ha_covers).size();
-            int timers = !parse_timer_queue(id(timer_queue)).empty() ? 1 : 0;
+            int timers = 1;  // always present, see entity_menu_enter
             int progresses = !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0;
             int notifies = id(notify_finished) ? 1 : 0;
             int count = climates + lights + covers + timers + progresses + notifies + 2;
-            ESP_LOGI("diag", "entity menu: climates=%d lights=%d covers=%d timers=%d progresses=%d notifies=%d count=%d idx=%d timer_queue_raw='%s'",
-                     climates, lights, covers, timers, progresses, notifies, count,
-                     id(entity_menu_index), id(timer_queue).c_str());
             // Order is Progress, Notify, Timer, Settings, Back - see
             // entity_menu_enter for why Timer sits right before Settings.
             auto entity_name = [climates, lights, covers, timers, progresses, notifies,
@@ -4967,7 +4956,7 @@ script:
             if (id(ui_context) == 6)
               return std::string(entity_menu_icon(id(entity_menu_index) - 2,
                   (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size(),
-                  !parse_timer_queue(id(timer_queue)).empty() ? 1 : 0,
+                  1,  // Timer always present, see entity_menu_enter
                   !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0,
                   id(notify_finished) ? 1 : 0));
             if (id(ui_context) == 2)
@@ -4983,7 +4972,7 @@ script:
             if (id(ui_context) == 6)
               return std::string(entity_menu_icon(id(entity_menu_index) - 1,
                   (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size(),
-                  !parse_timer_queue(id(timer_queue)).empty() ? 1 : 0,
+                  1,  // Timer always present, see entity_menu_enter
                   !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0,
                   id(notify_finished) ? 1 : 0));
             if (id(ui_context) == 2)
@@ -4999,7 +4988,7 @@ script:
             if (id(ui_context) == 6)
               return std::string(entity_menu_icon(id(entity_menu_index),
                   (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size(),
-                  !parse_timer_queue(id(timer_queue)).empty() ? 1 : 0,
+                  1,  // Timer always present, see entity_menu_enter
                   !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0,
                   id(notify_finished) ? 1 : 0));
             if (id(ui_context) == 2)
@@ -5015,7 +5004,7 @@ script:
             if (id(ui_context) == 6)
               return std::string(entity_menu_icon(id(entity_menu_index) + 1,
                   (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size(),
-                  !parse_timer_queue(id(timer_queue)).empty() ? 1 : 0,
+                  1,  // Timer always present, see entity_menu_enter
                   !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0,
                   id(notify_finished) ? 1 : 0));
             if (id(ui_context) == 2)
@@ -5031,7 +5020,7 @@ script:
             if (id(ui_context) == 6)
               return std::string(entity_menu_icon(id(entity_menu_index) + 2,
                   (int) id(ha_climates).size(), (int) id(ha_lights).size(), (int) id(ha_covers).size(),
-                  !parse_timer_queue(id(timer_queue)).empty() ? 1 : 0,
+                  1,  // Timer always present, see entity_menu_enter
                   !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0,
                   id(notify_finished) ? 1 : 0));
             if (id(ui_context) == 2)

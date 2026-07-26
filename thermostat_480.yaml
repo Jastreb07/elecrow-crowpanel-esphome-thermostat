@@ -104,7 +104,6 @@ touchscreen:
   update_interval: 25ms
   address: 0x15
   on_touch:
-    - lambda: 'ESP_LOGI("diag", "touch event, ui_context=%d", id(ui_context));'
     - script.execute: wake_display
 
 display:
@@ -200,14 +199,12 @@ lvgl:
         - script.execute: update_status_led
     - timeout: !lambda 'return (uint32_t)(id(idle_home_num).state * 1000.0f);'
       then:
-        - lambda: 'ESP_LOGI("diag", "on_idle idle_home fired: ui_context=%d connection_ready=%d", id(ui_context), id(connection_ready));'
         - if:
             condition:
               lambda: |-
                 return id(connection_ready) && id(ui_context) != 8 && id(ui_context) != 9 &&
                        id(ui_context) != 10 && id(ui_context) != 11;
             then:
-              - lambda: 'ESP_LOGI("diag", "on_idle: switching to home");'
               - lambda: 'id(ui_context) = 0;'
               - script.execute: refresh_temps
               - script.execute: refresh_status
