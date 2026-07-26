@@ -111,6 +111,7 @@ esphome:
         - light.turn_on:
             id: display_backlight
             brightness: !lambda 'return id(brightness_pct) / 100.0f;'
+        - lambda: 'ESP_LOGI("diag", "on_boot: setup_wizard_switch=%d", id(setup_wizard_switch).state);'
         - if:
             condition:
               lambda: 'return id(setup_wizard_switch).state;'
@@ -221,6 +222,18 @@ interval:
             lambda: 'return id(app_booted);'
           then:
             - script.execute: refresh_connection
+  # TEMP DIAGNOSTIC: logs every ui_context change regardless of which code
+  # path caused it, to pin down an otherwise-unlogged transition out of the
+  # Setup Wizard. Remove once the wizard-preemption bug is found.
+  - interval: 200ms
+    then:
+      - lambda: |-
+          static int prev = -999;
+          int cur = id(ui_context);
+          if (cur != prev) {
+            ESP_LOGI("diag", "ui_context changed: %d -> %d", prev, cur);
+            prev = cur;
+          }
   # Home Assistant light subscriptions are asynchronous. Redraw only while a
   # light page is visible and only after data actually changed.
   - interval: 100ms
@@ -1146,6 +1159,7 @@ binary_sensor:
     filters:
       - delayed_on_off: 10ms
     on_press:
+      - lambda: 'ESP_LOGI("diag", "encoder_button on_press, ui_context=%d", id(ui_context));'
       - if:
           condition:
             lambda: 'return id(connection_message) == "Smart Knob config not found";'
@@ -1177,6 +1191,7 @@ binary_sensor:
               condition:
                 lambda: 'return id(ui_context) == 11;'
               then:
+                - lambda: 'ESP_LOGI("diag", "encoder double-click, wizard_page=%d", id(wizard_page));'
                 - if:
                     condition:
                       lambda: 'return id(wizard_page) >= 11;'
@@ -1212,6 +1227,7 @@ binary_sensor:
               condition:
                 lambda: 'return id(ui_context) == 11;'
               then:
+                - lambda: 'ESP_LOGI("diag", "encoder single-click, wizard_page=%d", id(wizard_page));'
                 - if:
                     condition:
                       lambda: 'return id(wizard_page) >= 11;'
@@ -1292,7 +1308,16 @@ binary_sensor:
                                                                   else:
                                                                     - script.execute: menu_enter
                                                       else:
-                                                        - script.execute: submenu_apply
+                                                        # Only the submenu editor may treat "none of the
+                                                        # above" as apply. Without this guard, ui_context 11
+                                                        # (Setup Wizard) also fell through the whole chain
+                                                        # into submenu_apply, which yanked the UI into the
+                                                        # settings screens right after every wizard click.
+                                                        - if:
+                                                            condition:
+                                                              lambda: 'return id(ui_context) == 4;'
+                                                            then:
+                                                              - script.execute: submenu_apply
 # ------------------------------------------------------------------
 # Rotary encoder. Pins are swapped to fix rotation direction.
 # ------------------------------------------------------------------
@@ -2911,6 +2936,7 @@ script:
           condition:
             lambda: 'return id(ui_context) != 11;'
           then:
+            - lambda: 'ESP_LOGI("diag", "activate_home_screen: switching (was ui_context=%d)", id(ui_context));'
             - script.execute: wake_display
             - lambda: 'id(ui_context) = 0;'
             - script.execute: refresh_temps
@@ -3151,6 +3177,7 @@ script:
           bool blocked = (step == 1 && !id(wifi_id).is_connected()) ||
                           (step == 5 && !id(ha_connected));
           if (!blocked) id(wizard_page) = menu_scroll_index(page, 1, 12);
+          ESP_LOGI("diag", "wizard_next: %d -> %d (blocked=%d)", page, id(wizard_page), blocked);
       - script.execute: refresh_wizard
 
   # Knob click on the last step (page 11): turn off setup_wizard_switch (so
@@ -3167,6 +3194,7 @@ script:
   - id: wizard_finish
     then:
       - lambda: |-
+          ESP_LOGI("diag", "wizard_finish: page=%d connection_ready=%d", id(wizard_page), id(connection_ready));
           id(setup_wizard_switch).turn_off();
           global_preferences->sync();
       - if:
@@ -4141,6 +4169,7 @@ script:
           then:
             - script.execute: refresh_temps
             - script.execute: refresh_light
+            - lambda: 'ESP_LOGI("diag", "connection_state_changed: connection_ready=%d ui_context=%d", id(connection_ready), id(ui_context));'
             # Never yank the screen away while the Setup Wizard is up - it
             # runs in the background regardless of ui_context, so Home
             # Assistant becoming reachable mid-wizard must not interrupt it.
