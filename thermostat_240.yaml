@@ -247,6 +247,7 @@ lvgl:
             align: CENTER
             width: 190
             text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
             hidden: true
 
         - label:
@@ -281,16 +282,42 @@ lvgl:
             width: 190
             text_align: CENTER
             hidden: true
-        - label:
-            id: label_wizard_body
-            text: ""
-            text_font: rajdhani_medium_16
-            text_color: 0xEDEDED
+        # Fixed-height clipping/scrolling viewport for label_wizard_body -
+        # some translations (esp. German step3/step4) are too long for the
+        # label height, so refresh_wizard/check_finish_effects auto-scroll
+        # the label inside this container top to bottom and back (see
+        # wizard_scroll_pause_until_ms). Hidden flag toggling now targets
+        # this container instead of the label directly.
+        - obj:
+            id: wizard_body_viewport
             align: CENTER
             y: 0
             width: 190
-            text_align: CENTER
-            long_mode: WRAP
+            height: 110
+            bg_opa: TRANSP
+            border_width: 0
+            pad_all: 0
+            scrollbar_mode: "OFF"
+            hidden: true
+            widgets:
+              - label:
+                  id: label_wizard_body
+                  text: ""
+                  text_font: rajdhani_medium_16
+                  text_color: 0xEDEDED
+                  align: TOP_MID
+                  width: 190
+                  height: SIZE_CONTENT
+                  text_align: CENTER
+                  long_mode: WRAP
+        # Step 0 only - links to the full online guide (see refresh_wizard).
+        - qrcode:
+            id: wizard_qrcode
+            text: "https://smart-knob.vexur-software.com/guide/setup"
+            align: CENTER
+            size: 140
+            dark_color: 0x000000
+            light_color: 0xFFFFFF
             hidden: true
         - label:
             id: label_wizard_finish_hint

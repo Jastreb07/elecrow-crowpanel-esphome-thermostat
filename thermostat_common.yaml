@@ -161,6 +161,7 @@ psram:
 # Network
 # ------------------------------------------------------------------
 wifi:
+  id: wifi_id
   ssid: !secret wifi_ssid
   password: !secret wifi_password
   on_connect:
@@ -322,6 +323,17 @@ globals:
     initial_value: "0"
 
   - id: wizard_welcome_started_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+
+  # Drives the vertical auto-scroll of wizard_body_viewport (see
+  # refresh_wizard and check_finish_effects): while millis() is before this
+  # value, the viewport holds still (either freshly showing new text at the
+  # top, or having just reached the bottom/top of a scroll pass); once past
+  # it, the tick handler nudges the scroll position and rearms this for the
+  # next pause.
+  - id: wizard_scroll_pause_until_ms
     type: uint32_t
     restore_value: false
     initial_value: "0"
@@ -1170,7 +1182,7 @@ binary_sensor:
               then:
                 - if:
                     condition:
-                      lambda: 'return id(wizard_page) >= 5;'
+                      lambda: 'return id(wizard_page) >= 11;'
                     then:
                       - script.execute: wizard_finish
                     else:
@@ -2856,20 +2868,33 @@ script:
           then:
             - script.execute: update_settings_labels
 
+  # Every activate_*_screen script below (called from timer/progress/notify
+  # auto-home, and remotely from the [Standard] Show */Screen HA buttons)
+  # is a no-op while the Setup Wizard is showing - nothing may preempt it
+  # except wizard_finish itself. See also the connection_state_changed
+  # handler in refresh_connection, guarded the same way.
   - id: activate_home_screen
     then:
-      - script.execute: wake_display
-      - lambda: 'id(ui_context) = 0;'
-      - script.execute: refresh_temps
-      - script.execute: refresh_status
-      - lvgl.page.show: screen_home
+      - if:
+          condition:
+            lambda: 'return id(ui_context) != 11;'
+          then:
+            - script.execute: wake_display
+            - lambda: 'id(ui_context) = 0;'
+            - script.execute: refresh_temps
+            - script.execute: refresh_status
+            - lvgl.page.show: screen_home
 
   - id: activate_timer_screen
     then:
-      - script.execute: wake_display
-      - lambda: 'id(ui_context) = 8; id(timer_queue_index) = 0;'
-      - script.execute: refresh_timer
-      - lvgl.page.show: screen_timer
+      - if:
+          condition:
+            lambda: 'return id(ui_context) != 11;'
+          then:
+            - script.execute: wake_display
+            - lambda: 'id(ui_context) = 8; id(timer_queue_index) = 0;'
+            - script.execute: refresh_timer
+            - lvgl.page.show: screen_timer
 
   # Short knob press on the Timer screen. Behavior depends on which page is
   # currently shown:
@@ -2898,7 +2923,7 @@ script:
                       qt.entry_id = idbuf;
                       qt.title = "";
                       qt.end_time = id(timer_edit_value);
-                      qt.color = blink_led_color_hex(id(timer_blink_led_color_select).state);
+                      qt.color = blink_led_color_hex(id(timer_blink_led_color_select).current_option());
                       qt.led_mode = id(timer_finish_blink_switch).state ? 2 : 0;
                       qt.value_blink = id(timer_value_blink_switch).state;
                       qt.seq = id(timer_queue_seq)++;
@@ -2954,20 +2979,28 @@ script:
 
   - id: activate_progress_screen
     then:
-      - script.execute: wake_display
-      - lambda: 'id(ui_context) = 9; id(progress_queue_index) = 0;'
-      - script.execute: refresh_progress
-      - lvgl.page.show: screen_progress
+      - if:
+          condition:
+            lambda: 'return id(ui_context) != 11;'
+          then:
+            - script.execute: wake_display
+            - lambda: 'id(ui_context) = 9; id(progress_queue_index) = 0;'
+            - script.execute: refresh_progress
+            - lvgl.page.show: screen_progress
 
   - id: activate_notify_screen
     then:
-      - script.execute: wake_display
-      - lambda: |-
-          id(ui_context) = 10;
-          id(notify_queue_index) = 0;
-          if (id(notify_finished)) id(notify_finished_at_ms) = millis();
-      - script.execute: refresh_notify
-      - lvgl.page.show: screen_notify
+      - if:
+          condition:
+            lambda: 'return id(ui_context) != 11;'
+          then:
+            - script.execute: wake_display
+            - lambda: |-
+                id(ui_context) = 10;
+                id(notify_queue_index) = 0;
+                if (id(notify_finished)) id(notify_finished_at_ms) = millis();
+            - script.execute: refresh_notify
+            - lvgl.page.show: screen_notify
 
   # First-boot/post-factory-reset setup wizard, and its re-invocation from
   # Settings > System > "Show Setup Guide" (see the settings-menu type-37
@@ -2984,6 +3017,13 @@ script:
       - script.execute: refresh_wizard
       - lvgl.page.show: screen_wizard
 
+  # Page layout: 0 welcome, 1 language, 2-11 the ten HA-setup steps (step
+  # index = page - 2). Two steps gate forward progress on a live condition
+  # instead of showing static text - step 1 (page 3, Wi-Fi) waits on
+  # id(wifi_id).is_connected(), step 5 (page 7, Home Assistant) waits on
+  # id(ha_connected) - see wizard_next (blocks manual skip-ahead) and
+  # check_finish_effects (auto-advances once satisfied, same tick that
+  # drives the welcome page's timed auto-advance).
   - id: refresh_wizard
     then:
       - lambda: |-
@@ -3004,24 +3044,55 @@ script:
             lv_obj_add_flag(id(label_wizard_lang_hint), LV_OBJ_FLAG_HIDDEN);
           }
           if (page >= 2) {
-            static const char *const TITLE_KEYS[4] = {
-                "wizard.step1.title", "wizard.step2.title", "wizard.step3.title", "wizard.step4.title"};
-            static const char *const BODY_KEYS[4] = {
-                "wizard.step1.body", "wizard.step2.body", "wizard.step3.body", "wizard.step4.body"};
+            static const char *const TITLE_KEYS[10] = {
+                "wizard.step0.title", "wizard.step1.title", "wizard.step2.title", "wizard.step3.title",
+                "wizard.step4.title", "wizard.step5.title", "wizard.step6.title", "wizard.step7.title",
+                "wizard.step8.title", "wizard.step9.title"};
+            static const char *const BODY_KEYS[10] = {
+                "", "", "wizard.step2.body", "wizard.step3.body",
+                "wizard.step4.body", "", "wizard.step6.body", "wizard.step7.body",
+                "wizard.step8.body", "wizard.step9.body"};
             int step = page - 2;
+            bool is_qr = (step == 0);
+            bool is_wifi_gate = (step == 1);
+            bool is_ha_gate = (step == 5);
+            bool gate_satisfied = is_wifi_gate ? id(wifi_id).is_connected()
+                                                : (is_ha_gate ? id(ha_connected) : true);
+
             lv_label_set_text(id(label_wizard_title), id(i18n_translations).translate(TITLE_KEYS[step]).c_str());
-            lv_label_set_text(id(label_wizard_body), id(i18n_translations).translate(BODY_KEYS[step]).c_str());
             lv_obj_clear_flag(id(label_wizard_title), LV_OBJ_FLAG_HIDDEN);
-            lv_obj_clear_flag(id(label_wizard_body), LV_OBJ_FLAG_HIDDEN);
+
+            if (is_qr) {
+              lv_obj_add_flag(id(wizard_body_viewport), LV_OBJ_FLAG_HIDDEN);
+              lv_obj_clear_flag(id(wizard_qrcode), LV_OBJ_FLAG_HIDDEN);
+            } else {
+              lv_obj_add_flag(id(wizard_qrcode), LV_OBJ_FLAG_HIDDEN);
+              std::string body;
+              if (is_wifi_gate) {
+                body = id(i18n_translations).translate(gate_satisfied ? "wizard.step1.connected" : "wizard.step1.waiting");
+              } else if (is_ha_gate) {
+                body = id(i18n_translations).translate(gate_satisfied ? "wizard.step5.connected" : "wizard.step5.waiting");
+              } else {
+                body = id(i18n_translations).translate(BODY_KEYS[step]);
+              }
+              lv_label_set_text(id(label_wizard_body), body.c_str());
+              lv_obj_clear_flag(id(wizard_body_viewport), LV_OBJ_FLAG_HIDDEN);
+              // New text (or re-entering this page) always restarts the
+              // scroll-in-place cycle from the top, paused, rather than
+              // resuming mid-scroll from whatever the previous page left.
+              lv_obj_scroll_to_y(id(wizard_body_viewport), 0, LV_ANIM_OFF);
+              id(wizard_scroll_pause_until_ms) = millis() + 2000;
+            }
+
             char pagebuf[8];
-            snprintf(pagebuf, sizeof(pagebuf), "%d / 4", step + 1);
+            snprintf(pagebuf, sizeof(pagebuf), "%d / 10", step + 1);
             lv_label_set_text(id(label_wizard_page), pagebuf);
             lv_obj_clear_flag(id(label_wizard_page), LV_OBJ_FLAG_HIDDEN);
             if (page > 2) lv_obj_clear_flag(id(label_wizard_arrow_prev), LV_OBJ_FLAG_HIDDEN);
             else lv_obj_add_flag(id(label_wizard_arrow_prev), LV_OBJ_FLAG_HIDDEN);
-            if (page < 5) lv_obj_clear_flag(id(label_wizard_arrow_next), LV_OBJ_FLAG_HIDDEN);
+            if (page < 11 && gate_satisfied) lv_obj_clear_flag(id(label_wizard_arrow_next), LV_OBJ_FLAG_HIDDEN);
             else lv_obj_add_flag(id(label_wizard_arrow_next), LV_OBJ_FLAG_HIDDEN);
-            if (page == 5) {
+            if (step == 9) {
               lv_label_set_text(id(label_wizard_finish_hint), id(i18n_translations).translate("wizard.finish_hint").c_str());
               lv_obj_clear_flag(id(label_wizard_finish_hint), LV_OBJ_FLAG_HIDDEN);
             } else {
@@ -3029,38 +3100,52 @@ script:
             }
           } else {
             lv_obj_add_flag(id(label_wizard_title), LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(id(label_wizard_body), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(wizard_body_viewport), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(wizard_qrcode), LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(id(label_wizard_page), LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(id(label_wizard_arrow_prev), LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(id(label_wizard_arrow_next), LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(id(label_wizard_finish_hint), LV_OBJ_FLAG_HIDDEN);
           }
 
-  # Swipe (any direction, see the board files) moves one page; clamped 0..5,
-  # no wrap-around. Page 0 (Welcome) also auto-advances after 2s regardless
-  # of swiping - see check_finish_effects.
+  # Swipe (any direction, see the board files) moves one page; clamped
+  # 0..11, no wrap-around. Page 0 (Welcome) auto-advances after 2s and
+  # pages 3/7 (the Wi-Fi/Home Assistant gates) auto-advance once connected,
+  # regardless of swiping - see check_finish_effects. Manually swiping/
+  # clicking forward out of an unsatisfied gate page is a no-op (blocked
+  # below); swiping backward out of one is always allowed.
   - id: wizard_next
     then:
       - script.execute: wake_display
-      - lambda: 'id(wizard_page) = menu_scroll_index(id(wizard_page), 1, 6);'
+      - lambda: |-
+          int page = id(wizard_page);
+          int step = page - 2;
+          bool blocked = (step == 1 && !id(wifi_id).is_connected()) ||
+                          (step == 5 && !id(ha_connected));
+          if (!blocked) id(wizard_page) = menu_scroll_index(page, 1, 12);
       - script.execute: refresh_wizard
 
   - id: wizard_previous
     then:
       - script.execute: wake_display
-      - lambda: 'id(wizard_page) = menu_scroll_index(id(wizard_page), -1, 6);'
+      - lambda: 'id(wizard_page) = menu_scroll_index(id(wizard_page), -1, 12);'
       - script.execute: refresh_wizard
 
-  # Knob click on the last step (page 5): mark the wizard done (persists
-  # across normal reboots, only a factory reset shows it again - see
-  # setup_wizard_done) and resume wherever the device would normally be:
-  # straight to screen_home if Home Assistant is already reachable (the
-  # Settings > System re-invocation case), otherwise screen_loading, same
-  # as on_boot would show - the already-running refresh_connection interval
-  # takes it from there once Home Assistant becomes ready.
+  # Knob click on the last step (page 11): mark the wizard done and resume
+  # wherever the device would normally be: straight to screen_home if Home
+  # Assistant is already reachable (the Settings > System re-invocation
+  # case), otherwise screen_loading, same as on_boot would show - the
+  # already-running refresh_connection interval takes it from there once
+  # Home Assistant becomes ready. global_preferences->sync() forces the
+  # setup_wizard_done flag to flash immediately instead of waiting for
+  # ESPHome's normal batched write - step 3 of this very wizard has Home
+  # Assistant auto-restart the device right after adding the integration,
+  # which was landing before the batched write and re-showing the wizard.
   - id: wizard_finish
     then:
-      - lambda: 'id(setup_wizard_done) = true;'
+      - lambda: |-
+          id(setup_wizard_done) = true;
+          global_preferences->sync();
       - if:
           condition:
             lambda: 'return id(connection_ready);'
@@ -3275,6 +3360,52 @@ script:
                      millis() - id(wizard_welcome_started_ms) >= 2000;
           then:
             - script.execute: wizard_next
+      # The Wi-Fi (step 1, page 3) and Home Assistant (step 5, page 7) gate
+      # pages advance themselves the instant their condition is met, so the
+      # user never has to press anything once connected.
+      - if:
+          condition:
+            lambda: |-
+              return id(ui_context) == 11 && id(wizard_page) == 3 && id(wifi_id).is_connected();
+          then:
+            - script.execute: wizard_next
+      - if:
+          condition:
+            lambda: 'return id(ui_context) == 11 && id(wizard_page) == 7 && id(ha_connected);'
+          then:
+            - script.execute: wizard_next
+      # Auto-scroll wizard_body_viewport top-to-bottom-to-top whenever its
+      # text overflows the fixed-height container - only while the wizard
+      # is actually showing a body-text step (not hidden by the QR/gate
+      # pages). Pauses ~2s at each end so the text is readable, otherwise
+      # nudges down a few px per tick. lv_obj_scroll_by's dy is inverted:
+      # negative reveals content further down (see lv_obj_scroll.h docs).
+      - if:
+          condition:
+            lambda: |-
+              return id(ui_context) == 11 && id(wizard_page) >= 2 &&
+                     !lv_obj_has_flag(id(wizard_body_viewport), LV_OBJ_FLAG_HIDDEN) &&
+                     millis() >= id(wizard_scroll_pause_until_ms);
+          then:
+            - lambda: |-
+                lv_obj_t *vp = id(wizard_body_viewport);
+                int32_t remaining = lv_obj_get_scroll_bottom(vp);
+                if (remaining <= 0) {
+                  if (lv_obj_get_scroll_y(vp) > 0) {
+                    // Reached the bottom - snap back to the top and pause
+                    // there before the next scroll pass begins.
+                    lv_obj_scroll_to_y(vp, 0, LV_ANIM_OFF);
+                  }
+                  // No overflow at all, or just snapped back to the top -
+                  // hold for a moment either way.
+                  id(wizard_scroll_pause_until_ms) = millis() + 2000;
+                } else {
+                  int32_t step = remaining < 6 ? remaining : 6;
+                  lv_obj_scroll_by(vp, 0, -step, LV_ANIM_OFF);
+                  if (lv_obj_get_scroll_bottom(vp) <= 0) {
+                    id(wizard_scroll_pause_until_ms) = millis() + 2000;
+                  }
+                }
       - lambda: |-
           // Timer: each entry's "finished" state is computed live from its
           // own end_time (remaining <= 0) - no stored finished flag needed.
@@ -3372,10 +3503,12 @@ script:
       # entity state) can't hijack the very first screen after boot - normal
       # boot always lands on screen_home first (see refresh_connection),
       # and only finishes occurring after that point auto-show their screen.
+      # All three auto-show conditions below also require ui_context != 11 -
+      # nothing may preempt the Setup Wizard, see activate_home_screen.
       - if:
           condition:
             lambda: |-
-              return id(connection_ready) && id(timer_just_finished_any) &&
+              return id(connection_ready) && id(ui_context) != 11 && id(timer_just_finished_any) &&
                      id(timer_show_on_finish_switch).state;
           then:
             - script.execute: wake_display
@@ -3389,7 +3522,7 @@ script:
       # the old global Progress switches, including the show-on-finish one).
       - if:
           condition:
-            lambda: 'return id(connection_ready) && id(progress_just_finished_any);'
+            lambda: 'return id(connection_ready) && id(ui_context) != 11 && id(progress_just_finished_any);'
           then:
             - script.execute: wake_display
             - lambda: |-
@@ -3402,7 +3535,7 @@ script:
       # adding a new one re-triggers it, same as Timer/Progress finishing).
       - if:
           condition:
-            lambda: 'return id(connection_ready) && id(notify_just_finished);'
+            lambda: 'return id(connection_ready) && id(ui_context) != 11 && id(notify_just_finished);'
           then:
             - script.execute: wake_display
             - lambda: |-
@@ -3985,19 +4118,27 @@ script:
           then:
             - script.execute: refresh_temps
             - script.execute: refresh_light
+            # Never yank the screen away while the Setup Wizard is up - it
+            # runs in the background regardless of ui_context, so Home
+            # Assistant becoming reachable mid-wizard must not interrupt it.
+            # wizard_finish is the only thing allowed to leave the wizard.
             - if:
                 condition:
-                  lambda: 'return id(connection_ready);'
+                  lambda: 'return id(ui_context) != 11;'
                 then:
-                  - lambda: 'id(ui_context) = 0;'
-                  - lvgl.page.show:
-                      id: screen_home
-                      animation: NONE
-                else:
-                  - lambda: 'id(ui_context) = -1;'
-                  - lvgl.page.show:
-                      id: screen_loading
-                      animation: NONE
+                  - if:
+                      condition:
+                        lambda: 'return id(connection_ready);'
+                      then:
+                        - lambda: 'id(ui_context) = 0;'
+                        - lvgl.page.show:
+                            id: screen_home
+                            animation: NONE
+                      else:
+                        - lambda: 'id(ui_context) = -1;'
+                        - lvgl.page.show:
+                            id: screen_loading
+                            animation: NONE
       - if:
           condition:
             lambda: 'return id(connection_ready);'
@@ -4119,7 +4260,7 @@ script:
             case 34: id(num_preview) = (int) id(notify_blink_led_brightness_num).state; break;
             case 25: {
               id(submenu_count) = BLINK_LED_COLOR_COUNT;
-              const std::string &cur_name = id(timer_blink_led_color_select).state;
+              const std::string &cur_name = id(timer_blink_led_color_select).current_option();
               for (int i = 0; i < BLINK_LED_COLOR_COUNT; i++)
                 if (cur_name == blink_led_color_name(i)) { id(submenu_index) = i; break; }
               break;
@@ -4424,7 +4565,7 @@ script:
                 break;
               case 25:
                 val = id(i18n_translations).translate(
-                    blink_led_color_key_for_name(id(timer_blink_led_color_select).state));
+                    blink_led_color_key_for_name(id(timer_blink_led_color_select).current_option()));
                 break;
               case 26:
                 val = id(i18n_translations).translate(
@@ -4810,7 +4951,7 @@ script:
           add_chr("lang", id(language_select).current_option() == "Deutsch" ? 'd' : 'e');
           add_chr("unit", id(unit_select).current_option() == "Fahrenheit" ? 'F' : 'C');
           out += "kstep="; out += id(knob_step_select).current_option(); out += ";";
-          add_chr("tcol", blink_led_color_letter(id(timer_blink_led_color_select).state));
+          add_chr("tcol", blink_led_color_letter(id(timer_blink_led_color_select).current_option()));
           add_num("idle", id(idle_home_num).state);
           add_num("dimd", id(dim_delay_num).state);
           add_num("diml", id(dim_level_num).state);

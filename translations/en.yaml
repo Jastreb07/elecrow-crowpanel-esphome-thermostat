@@ -150,15 +150,35 @@ wizard:
   welcome: "Welcome"
   language_hint: "Turn to choose language"
   finish_hint: "Press knob to finish"
+  step0:
+    title: "Setup Guide"
+    body: "Scan the QR code for the full guide with screenshots."
   step1:
-    title: "1. ESPHome"
-    body: "Add the ESPHome integration in Home Assistant and adopt this device - Settings, then Devices and Services."
+    title: "1. Wi-Fi"
+    waiting: "Waiting for Wi-Fi connection..."
+    connected: "Wi-Fi connected"
   step2:
-    title: "2. HACS"
-    body: "Install Smart Thermostat Knob via HACS, or copy the custom components folder manually."
+    title: "2. ESPHome"
+    body: "In Home Assistant, install the ESPHome integration if you have not already."
   step3:
-    title: "3. Add Integration"
-    body: "Add Smart Thermostat Knob and select your thermostats, lights and covers."
+    title: "3. Add Device"
+    body: "Home Assistant should discover this device automatically. Open Settings, then Devices and Services, and adopt it."
   step4:
-    title: "4. Done"
+    title: "4. Allow Actions"
+    body: "If enabled, ESPHome devices can perform actions in Home Assistant or send events. Only enable this if you trust the device."
+  step5:
+    title: "5. Home Assistant"
+    waiting: "Waiting for Home Assistant connection..."
+    connected: "Home Assistant connected"
+  step6:
+    title: "6. HACS"
+    body: "The next step needs HACS installed in Home Assistant."
+  step7:
+    title: "7. Install Integration"
+    body: "Install Smart Thermostat Knob via HACS, or copy the custom components folder manually."
+  step8:
+    title: "8. Configure"
+    body: "Add Smart Thermostat Knob and select your thermostats, lights and covers."
+  step9:
+    title: "9. Done"
     body: "That is it - this screen loads automatically once Home Assistant sends the configuration."
