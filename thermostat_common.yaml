@@ -113,7 +113,7 @@ esphome:
             brightness: !lambda 'return id(brightness_pct) / 100.0f;'
         - if:
             condition:
-              lambda: 'return !id(setup_wizard_done);'
+              lambda: 'return id(setup_wizard_switch).state;'
             then:
               - lambda: |-
                   id(ui_context) = 11;
@@ -304,19 +304,9 @@ globals:
     restore_value: false
     initial_value: "false"
 
-  # Whether the first-boot setup wizard (Welcome -> language -> HA setup
-  # steps) has been shown. restore_value true = survives normal reboots
-  # (ESPHome flash preferences) but is wiped by factory_reset_btn, which
-  # erases those same preferences - so a factory reset naturally re-shows
-  # the wizard on the next boot without any extra detection logic.
-  - id: setup_wizard_done
-    type: bool
-    restore_value: true
-    initial_value: "false"
-
   # Page within the setup wizard: 0 welcome (auto-advances), 1 language,
-  # 2-5 the four HA-setup steps. See refresh_wizard/wizard_next/
-  # wizard_previous/wizard_finish.
+  # 2-11 the ten HA-setup steps. See refresh_wizard/wizard_next/
+  # wizard_finish.
   - id: wizard_page
     type: int
     restore_value: false
@@ -733,6 +723,22 @@ switch:
     on_turn_off:
       - script.execute: update_status_led
 
+  # Whether the Setup Wizard shows on the next boot (see the on_boot
+  # handler). On by default, so a freshly flashed/erased ESP32 starts the
+  # wizard on its very first boot without any extra detection logic -
+  # wizard_finish turns it off once the wizard is completed, same
+  # restore_mode/preferences mechanism as the other switches here means a
+  # factory reset (which wipes those preferences) naturally turns it back
+  # on for the next boot. Also exposed so it can be flipped back on
+  # manually (e.g. via export/import) to re-run the wizard on next reboot.
+  - platform: template
+    name: "[System] Setup Wizard"
+    id: setup_wizard_switch
+    icon: "mdi:auto-fix"
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+
   # Whether the status LED blinks (in the respective *_blink_led_color_select
   # color) once
   # the Timer/Progress finishes (see check_finish_effects/update_status_led).
@@ -1032,6 +1038,12 @@ button:
     on_press:
       then:
         - script.execute: import_settings
+        # Some imported settings (e.g. the Setup Wizard switch) only take
+        # effect from on_boot, and switch/select on_value side effects are
+        # more reliable applied fresh than trusted mid-session - always
+        # reboot after an import rather than trying to reconcile everything
+        # live.
+        - button.press: restart_btn
 
   - platform: template
     name: "[Notify] Add to Queue"
@@ -1154,22 +1166,42 @@ binary_sensor:
           - OFF for at least 50ms
         then:
           - if:
+              # The Setup Wizard must not have any quick-jump shortcut out of
+              # it - a "double click" here is otherwise unhandled and used to
+              # fall through to the ui_context != 1 branch below, which
+              # opened the Thermostat screen. See activate_home_screen for
+              # the other places this same rule is enforced. Treat it the
+              # same as a single click instead of ignoring it outright,
+              # since the tactile encoder button can register a deliberate
+              # single press as this double-click pattern (switch bounce).
               condition:
-                lambda: 'return id(ui_context) == 5;'
+                lambda: 'return id(ui_context) == 11;'
               then:
-                - script.execute: toggle_active_light
+                - if:
+                    condition:
+                      lambda: 'return id(wizard_page) >= 11;'
+                    then:
+                      - script.execute: wizard_finish
+                    else:
+                      - script.execute: wizard_next
               else:
                 - if:
                     condition:
-                      lambda: 'return id(ui_context) != 1;'
+                      lambda: 'return id(ui_context) == 5;'
                     then:
-                      - lambda: |-
-                          id(climate_index) = 0;
-                          id(ui_context) = 1;
-                      - script.execute: load_active_climate
-                      - lvgl.page.show: screen_thermostat
+                      - script.execute: toggle_active_light
                     else:
-                      - script.execute: toggle_adjust_target
+                      - if:
+                          condition:
+                            lambda: 'return id(ui_context) != 1;'
+                          then:
+                            - lambda: |-
+                                id(climate_index) = 0;
+                                id(ui_context) = 1;
+                            - script.execute: load_active_climate
+                            - lvgl.page.show: screen_thermostat
+                          else:
+                            - script.execute: toggle_adjust_target
       # Single click: enter/select inside settings. On the thermostat it now
       # switches directly between the TRV and AC/cool target.
       - timing:
@@ -3028,19 +3060,22 @@ script:
     then:
       - lambda: |-
           int page = id(wizard_page);
+          // Welcome text and the language value share one centered label
+          // (label_wizard_welcome) - only one of the two is ever shown at
+          // once, so there is no reason for two separate widgets.
           if (page == 0) {
             lv_label_set_text(id(label_wizard_welcome), id(i18n_translations).translate("wizard.welcome").c_str());
+            lv_obj_clear_flag(id(label_wizard_welcome), LV_OBJ_FLAG_HIDDEN);
+          } else if (page == 1) {
+            lv_label_set_text(id(label_wizard_welcome), id(language_select).current_option().c_str());
             lv_obj_clear_flag(id(label_wizard_welcome), LV_OBJ_FLAG_HIDDEN);
           } else {
             lv_obj_add_flag(id(label_wizard_welcome), LV_OBJ_FLAG_HIDDEN);
           }
           if (page == 1) {
-            lv_label_set_text(id(label_wizard_lang_value), id(language_select).current_option().c_str());
             lv_label_set_text(id(label_wizard_lang_hint), id(i18n_translations).translate("wizard.language_hint").c_str());
-            lv_obj_clear_flag(id(label_wizard_lang_value), LV_OBJ_FLAG_HIDDEN);
             lv_obj_clear_flag(id(label_wizard_lang_hint), LV_OBJ_FLAG_HIDDEN);
           } else {
-            lv_obj_add_flag(id(label_wizard_lang_value), LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(id(label_wizard_lang_hint), LV_OBJ_FLAG_HIDDEN);
           }
           if (page >= 2) {
@@ -3088,10 +3123,6 @@ script:
             snprintf(pagebuf, sizeof(pagebuf), "%d / 10", step + 1);
             lv_label_set_text(id(label_wizard_page), pagebuf);
             lv_obj_clear_flag(id(label_wizard_page), LV_OBJ_FLAG_HIDDEN);
-            if (page > 2) lv_obj_clear_flag(id(label_wizard_arrow_prev), LV_OBJ_FLAG_HIDDEN);
-            else lv_obj_add_flag(id(label_wizard_arrow_prev), LV_OBJ_FLAG_HIDDEN);
-            if (page < 11 && gate_satisfied) lv_obj_clear_flag(id(label_wizard_arrow_next), LV_OBJ_FLAG_HIDDEN);
-            else lv_obj_add_flag(id(label_wizard_arrow_next), LV_OBJ_FLAG_HIDDEN);
             if (step == 9) {
               lv_label_set_text(id(label_wizard_finish_hint), id(i18n_translations).translate("wizard.finish_hint").c_str());
               lv_obj_clear_flag(id(label_wizard_finish_hint), LV_OBJ_FLAG_HIDDEN);
@@ -3103,17 +3134,14 @@ script:
             lv_obj_add_flag(id(wizard_body_viewport), LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(id(wizard_qrcode), LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(id(label_wizard_page), LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(id(label_wizard_arrow_prev), LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(id(label_wizard_arrow_next), LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(id(label_wizard_finish_hint), LV_OBJ_FLAG_HIDDEN);
           }
 
-  # Swipe (any direction, see the board files) moves one page; clamped
-  # 0..11, no wrap-around. Page 0 (Welcome) auto-advances after 2s and
-  # pages 3/7 (the Wi-Fi/Home Assistant gates) auto-advance once connected,
-  # regardless of swiping - see check_finish_effects. Manually swiping/
-  # clicking forward out of an unsatisfied gate page is a no-op (blocked
-  # below); swiping backward out of one is always allowed.
+  # Pressing the knob moves one page forward; clamped 0..11, no wrap-around,
+  # no swipe/back navigation. Page 0 (Welcome) auto-advances after 2s and
+  # pages 3/7 (the Wi-Fi/Home Assistant gates) auto-advance once connected -
+  # see check_finish_effects. Manually pressing forward out of an
+  # unsatisfied gate page is a no-op (blocked below).
   - id: wizard_next
     then:
       - script.execute: wake_display
@@ -3125,26 +3153,21 @@ script:
           if (!blocked) id(wizard_page) = menu_scroll_index(page, 1, 12);
       - script.execute: refresh_wizard
 
-  - id: wizard_previous
-    then:
-      - script.execute: wake_display
-      - lambda: 'id(wizard_page) = menu_scroll_index(id(wizard_page), -1, 12);'
-      - script.execute: refresh_wizard
-
-  # Knob click on the last step (page 11): mark the wizard done and resume
-  # wherever the device would normally be: straight to screen_home if Home
-  # Assistant is already reachable (the Settings > System re-invocation
-  # case), otherwise screen_loading, same as on_boot would show - the
-  # already-running refresh_connection interval takes it from there once
-  # Home Assistant becomes ready. global_preferences->sync() forces the
-  # setup_wizard_done flag to flash immediately instead of waiting for
-  # ESPHome's normal batched write - step 3 of this very wizard has Home
-  # Assistant auto-restart the device right after adding the integration,
-  # which was landing before the batched write and re-showing the wizard.
+  # Knob click on the last step (page 11): turn off setup_wizard_switch (so
+  # it no longer auto-starts on the next boot) and resume wherever the
+  # device would normally be: straight to screen_home if Home Assistant is
+  # already reachable (the Settings > System re-invocation case), otherwise
+  # screen_loading, same as on_boot would show - the already-running
+  # refresh_connection interval takes it from there once Home Assistant
+  # becomes ready. global_preferences->sync() forces the switch state to
+  # flash immediately instead of waiting for ESPHome's normal batched
+  # write - step 3 of this very wizard has Home Assistant auto-restart the
+  # device right after adding the integration, which was landing before the
+  # batched write and re-showing the wizard.
   - id: wizard_finish
     then:
       - lambda: |-
-          id(setup_wizard_done) = true;
+          id(setup_wizard_switch).turn_off();
           global_preferences->sync();
       - if:
           condition:
@@ -4948,6 +4971,7 @@ script:
           add_bool("tfb", id(timer_finish_blink_switch).state);
           add_bool("tvb", id(timer_value_blink_switch).state);
           add_bool("tss", id(timer_show_on_finish_switch).state);
+          add_bool("wiz", id(setup_wizard_switch).state);
           add_chr("lang", id(language_select).current_option() == "Deutsch" ? 'd' : 'e');
           add_chr("unit", id(unit_select).current_option() == "Fahrenheit" ? 'F' : 'C');
           out += "kstep="; out += id(knob_step_select).current_option(); out += ";";
@@ -4992,6 +5016,7 @@ script:
             else if (key == "tfb") { if (bv) id(timer_finish_blink_switch).turn_on(); else id(timer_finish_blink_switch).turn_off(); }
             else if (key == "tvb") { if (bv) id(timer_value_blink_switch).turn_on(); else id(timer_value_blink_switch).turn_off(); }
             else if (key == "tss") { if (bv) id(timer_show_on_finish_switch).turn_on(); else id(timer_show_on_finish_switch).turn_off(); }
+            else if (key == "wiz") { if (bv) id(setup_wizard_switch).turn_on(); else id(setup_wizard_switch).turn_off(); }
             else if (key == "lang") { id(language_select).make_call().set_option(cv == 'd' ? "Deutsch" : "English").perform(); }
             else if (key == "unit") { id(unit_select).make_call().set_option(cv == 'F' ? "Fahrenheit" : "Celsius").perform(); }
             else if (key == "kstep") { id(knob_step_select).make_call().set_option(val).perform(); }

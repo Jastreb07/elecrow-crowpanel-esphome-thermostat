@@ -214,18 +214,11 @@ lvgl:
             long_mode: SCROLL_CIRCULAR
 
     # ================= First-boot setup wizard =================
-    # Welcome (auto-advances after 2s) -> language -> 4 HA-setup steps.
-    # See refresh_wizard/wizard_next/wizard_previous/wizard_finish.
+    # Welcome (auto-advances after 2s) -> language -> 10 HA-setup steps.
+    # No swipe/arrow navigation - each step only advances by pressing the
+    # knob. See refresh_wizard/wizard_next/wizard_finish.
     - id: screen_wizard
       bg_color: "0x000000"
-      on_swipe_left:
-        - script.execute: wizard_next
-      on_swipe_right:
-        - script.execute: wizard_previous
-      on_swipe_up:
-        - script.execute: wizard_next
-      on_swipe_down:
-        - script.execute: wizard_previous
       widgets:
         - button:
             id: button_wizard_background
@@ -239,26 +232,19 @@ lvgl:
             on_click:
               - script.execute: wake_display
 
+        # Shared by the Welcome page and the Language page (only one text is
+        # ever shown at a time - see refresh_wizard).
         - label:
             id: label_wizard_welcome
             text: "Welcome"
             text_font: rajdhani_semibold_46
             text_color: 0xFFFFFF
             align: CENTER
+            x: 0
+            y: 0
             width: 190
             text_align: CENTER
             long_mode: SCROLL_CIRCULAR
-            hidden: true
-
-        - label:
-            id: label_wizard_lang_value
-            text: "English"
-            text_font: rajdhani_semibold_46
-            text_color: 0xFFFFFF
-            align: CENTER
-            y: -20
-            width: 190
-            text_align: CENTER
             hidden: true
         - label:
             id: label_wizard_lang_hint
@@ -277,8 +263,8 @@ lvgl:
             text: ""
             text_font: rajdhani_medium_16
             text_color: 0xCDBEEC
-            align: CENTER
-            y: -50
+            align: TOP_MID
+            y: 40
             width: 190
             text_align: CENTER
             hidden: true
@@ -291,9 +277,8 @@ lvgl:
         - obj:
             id: wizard_body_viewport
             align: CENTER
-            y: 0
             width: 190
-            height: 110
+            height: 115
             bg_opa: TRANSP
             border_width: 0
             pad_all: 0
@@ -324,37 +309,20 @@ lvgl:
             text: ""
             text_font: rajdhani_medium_16
             text_color: 0x9A9A9A
-            align: CENTER
-            y: 75
+            align: BOTTOM_MID
+            y: -40
             width: 190
             text_align: CENTER
             long_mode: WRAP
             hidden: true
 
-        # Same glyphs/positions as the Notify screen's browse arrows.
-        - label:
-            id: label_wizard_arrow_prev
-            text: "\U000F0143"
-            text_font: icons_38
-            text_color: 0xCDBEEC
-            align: TOP_MID
-            y: 18
-            hidden: true
-        - label:
-            id: label_wizard_arrow_next
-            text: "\U000F0140"
-            text_font: icons_38
-            text_color: 0xCDBEEC
-            align: BOTTOM_MID
-            y: -18
-            hidden: true
         - label:
             id: label_wizard_page
             text: ""
             text_font: rajdhani_medium_16
             text_color: 0xCDBEEC
             align: TOP_MID
-            y: 45
+            y: 15
             hidden: true
 
     # ================= Home-Screen =================
