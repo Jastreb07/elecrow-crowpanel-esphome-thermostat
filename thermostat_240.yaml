@@ -1187,6 +1187,20 @@ lvgl:
             long_mode: SCROLL_CIRCULAR
             hidden: true
 
+        # Shown instead of the cancel-confirm dialog once the entry has
+        # finished - a single press removes it right away (see timer_click).
+        - label:
+            id: label_timer_remove_hint
+            text: ""
+            text_font: rajdhani_medium_16
+            text_color: 0x9A9A9A
+            align: CENTER
+            y: 62
+            width: 180
+            text_align: CENTER
+            long_mode: WRAP
+            hidden: true
+
         # Cancel-confirmation overlay, shown on the first knob click while
         # this screen is open. Hidden by default.
         - obj:

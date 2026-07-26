@@ -466,12 +466,17 @@ globals:
 
   # Scratch value for the Timer screen's last swipe page (the "add a new
   # timer directly on the device" page) - the knob adjusts this preview
-  # end-datetime, a click confirms it and appends it to timer_queue (see
-  # the ui_context == 8 encoder branch and timer_click).
-  - id: timer_edit_value
-    type: std::string
+  # duration in seconds; a click confirms it, computes the actual end time
+  # from "now" at that moment, and appends it to timer_queue (see the
+  # ui_context == 8 encoder branch and timer_click). Stored as a plain
+  # duration rather than an absolute end-datetime so the countdown only
+  # starts counting once confirmed - otherwise the preview would silently
+  # lose time while the user is still deciding/turning the knob.
+  # -1 = untouched since entering the add page (shows "--:--:--").
+  - id: timer_edit_seconds
+    type: int
     restore_value: false
-    initial_value: '""'
+    initial_value: "-1"
 
   # Position within the timer queue currently shown on the Timer screen.
   # Can equal parse_timer_queue(...).size() - that means "on the empty add
@@ -1437,24 +1442,32 @@ sensor:
                        id(timer_queue_index) >= (int) parse_timer_queue(id(timer_queue)).size();
             then:
               # Only the empty "add a new timer" page (the last swipe page)
-              # reacts to the knob - turning it moves a preview end-time by
-              # one knob-step per detent, from "now" the first turn or from
-              # the current preview if already mid-edit (extend/shorten
-              # before confirming). A click on timer_click then adds it to
-              # the queue; existing queued timers can no longer be extended
-              # by turning the knob (remove + re-add instead).
+              # reacts to the knob - turning it adjusts a preview duration by
+              # one knob-step per detent, from 0 the first turn or from the
+              # current preview if already mid-edit (extend/shorten before
+              # confirming). This is a plain duration, not an absolute
+              # end-time, so it does not silently tick down while the user is
+              # still deciding - the countdown itself only starts once
+              # timer_click confirms it. Existing queued timers can no longer
+              # be extended by turning the knob (remove + re-add instead).
               - lambda: |-
-                  auto now = id(ha_time).now();
-                  if (!now.is_valid()) return;
-                  long remaining = id(timer_edit_value).empty() ? 0 : timer_remaining_seconds(id(timer_edit_value), now);
-                  long base = remaining > 0 ? remaining : 0;
-                  int step = (int) id(timer_knob_step_num).state;
+                  long base = id(timer_edit_seconds) > 0 ? id(timer_edit_seconds) : 0;
+                  long step = (long) id(timer_knob_step_num).state;
                   int d = id(encoder_delta) > 0 ? 1 : -1;
-                  long new_remaining = base + (long) d * step;
+                  // Snap to the next/previous multiple of the step size
+                  // instead of just adding it - e.g. with a 10s step, turning
+                  // up from 01:12:23 lands on 01:12:30, not 01:12:33.
+                  long rem = step > 0 ? base % step : 0;
+                  long new_remaining;
+                  if (step <= 0) {
+                    new_remaining = base + d;
+                  } else if (d > 0) {
+                    new_remaining = rem == 0 ? base + step : base + (step - rem);
+                  } else {
+                    new_remaining = rem == 0 ? base - step : base - rem;
+                  }
                   if (new_remaining < 0) new_remaining = 0;
-                  long now_secs = civil_seconds(now.year, now.month, now.day_of_month,
-                                                 now.hour, now.minute, now.second);
-                  id(timer_edit_value) = format_civil_datetime(now_secs + new_remaining);
+                  id(timer_edit_seconds) = (int) new_remaining;
               - script.execute: refresh_timer
         - if:
             condition:
@@ -2114,21 +2127,23 @@ script:
             id(entity_return_index) = id(cover_index);
             id(entity_menu_index) =
                 (int) id(ha_climates).size() + (int) id(ha_lights).size() + id(cover_index);
-          } else if (id(ui_context) == 8) {
-            id(entity_return_kind) = 4;
+          } else if (id(ui_context) == 9) {
+            // Progress is first after Covers - see entity_menu_enter.
+            id(entity_return_kind) = 5;
             id(entity_menu_index) =
                 (int) id(ha_climates).size() + (int) id(ha_lights).size() + (int) id(ha_covers).size();
-          } else if (id(ui_context) == 9) {
-            id(entity_return_kind) = 5;
-            int timer_count = !parse_timer_queue(id(timer_queue)).empty() ? 1 : 0;
-            id(entity_menu_index) = (int) id(ha_climates).size() + (int) id(ha_lights).size() +
-                                     (int) id(ha_covers).size() + timer_count;
           } else if (id(ui_context) == 10) {
             id(entity_return_kind) = 6;
-            int timer_count = !parse_timer_queue(id(timer_queue)).empty() ? 1 : 0;
             int progress_count = !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0;
             id(entity_menu_index) = (int) id(ha_climates).size() + (int) id(ha_lights).size() +
-                                     (int) id(ha_covers).size() + timer_count + progress_count;
+                                     (int) id(ha_covers).size() + progress_count;
+          } else if (id(ui_context) == 8) {
+            // Timer always sits right before Settings, after Progress/Notify.
+            id(entity_return_kind) = 4;
+            int progress_count = !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0;
+            int notify_count = id(notify_finished) ? 1 : 0;
+            id(entity_menu_index) = (int) id(ha_climates).size() + (int) id(ha_lights).size() +
+                                     (int) id(ha_covers).size() + progress_count + notify_count;
           }
           id(thermostat_quick_stage) = 0;
           id(ui_context) = 6;
@@ -2271,48 +2286,52 @@ script:
                         - script.execute: refresh_cover
                         - lvgl.page.show: screen_cover
                       else:
+                        # Order here is Progress, Notify, Timer, Settings, Back -
+                        # Timer always sits immediately before Settings, so it
+                        # stays reachable in the same spot regardless of whether
+                        # Progress/Notify are currently present.
                         - if:
                             condition:
                               lambda: |-
-                                bool timer_present = !parse_timer_queue(id(timer_queue)).empty();
-                                return timer_present &&
+                                bool progress_present = !parse_progress_queue(id(progress_queue)).empty();
+                                return progress_present &&
                                        id(entity_menu_index) == (int) id(ha_climates).size() +
                                            (int) id(ha_lights).size() + (int) id(ha_covers).size();
                             then:
-                              - lambda: 'id(ui_context) = 8; id(timer_queue_index) = 0;'
-                              - script.execute: refresh_timer
-                              - lvgl.page.show: screen_timer
+                              - lambda: 'id(ui_context) = 9; id(progress_queue_index) = 0;'
+                              - script.execute: refresh_progress
+                              - lvgl.page.show: screen_progress
                             else:
                               - if:
                                   condition:
                                     lambda: |-
-                                      int timer_count = !parse_timer_queue(id(timer_queue)).empty() ? 1 : 0;
-                                      bool progress_present = !parse_progress_queue(id(progress_queue)).empty();
-                                      return progress_present &&
+                                      int progress_count = !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0;
+                                      return id(notify_finished) &&
                                              id(entity_menu_index) == (int) id(ha_climates).size() +
                                                  (int) id(ha_lights).size() +
-                                                 (int) id(ha_covers).size() + timer_count;
+                                                 (int) id(ha_covers).size() + progress_count;
                                   then:
-                                    - lambda: 'id(ui_context) = 9; id(progress_queue_index) = 0;'
-                                    - script.execute: refresh_progress
-                                    - lvgl.page.show: screen_progress
+                                    - lambda: |-
+                                        id(ui_context) = 10;
+                                        id(notify_queue_index) = 0;
+                                        if (id(notify_finished)) id(notify_finished_at_ms) = millis();
+                                    - script.execute: refresh_notify
+                                    - lvgl.page.show: screen_notify
                                   else:
                                     - if:
                                         condition:
                                           lambda: |-
-                                            int timer_count = !parse_timer_queue(id(timer_queue)).empty() ? 1 : 0;
                                             int progress_count = !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0;
-                                            return id(notify_finished) &&
+                                            int notify_count = id(notify_finished) ? 1 : 0;
+                                            bool timer_present = !parse_timer_queue(id(timer_queue)).empty();
+                                            return timer_present &&
                                                    id(entity_menu_index) == (int) id(ha_climates).size() +
                                                        (int) id(ha_lights).size() + (int) id(ha_covers).size() +
-                                                       timer_count + progress_count;
+                                                       progress_count + notify_count;
                                         then:
-                                          - lambda: |-
-                                              id(ui_context) = 10;
-                                              id(notify_queue_index) = 0;
-                                              if (id(notify_finished)) id(notify_finished_at_ms) = millis();
-                                          - script.execute: refresh_notify
-                                          - lvgl.page.show: screen_notify
+                                          - lambda: 'id(ui_context) = 8; id(timer_queue_index) = 0;'
+                                          - script.execute: refresh_timer
+                                          - lvgl.page.show: screen_timer
                                         else:
                                           - if:
                                               condition:
@@ -2759,20 +2778,27 @@ script:
           bool on_add_page = (idx == total);
           auto now = id(ha_time).now();
           char value[16];
+          // The cancel-confirm dialog (timer_click/check_finish_effects) hides
+          // this label while pending - always unhide it here so every normal
+          // refresh (adding/removing/swiping entries) restores it regardless
+          // of how it last got hidden, instead of relying on every dialog
+          // dismiss path to symmetrically restore it itself.
+          lv_obj_clear_flag(id(label_timer_value), LV_OBJ_FLAG_HIDDEN);
           if (on_add_page) {
-            long remaining = id(timer_edit_value).empty() ? 0 : timer_remaining_seconds(id(timer_edit_value), now);
-            if (remaining < 0) remaining = 0;
+            long remaining = id(timer_edit_seconds) > 0 ? id(timer_edit_seconds) : 0;
             snprintf(value, sizeof(value), "%ld:%02ld:%02ld", remaining / 3600,
                      (remaining % 3600) / 60, remaining % 60);
-            lv_label_set_text(id(label_timer_value), id(timer_edit_value).empty() ? "--:--:--" : value);
+            lv_label_set_text(id(label_timer_value), id(timer_edit_seconds) < 0 ? "--:--:--" : value);
             lv_label_set_text(id(label_timer_title), id(i18n_translations).translate("timer.add_hint").c_str());
             lv_obj_clear_flag(id(label_timer_title), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(label_timer_remove_hint), LV_OBJ_FLAG_HIDDEN);
             lv_arc_set_value(id(arc_timer_value), 0);
             lv_obj_add_flag(id(arc_timer_track), LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(id(arc_timer_value), LV_OBJ_FLAG_HIDDEN);
           } else {
             auto &qt = items[idx];
             long remaining = timer_remaining_seconds(qt.end_time, now);
+            bool finished = remaining <= 0;
             if (remaining < 0) remaining = 0;
             snprintf(value, sizeof(value), "%ld:%02ld:%02ld", remaining / 3600,
                      (remaining % 3600) / 60, remaining % 60);
@@ -2782,6 +2808,17 @@ script:
               lv_obj_clear_flag(id(label_timer_title), LV_OBJ_FLAG_HIDDEN);
             } else {
               lv_obj_add_flag(id(label_timer_title), LV_OBJ_FLAG_HIDDEN);
+            }
+            // Finished entries show a hint below the title instead of the
+            // usual two-click cancel-confirm dialog - a single press removes
+            // them right away (see timer_click), since there is nothing left
+            // to accidentally cancel.
+            if (finished) {
+              lv_label_set_text(id(label_timer_remove_hint),
+                                 id(i18n_translations).translate("timer.remove_hint").c_str());
+              lv_obj_clear_flag(id(label_timer_remove_hint), LV_OBJ_FLAG_HIDDEN);
+            } else {
+              lv_obj_add_flag(id(label_timer_remove_hint), LV_OBJ_FLAG_HIDDEN);
             }
             uint32_t elapsed = (now.is_valid() && now.timestamp > qt.added_epoch)
                                     ? now.timestamp - qt.added_epoch : 0;
@@ -2971,13 +3008,16 @@ script:
   # Short knob press on the Timer screen. Behavior depends on which page is
   # currently shown:
   # - The empty add page (timer_queue_index == total): a click confirms the
-  #   knob-previewed duration and appends a new timer to the queue, using
-  #   the Timer settings-menu's LED/blink defaults (no cancel-confirm dialog
-  #   here - creating one is cheap/reversible, no need to double-confirm).
-  # - A real entry: unchanged two-click cancel-confirm dialog (auto-
-  #   dismissed after 5s by check_finish_effects), except the second click
-  #   now removes that specific queue entry instead of clearing a single
-  #   global timer.
+  #   knob-previewed duration - the end time is computed from "now" right
+  #   here, not baked in earlier while the user was still turning the knob -
+  #   and appends a new timer to the queue, using the Timer settings-menu's
+  #   LED/blink defaults (no cancel-confirm dialog here - creating one is
+  #   cheap/reversible, no need to double-confirm).
+  # - A finished real entry (see refresh_timer's remove-hint): a single
+  #   press removes it right away, no confirmation needed.
+  # - A still-counting real entry: unchanged two-click cancel-confirm dialog
+  #   (auto-dismissed after 5s by check_finish_effects), the second click
+  #   removes that specific queue entry.
   - id: timer_click
     then:
       - if:
@@ -2986,39 +3026,41 @@ script:
           then:
             - if:
                 condition:
-                  lambda: 'return !id(timer_edit_value).empty();'
+                  lambda: 'return id(timer_edit_seconds) > 0;'
                 then:
                   - lambda: |-
+                      auto now = id(ha_time).now();
+                      if (!now.is_valid()) return;
                       QueuedTimer qt;
                       char idbuf[24];
                       snprintf(idbuf, sizeof(idbuf), "dev%lu", (unsigned long) id(timer_queue_seq));
                       qt.entry_id = idbuf;
                       qt.title = "";
-                      qt.end_time = id(timer_edit_value);
+                      long now_secs = civil_seconds(now.year, now.month, now.day_of_month,
+                                                     now.hour, now.minute, now.second);
+                      qt.end_time = format_civil_datetime(now_secs + id(timer_edit_seconds));
                       qt.color = blink_led_color_hex(id(timer_blink_led_color_select).current_option());
                       qt.led_mode = id(timer_finish_blink_switch).state ? 2 : 0;
                       qt.value_blink = id(timer_value_blink_switch).state;
                       qt.seq = id(timer_queue_seq)++;
-                      qt.added_epoch = id(ha_time).now().timestamp;
+                      qt.added_epoch = now.timestamp;
                       qt.notified = false;
                       if (!id(timer_queue).empty()) id(timer_queue) += "\n";
                       id(timer_queue) += serialize_timer_entry(qt);
-                      id(timer_edit_value) = "";
+                      id(timer_edit_seconds) = -1;
                       int total = (int) parse_timer_queue(id(timer_queue)).size();
                       id(timer_queue_index) = total - 1;
                   - script.execute: refresh_timer
           else:
             - if:
                 condition:
-                  lambda: 'return id(timer_cancel_confirm_pending);'
+                  lambda: |-
+                    auto items = parse_timer_queue(id(timer_queue));
+                    if (items.empty()) return false;
+                    int idx = clamp(id(timer_queue_index), 0, (int) items.size() - 1);
+                    return timer_remaining_seconds(items[idx].end_time, id(ha_time).now()) <= 0;
                 then:
                   - lambda: |-
-                      id(timer_cancel_confirm_pending) = false;
-                      lv_obj_add_flag(id(timer_cancel_backdrop), LV_OBJ_FLAG_HIDDEN);
-                      lv_obj_add_flag(id(label_timer_cancel_confirm), LV_OBJ_FLAG_HIDDEN);
-                      lv_obj_clear_flag(id(arc_timer_track), LV_OBJ_FLAG_HIDDEN);
-                      lv_obj_clear_flag(id(arc_timer_value), LV_OBJ_FLAG_HIDDEN);
-                      lv_obj_clear_flag(id(label_timer_value), LV_OBJ_FLAG_HIDDEN);
                       auto items = parse_timer_queue(id(timer_queue));
                       int idx = clamp(id(timer_queue_index), 0, (int) items.size() - 1);
                       std::string target = items.empty() ? "" : items[idx].entry_id;
@@ -3033,21 +3075,46 @@ script:
                       id(timer_queue_index) = clamp(id(timer_queue_index), 0, total);
                   - script.execute: refresh_timer
                 else:
-                  - lambda: |-
-                      id(timer_cancel_confirm_pending) = true;
-                      id(timer_cancel_confirm_started_ms) = millis();
-                      lv_obj_clear_flag(id(timer_cancel_backdrop), LV_OBJ_FLAG_HIDDEN);
-                      lv_obj_clear_flag(id(label_timer_cancel_confirm), LV_OBJ_FLAG_HIDDEN);
-                      lv_obj_add_flag(id(arc_timer_track), LV_OBJ_FLAG_HIDDEN);
-                      lv_obj_add_flag(id(arc_timer_value), LV_OBJ_FLAG_HIDDEN);
-                      lv_obj_add_flag(id(label_timer_value), LV_OBJ_FLAG_HIDDEN);
-                      lv_obj_add_flag(id(label_timer_title), LV_OBJ_FLAG_HIDDEN);
-                      char cancel_body[48];
-                      snprintf(cancel_body, sizeof(cancel_body),
-                               id(i18n_translations).translate("timer.cancel_confirm_body").c_str(), 5);
-                      std::string cancel_msg =
-                          id(i18n_translations).translate("timer.cancel_confirm_title") + "\n" + cancel_body;
-                      lv_label_set_text(id(label_timer_cancel_confirm), cancel_msg.c_str());
+                  - if:
+                      condition:
+                        lambda: 'return id(timer_cancel_confirm_pending);'
+                      then:
+                        - lambda: |-
+                            id(timer_cancel_confirm_pending) = false;
+                            lv_obj_add_flag(id(timer_cancel_backdrop), LV_OBJ_FLAG_HIDDEN);
+                            lv_obj_add_flag(id(label_timer_cancel_confirm), LV_OBJ_FLAG_HIDDEN);
+                            lv_obj_clear_flag(id(arc_timer_track), LV_OBJ_FLAG_HIDDEN);
+                            lv_obj_clear_flag(id(arc_timer_value), LV_OBJ_FLAG_HIDDEN);
+                            lv_obj_clear_flag(id(label_timer_value), LV_OBJ_FLAG_HIDDEN);
+                            auto items = parse_timer_queue(id(timer_queue));
+                            int idx = clamp(id(timer_queue_index), 0, (int) items.size() - 1);
+                            std::string target = items.empty() ? "" : items[idx].entry_id;
+                            std::string rebuilt;
+                            for (auto &qt : items) {
+                              if (qt.entry_id == target) continue;
+                              if (!rebuilt.empty()) rebuilt += "\n";
+                              rebuilt += serialize_timer_entry(qt);
+                            }
+                            id(timer_queue) = rebuilt;
+                            int total = (int) parse_timer_queue(id(timer_queue)).size();
+                            id(timer_queue_index) = clamp(id(timer_queue_index), 0, total);
+                        - script.execute: refresh_timer
+                      else:
+                        - lambda: |-
+                            id(timer_cancel_confirm_pending) = true;
+                            id(timer_cancel_confirm_started_ms) = millis();
+                            lv_obj_clear_flag(id(timer_cancel_backdrop), LV_OBJ_FLAG_HIDDEN);
+                            lv_obj_clear_flag(id(label_timer_cancel_confirm), LV_OBJ_FLAG_HIDDEN);
+                            lv_obj_add_flag(id(arc_timer_track), LV_OBJ_FLAG_HIDDEN);
+                            lv_obj_add_flag(id(arc_timer_value), LV_OBJ_FLAG_HIDDEN);
+                            lv_obj_add_flag(id(label_timer_value), LV_OBJ_FLAG_HIDDEN);
+                            lv_obj_add_flag(id(label_timer_title), LV_OBJ_FLAG_HIDDEN);
+                            char cancel_body[48];
+                            snprintf(cancel_body, sizeof(cancel_body),
+                                     id(i18n_translations).translate("timer.cancel_confirm_body").c_str(), 5);
+                            std::string cancel_msg =
+                                id(i18n_translations).translate("timer.cancel_confirm_title") + "\n" + cancel_body;
+                            lv_label_set_text(id(label_timer_cancel_confirm), cancel_msg.c_str());
 
   - id: activate_progress_screen
     then:
@@ -3258,6 +3325,7 @@ script:
   # ESP-assigned seq, and appends it as its own line in the queue.
   - id: notify_add_to_queue
     then:
+      - script.execute: wake_display
       - lambda: |-
           std::string raw = id(notify_add_txt).state;
           if (raw.empty()) return;
@@ -3298,6 +3366,10 @@ script:
   # ESP-assigned seq/added timestamp, and appends it to the queue.
   - id: timer_add_to_queue
     then:
+      # Without this, an entry added while the display is dimmed/idle
+      # renders correctly (arc, value, ...) but stays invisible under the
+      # dimmed backlight until something else happens to wake it.
+      - script.execute: wake_display
       - lambda: |-
           std::string raw = id(timer_add_txt).state;
           if (raw.empty()) return;
@@ -3338,6 +3410,7 @@ script:
   # (upsert), which is how HA updates a running percentage over time.
   - id: progress_add_to_queue
     then:
+      - script.execute: wake_display
       - lambda: |-
           std::string raw = id(progress_add_txt).state;
           if (raw.empty()) return;
@@ -4535,19 +4608,24 @@ script:
             int progresses = !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0;
             int notifies = id(notify_finished) ? 1 : 0;
             int count = climates + lights + covers + timers + progresses + notifies + 2;
+            ESP_LOGI("diag", "entity menu: climates=%d lights=%d covers=%d timers=%d progresses=%d notifies=%d count=%d idx=%d timer_queue_raw='%s'",
+                     climates, lights, covers, timers, progresses, notifies, count,
+                     id(entity_menu_index), id(timer_queue).c_str());
+            // Order is Progress, Notify, Timer, Settings, Back - see
+            // entity_menu_enter for why Timer sits right before Settings.
             auto entity_name = [climates, lights, covers, timers, progresses, notifies,
                                  count](int p) -> std::string {
               p = ((p % count) + count) % count;
               if (p < climates) return id(ha_climates).get(p).name;
               if (p < climates + lights) return id(ha_lights).get(p - climates).name;
               if (p < climates + lights + covers) return id(ha_covers).get(p - climates - lights).name;
-              if (p < climates + lights + covers + timers)
-                return id(i18n_translations).translate("settings.group.timer");
-              if (p < climates + lights + covers + timers + progresses)
+              if (p < climates + lights + covers + progresses)
                 return id(i18n_translations).translate("settings.group.progress");
-              if (p < climates + lights + covers + timers + progresses + notifies)
+              if (p < climates + lights + covers + progresses + notifies)
                 return id(i18n_translations).translate("settings.group.notify");
-              return p == climates + lights + covers + timers + progresses + notifies
+              if (p < climates + lights + covers + progresses + notifies + timers)
+                return id(i18n_translations).translate("settings.group.timer");
+              return p == climates + lights + covers + progresses + notifies + timers
                          ? id(i18n_translations).translate("common.settings")
                          : id(i18n_translations).translate("common.back");
             };

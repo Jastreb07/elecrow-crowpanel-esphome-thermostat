@@ -250,22 +250,24 @@ inline const char *settings_root_icon(int position) {
 // glyph is still loaded in the font, only that array slot was blanked out.
 static const char *const ICON_SETTINGS_ROW = "󰔡";  // mdi-toggle-switch (reused)
 
+// Order is Progress, Notify, Timer, Settings, Back - Timer always sits
+// immediately before Settings, see entity_menu_enter.
 inline const char *entity_menu_icon(int position, int climate_count, int light_count,
                                      int cover_count, int timer_count, int progress_count,
                                      int notify_count) {
-  int before_timer = climate_count + light_count + cover_count;
-  int before_progress = before_timer + timer_count;
+  int before_progress = climate_count + light_count + cover_count;
   int before_notify = before_progress + progress_count;
-  int before_settings = before_notify + notify_count;
+  int before_timer = before_notify + notify_count;
+  int before_settings = before_timer + timer_count;
   int count = before_settings + 2;  // Settings + Back
   if (count <= 0) return ICON_BACK;
   position = ((position % count) + count) % count;
   if (position < climate_count) return MENU_ICONS[0];
   if (position < climate_count + light_count) return MENU_ICONS[17];
-  if (position < before_timer) return ICON_WINDOW_SHUTTER;
-  if (position < before_progress) return MENU_ICONS[3];  // Timer: clock
-  if (position < before_notify) return MENU_ICONS[10];   // Progress: percent
-  if (position < before_settings) return ICON_SUN;        // Notify: sun (reused)
+  if (position < before_progress) return ICON_WINDOW_SHUTTER;
+  if (position < before_notify) return MENU_ICONS[10];    // Progress: percent
+  if (position < before_timer) return ICON_SUN;            // Notify: sun (reused)
+  if (position < before_settings) return MENU_ICONS[3];    // Timer: clock
   return position == before_settings ? ICON_SETTINGS_ROW : ICON_BACK;
 }
 
