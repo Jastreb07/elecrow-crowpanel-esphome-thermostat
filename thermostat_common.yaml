@@ -111,10 +111,20 @@ esphome:
         - light.turn_on:
             id: display_backlight
             brightness: !lambda 'return id(brightness_pct) / 100.0f;'
-        - lvgl.page.show: screen_loading
-        - lambda: |-
-            id(ui_context) = -1;
-            id(app_booted) = true;
+        - if:
+            condition:
+              lambda: 'return !id(setup_wizard_done);'
+            then:
+              - lambda: |-
+                  id(ui_context) = 11;
+                  id(wizard_page) = 0;
+                  id(wizard_welcome_started_ms) = millis();
+              - script.execute: refresh_wizard
+              - lvgl.page.show: screen_wizard
+            else:
+              - lvgl.page.show: screen_loading
+              - lambda: 'id(ui_context) = -1;'
+        - lambda: 'id(app_booted) = true;'
         - script.execute: refresh_temps
         - script.execute: refresh_status
         - script.execute: refresh_connection
@@ -128,8 +138,20 @@ esp32:
     sdkconfig_options:
       CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: y
       CONFIG_ESP32S3_DATA_CACHE_64KB: y
-      CONFIG_SPIRAM_FETCH_INSTRUCTIONS: y
-      CONFIG_SPIRAM_RODATA: y
+      # Both off: code/rodata execute from flash (via flash cache) instead
+      # of being placed in PSRAM. When these are on, esp_psram.c has to
+      # register the small leftover gap between where PSRAM-mapped code/
+      # rodata ends and the next MMU page boundary as its own tiny heap
+      # region (esp_psram_extram_add_to_heap_allocator, see the
+      # CONFIG_SPIRAM_FETCH_INSTRUCTIONS/CONFIG_SPIRAM_RODATA branches
+      # there) - that gap's size is a direct function of the compiled
+      # binary's exact size, and a size-changing edit can shrink it below
+      # tlsf's minimum block size, which crashes very early in boot (before
+      # stdio locks are ready) instead of failing gracefully. This bit the
+      # Setup Wizard once already; disabling both removes the codepath
+      # instead of just avoiding it by chance.
+      CONFIG_SPIRAM_FETCH_INSTRUCTIONS: n
+      CONFIG_SPIRAM_RODATA: n
 
 psram:
   mode: octal
@@ -281,12 +303,35 @@ globals:
     restore_value: false
     initial_value: "false"
 
+  # Whether the first-boot setup wizard (Welcome -> language -> HA setup
+  # steps) has been shown. restore_value true = survives normal reboots
+  # (ESPHome flash preferences) but is wiped by factory_reset_btn, which
+  # erases those same preferences - so a factory reset naturally re-shows
+  # the wizard on the next boot without any extra detection logic.
+  - id: setup_wizard_done
+    type: bool
+    restore_value: true
+    initial_value: "false"
+
+  # Page within the setup wizard: 0 welcome (auto-advances), 1 language,
+  # 2-5 the four HA-setup steps. See refresh_wizard/wizard_next/
+  # wizard_previous/wizard_finish.
+  - id: wizard_page
+    type: int
+    restore_value: false
+    initial_value: "0"
+
+  - id: wizard_welcome_started_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+
   # Raw coordinate tracking for swipe detection. LVGL on_swipe_* events were
   # unreliable on the full-screen button, so the board files feed raw touch
   # start/end coordinates into handle_swipe_release.
   # UI navigation: 0 Home, 1 Thermostat, 2 groups, 3 group items, 4 editor,
   # 5 one of the configured light pages, 6 entity overview, 7 cover,
-  # 8 timer, 9 progress.
+  # 8 timer, 9 progress, 10 notify, 11 setup wizard.
   - id: ui_context
     type: int
     restore_value: false
@@ -725,6 +770,7 @@ select:
         - script.execute: refresh_timer
         - script.execute: refresh_progress
         - script.execute: refresh_notify
+        - script.execute: refresh_wizard
 
   - platform: template
     name: "[Thermostat] Temperature Unit"
@@ -1120,6 +1166,17 @@ binary_sensor:
         then:
           - if:
               condition:
+                lambda: 'return id(ui_context) == 11;'
+              then:
+                - if:
+                    condition:
+                      lambda: 'return id(wizard_page) >= 5;'
+                    then:
+                      - script.execute: wizard_finish
+                    else:
+                      - script.execute: wizard_next
+          - if:
+              condition:
                 lambda: 'return id(ui_context) == 0;'
               then:
                 - lambda: |-
@@ -1182,7 +1239,14 @@ binary_sensor:
                                                               - lambda: 'id(ui_context) = 2;'
                                                               - script.execute: update_settings_labels
                                                             else:
-                                                              - script.execute: menu_enter
+                                                              - if:
+                                                                  condition:
+                                                                    lambda: |-
+                                                                      return settings_group_entry_type_at(id(menu_index), id(group_item_index)) == 37;
+                                                                  then:
+                                                                    - script.execute: activate_wizard_screen
+                                                                  else:
+                                                                    - script.execute: menu_enter
                                                       else:
                                                         - script.execute: submenu_apply
 # ------------------------------------------------------------------
@@ -1323,6 +1387,18 @@ sensor:
                                                  now.hour, now.minute, now.second);
                   id(timer_edit_value) = format_civil_datetime(now_secs + new_remaining);
               - script.execute: refresh_timer
+        - if:
+            condition:
+              lambda: 'return id(encoder_delta) != 0 && id(ui_context) == 11 && id(wizard_page) == 1;'
+            then:
+              # Language page only - turning the knob toggles English/Deutsch
+              # via the existing language_select entity, whose on_value
+              # handler already sets the locale and refreshes every screen
+              # (including this one, via refresh_wizard).
+              - select.set:
+                  id: language_select
+                  option: !lambda |-
+                    return id(language_select).current_option() == "Deutsch" ? "English" : "Deutsch";
         - if:
             condition:
               lambda: 'return id(encoder_delta) != 0 && id(ui_context) == 2;'
@@ -2893,6 +2969,110 @@ script:
       - script.execute: refresh_notify
       - lvgl.page.show: screen_notify
 
+  # First-boot/post-factory-reset setup wizard, and its re-invocation from
+  # Settings > System > "Show Setup Guide" (see the settings-menu type-37
+  # special case in the central click router). See thermostat_helpers.h's
+  # SETTINGS_MENU_COUNT comment for why this is a special "instant action"
+  # entry instead of a normal editor screen.
+  - id: activate_wizard_screen
+    then:
+      - script.execute: wake_display
+      - lambda: |-
+          id(ui_context) = 11;
+          id(wizard_page) = 0;
+          id(wizard_welcome_started_ms) = millis();
+      - script.execute: refresh_wizard
+      - lvgl.page.show: screen_wizard
+
+  - id: refresh_wizard
+    then:
+      - lambda: |-
+          int page = id(wizard_page);
+          if (page == 0) {
+            lv_label_set_text(id(label_wizard_welcome), id(i18n_translations).translate("wizard.welcome").c_str());
+            lv_obj_clear_flag(id(label_wizard_welcome), LV_OBJ_FLAG_HIDDEN);
+          } else {
+            lv_obj_add_flag(id(label_wizard_welcome), LV_OBJ_FLAG_HIDDEN);
+          }
+          if (page == 1) {
+            lv_label_set_text(id(label_wizard_lang_value), id(language_select).current_option().c_str());
+            lv_label_set_text(id(label_wizard_lang_hint), id(i18n_translations).translate("wizard.language_hint").c_str());
+            lv_obj_clear_flag(id(label_wizard_lang_value), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(id(label_wizard_lang_hint), LV_OBJ_FLAG_HIDDEN);
+          } else {
+            lv_obj_add_flag(id(label_wizard_lang_value), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(label_wizard_lang_hint), LV_OBJ_FLAG_HIDDEN);
+          }
+          if (page >= 2) {
+            static const char *const TITLE_KEYS[4] = {
+                "wizard.step1.title", "wizard.step2.title", "wizard.step3.title", "wizard.step4.title"};
+            static const char *const BODY_KEYS[4] = {
+                "wizard.step1.body", "wizard.step2.body", "wizard.step3.body", "wizard.step4.body"};
+            int step = page - 2;
+            lv_label_set_text(id(label_wizard_title), id(i18n_translations).translate(TITLE_KEYS[step]).c_str());
+            lv_label_set_text(id(label_wizard_body), id(i18n_translations).translate(BODY_KEYS[step]).c_str());
+            lv_obj_clear_flag(id(label_wizard_title), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(id(label_wizard_body), LV_OBJ_FLAG_HIDDEN);
+            char pagebuf[8];
+            snprintf(pagebuf, sizeof(pagebuf), "%d / 4", step + 1);
+            lv_label_set_text(id(label_wizard_page), pagebuf);
+            lv_obj_clear_flag(id(label_wizard_page), LV_OBJ_FLAG_HIDDEN);
+            if (page > 2) lv_obj_clear_flag(id(label_wizard_arrow_prev), LV_OBJ_FLAG_HIDDEN);
+            else lv_obj_add_flag(id(label_wizard_arrow_prev), LV_OBJ_FLAG_HIDDEN);
+            if (page < 5) lv_obj_clear_flag(id(label_wizard_arrow_next), LV_OBJ_FLAG_HIDDEN);
+            else lv_obj_add_flag(id(label_wizard_arrow_next), LV_OBJ_FLAG_HIDDEN);
+            if (page == 5) {
+              lv_label_set_text(id(label_wizard_finish_hint), id(i18n_translations).translate("wizard.finish_hint").c_str());
+              lv_obj_clear_flag(id(label_wizard_finish_hint), LV_OBJ_FLAG_HIDDEN);
+            } else {
+              lv_obj_add_flag(id(label_wizard_finish_hint), LV_OBJ_FLAG_HIDDEN);
+            }
+          } else {
+            lv_obj_add_flag(id(label_wizard_title), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(label_wizard_body), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(label_wizard_page), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(label_wizard_arrow_prev), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(label_wizard_arrow_next), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(label_wizard_finish_hint), LV_OBJ_FLAG_HIDDEN);
+          }
+
+  # Swipe (any direction, see the board files) moves one page; clamped 0..5,
+  # no wrap-around. Page 0 (Welcome) also auto-advances after 2s regardless
+  # of swiping - see check_finish_effects.
+  - id: wizard_next
+    then:
+      - script.execute: wake_display
+      - lambda: 'id(wizard_page) = menu_scroll_index(id(wizard_page), 1, 6);'
+      - script.execute: refresh_wizard
+
+  - id: wizard_previous
+    then:
+      - script.execute: wake_display
+      - lambda: 'id(wizard_page) = menu_scroll_index(id(wizard_page), -1, 6);'
+      - script.execute: refresh_wizard
+
+  # Knob click on the last step (page 5): mark the wizard done (persists
+  # across normal reboots, only a factory reset shows it again - see
+  # setup_wizard_done) and resume wherever the device would normally be:
+  # straight to screen_home if Home Assistant is already reachable (the
+  # Settings > System re-invocation case), otherwise screen_loading, same
+  # as on_boot would show - the already-running refresh_connection interval
+  # takes it from there once Home Assistant becomes ready.
+  - id: wizard_finish
+    then:
+      - lambda: 'id(setup_wizard_done) = true;'
+      - if:
+          condition:
+            lambda: 'return id(connection_ready);'
+          then:
+            - lambda: 'id(ui_context) = 0;'
+            - script.execute: refresh_temps
+            - script.execute: refresh_status
+            - lvgl.page.show: screen_home
+          else:
+            - lambda: 'id(ui_context) = -1;'
+            - lvgl.page.show: screen_loading
+
   # Swipe navigation between the static notify (if active) and any queued
   # ones - same clamp-at-the-edges behavior as the rest of the menus (no
   # wrap-around).
@@ -3088,6 +3268,13 @@ script:
   # teardown logic.
   - id: check_finish_effects
     then:
+      - if:
+          condition:
+            lambda: |-
+              return id(ui_context) == 11 && id(wizard_page) == 0 &&
+                     millis() - id(wizard_welcome_started_ms) >= 2000;
+          then:
+            - script.execute: wizard_next
       - lambda: |-
           // Timer: each entry's "finished" state is computed live from its
           // own end_time (remaining <= 0) - no stored finished flag needed.

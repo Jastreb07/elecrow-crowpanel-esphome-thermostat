@@ -85,6 +85,7 @@ settings:
     progress_blink_brightness: "Progress Blink Brightness"
     notify_auto_home: "Notify Auto-Home"
     notify_blink_brightness: "Notify Blink Brightness"
+    setup_guide: "Show Setup Guide"
 
 color:
   green: "Green"
@@ -144,3 +145,20 @@ cover:
   open: "Open"
   closed: "Closed"
   label_default: "Cover"
+
+wizard:
+  welcome: "Welcome"
+  language_hint: "Turn to choose language"
+  finish_hint: "Press knob to finish"
+  step1:
+    title: "1. ESPHome"
+    body: "Add the ESPHome integration in Home Assistant and adopt this device - Settings, then Devices and Services."
+  step2:
+    title: "2. HACS"
+    body: "Install Smart Thermostat Knob via HACS, or copy the custom components folder manually."
+  step3:
+    title: "3. Add Integration"
+    body: "Add Smart Thermostat Knob and select your thermostats, lights and covers."
+  step4:
+    title: "4. Done"
+    body: "That is it - this screen loads automatically once Home Assistant sends the configuration."

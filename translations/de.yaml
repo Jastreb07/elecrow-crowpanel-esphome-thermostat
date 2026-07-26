@@ -85,6 +85,7 @@ settings:
     progress_blink_brightness: "Progress-Blink-Helligkeit"
     notify_auto_home: "Notify Auto-Home"
     notify_blink_brightness: "Notify-Blink-Helligkeit"
+    setup_guide: "Setup-Anleitung anzeigen"
 
 color:
   green: "Grün"
@@ -144,3 +145,20 @@ cover:
   open: "Geöffnet"
   closed: "Geschlossen"
   label_default: "Rollo"
+
+wizard:
+  welcome: "Willkommen"
+  language_hint: "Drehen zum Sprache wählen"
+  finish_hint: "Knob drücken zum Abschließen"
+  step1:
+    title: "1. ESPHome"
+    body: "ESPHome-Integration in Home Assistant hinzufügen und dieses Gerät adoptieren - Einstellungen, dann Geräte und Dienste."
+  step2:
+    title: "2. HACS"
+    body: "Smart Thermostat Knob über HACS installieren, oder den custom components Ordner manuell kopieren."
+  step3:
+    title: "3. Integration hinzufügen"
+    body: "Smart Thermostat Knob hinzufügen und Thermostate, Lichter und Rollos auswählen."
+  step4:
+    title: "4. Fertig"
+    body: "Fertig - dieser Bildschirm lädt automatisch, sobald Home Assistant die Konfiguration sendet."

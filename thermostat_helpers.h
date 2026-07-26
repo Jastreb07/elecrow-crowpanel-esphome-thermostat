@@ -181,8 +181,9 @@ static const char *const MENU_ICONS[] = {
     "󰃟",  // 34 Notify blink LED brightness mdi-brightness-7 (reused)
     "",   // 35 removed (Notify Value Blink)
     "",   // 36 removed (Notify Show Screen)
+    "󰋽",  // 37 Setup guide    mdi-information-outline (reused)
 };
-constexpr int SETTINGS_MENU_COUNT = 37;
+constexpr int SETTINGS_MENU_COUNT = 38;
 
 // Root groups for the hierarchical settings screen. The values below are the
 // stable setting IDs used by the existing editor/apply logic.
@@ -199,7 +200,7 @@ static constexpr int SETTINGS_GROUP_TIMER[] = {11, 19, 25, 29, 23, 22, 26};
 static constexpr int SETTINGS_GROUP_PROGRESS[] = {20, 30};
 static constexpr int SETTINGS_GROUP_NOTIFY[] = {31, 34};
 static constexpr int SETTINGS_GROUP_SYSTEM[] = {
-    2, 4, 3, 18, 17, 10, 9, 8, 14, 15, 16};
+    2, 4, 3, 18, 17, 10, 9, 8, 14, 15, 37, 16};
 
 inline int settings_group_count(int group) {
   switch (group) {
@@ -431,7 +432,7 @@ inline const char *settings_menu_name(int i) {
       "", "", "settings.item.timer_blink_brightness",
       "settings.item.progress_blink_brightness", "settings.item.notify_auto_home", "",
       "", "settings.item.notify_blink_brightness", "",
-      ""};
+      "", "settings.item.setup_guide"};
   if (i < 0 || i >= SETTINGS_MENU_COUNT) return "";
   return KEYS[i];
 }
