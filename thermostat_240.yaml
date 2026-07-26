@@ -255,7 +255,7 @@ lvgl:
             text_font: rajdhani_medium_16
             text_color: 0xCDBEEC
             align: CENTER
-            y: 30
+            y: 40
             width: 170
             text_align: CENTER
             long_mode: WRAP

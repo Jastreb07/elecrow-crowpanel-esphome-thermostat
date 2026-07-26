@@ -310,7 +310,7 @@ lvgl:
             text_font: rajdhani_medium_24
             text_color: 0xCDBEEC
             align: CENTER
-            y: 50
+            y: 80
             width: 340
             text_align: CENTER
             long_mode: WRAP

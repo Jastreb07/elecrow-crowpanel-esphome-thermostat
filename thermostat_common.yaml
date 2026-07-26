@@ -1470,6 +1470,20 @@ sensor:
                     return id(language_select).current_option() == "Deutsch" ? "English" : "Deutsch";
         - if:
             condition:
+              lambda: 'return id(encoder_delta) != 0 && id(ui_context) == 11 && id(wizard_page) >= 2;'
+            then:
+              # The ten HA-setup steps (pages 2-11) also move on knob turn, not
+              # just on knob press - forward is still blocked by wizard_next on
+              # an unsatisfied gate page (step 1/5), backward is always allowed.
+              - if:
+                  condition:
+                    lambda: 'return id(encoder_delta) > 0;'
+                  then:
+                    - script.execute: wizard_next
+                  else:
+                    - script.execute: wizard_previous
+        - if:
+            condition:
               lambda: 'return id(encoder_delta) != 0 && id(ui_context) == 2;'
             then:
               - lambda: |-
@@ -3079,9 +3093,9 @@ script:
   # index = page - 2). Two steps gate forward progress on a live condition
   # instead of showing static text - step 1 (page 3, Wi-Fi) waits on
   # id(wifi_id).is_connected(), step 5 (page 7, Home Assistant) waits on
-  # id(ha_connected) - see wizard_next (blocks manual skip-ahead) and
-  # check_finish_effects (auto-advances once satisfied, same tick that
-  # drives the welcome page's timed auto-advance).
+  # id(ha_connected). Once satisfied the text switches from "waiting" to
+  # "connected", but the page does not auto-advance - see wizard_next
+  # (blocks manual skip-ahead while still unsatisfied).
   - id: refresh_wizard
     then:
       - lambda: |-
@@ -3163,11 +3177,12 @@ script:
             lv_obj_add_flag(id(label_wizard_finish_hint), LV_OBJ_FLAG_HIDDEN);
           }
 
-  # Pressing the knob moves one page forward; clamped 0..11, no wrap-around,
-  # no swipe/back navigation. Page 0 (Welcome) auto-advances after 2s and
-  # pages 3/7 (the Wi-Fi/Home Assistant gates) auto-advance once connected -
-  # see check_finish_effects. Manually pressing forward out of an
-  # unsatisfied gate page is a no-op (blocked below).
+  # Pressing the knob (or turning it, on the ten step pages) moves one page
+  # forward; clamped 0..11, no wrap-around. Page 0 (Welcome) auto-advances
+  # after 2s - see check_finish_effects. Pages 3/7 (the Wi-Fi/Home Assistant
+  # gates) never auto-advance, even once connected - pressing/turning
+  # forward out of one is simply blocked (a no-op) until its condition is
+  # satisfied, after which the same press/turn goes through normally.
   - id: wizard_next
     then:
       - script.execute: wake_display
@@ -3178,6 +3193,15 @@ script:
                           (step == 5 && !id(ha_connected));
           if (!blocked) id(wizard_page) = menu_scroll_index(page, 1, 12);
           ESP_LOGI("diag", "wizard_next: %d -> %d (blocked=%d)", page, id(wizard_page), blocked);
+      - script.execute: refresh_wizard
+
+  # Turning the knob backward on a step page (pages 2-11). Always allowed,
+  # even out of an unsatisfied gate page - unlike wizard_next, there is
+  # nothing to skip ahead of by going back.
+  - id: wizard_previous
+    then:
+      - script.execute: wake_display
+      - lambda: 'id(wizard_page) = menu_scroll_index(id(wizard_page), -1, 12);'
       - script.execute: refresh_wizard
 
   # Knob click on the last step (page 11): turn off setup_wizard_switch (so
@@ -3411,20 +3435,6 @@ script:
                      millis() - id(wizard_welcome_started_ms) >= 2000;
           then:
             - script.execute: wizard_next
-      # The Wi-Fi (step 1, page 3) and Home Assistant (step 5, page 7) gate
-      # pages advance themselves the instant their condition is met, so the
-      # user never has to press anything once connected.
-      - if:
-          condition:
-            lambda: |-
-              return id(ui_context) == 11 && id(wizard_page) == 3 && id(wifi_id).is_connected();
-          then:
-            - script.execute: wizard_next
-      - if:
-          condition:
-            lambda: 'return id(ui_context) == 11 && id(wizard_page) == 7 && id(ha_connected);'
-          then:
-            - script.execute: wizard_next
       # Auto-scroll wizard_body_viewport top-to-bottom-to-top whenever its
       # text overflows the fixed-height container - only while the wizard
       # is actually showing a body-text step (not hidden by the QR/gate
@@ -3549,6 +3559,23 @@ script:
           } else {
             id(notify_finished) = false;
           }
+      # The queue can become empty while its screen is being looked at -
+      # either an entry expiring above, or HA removing the last one via
+      # notify_remove_from_queue/progress_remove_from_queue. Unlike the
+      # delay-based Auto-Home below (which only applies to an entry that
+      # finished and is still sitting there), an empty queue has nothing
+      # left to show at all, so this leaves immediately rather than waiting
+      # for notify_auto_home_num/progress_auto_home_num.
+      - if:
+          condition:
+            lambda: 'return id(ui_context) == 10 && parse_notify_queue(id(notify_queue)).empty();'
+          then:
+            - script.execute: activate_home_screen
+      - if:
+          condition:
+            lambda: 'return id(ui_context) == 9 && parse_progress_queue(id(progress_queue)).empty();'
+          then:
+            - script.execute: activate_home_screen
       # Gated on connection_ready so a timer/progress that had already
       # finished before a reboot (its end time/value survives via restored
       # entity state) can't hijack the very first screen after boot - normal
