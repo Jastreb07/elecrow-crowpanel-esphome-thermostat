@@ -1,0 +1,186 @@
+common:
+  back: "Zurück"
+  settings: "Einstellungen"
+  entities: "Entitäten"
+  "on": "An"
+  "off": "Aus"
+  clock_12h: "12h"
+  clock_24h: "24h"
+  "no": "Nein"
+  yes_reset: "Ja, zurücksetzen"
+  press_confirm: "Drücken = bestätigen"
+  ha_unavailable: "Home Assistant nicht verfügbar"
+  no_hvac_modes: "Keine HVAC-Modi"
+  no_presets: "Keine Presets"
+
+conn:
+  wifi_connecting: "WLAN wird verbunden..."
+  wifi_error: "WLAN-Fehler"
+  ha_connecting: "Home Assistant wird verbunden..."
+  ha_unreachable: "Home Assistant nicht erreichbar"
+  config_loading: "Smart-Knob-Konfiguration wird geladen..."
+  config_not_found: "Smart-Knob-Konfiguration nicht gefunden"
+  config_json_error: "Smart-Knob-Konfiguration: JSON-Fehler"
+  no_climate: "Kein Thermostat konfiguriert"
+  climate_loading: "Thermostat-Entität wird geladen..."
+  climate_not_found: "Thermostat-Entität nicht gefunden"
+
+reboot:
+  hint: "Knob drücken oder Display berühren zum Neustart"
+
+hvac:
+  heat: "Heizen"
+  cool: "Kühlen"
+  heat_cool: "Heizen/Kühlen"
+  auto: "Auto"
+  "off": "Aus"
+  dry: "Trocknen"
+  fan_only: "Lüfter"
+
+preset:
+  none: "Kein Preset"
+  eco: "Eco"
+  comfort: "Komfort"
+  home: "Zuhause"
+  away: "Abwesend"
+  sleep: "Schlafen"
+  boost: "Boost"
+  activity: "Aktivität"
+
+settings:
+  group:
+    thermostat: "Thermostat"
+    timer: "Timer"
+    progress: "Progress"
+    notify: "Benachrichtigung"
+    system: "System"
+  item:
+    hvac_mode: "HVAC-Modus"
+    preset: "Preset"
+    brightness: "Helligkeit"
+    clock: "Uhr"
+    language: "Sprache"
+    unit: "Einheit"
+    idle_time: "Ruhezeit"
+    dim_after: "Dimmen nach"
+    dim_level: "Dimm-Stufe"
+    timer_auto_home: "Timer Auto-Home"
+    step: "Schritt"
+    wifi: "WLAN"
+    firmware: "Firmware"
+    reset: "Zurücksetzen"
+    led: "LED"
+    led_brightness: "LED-Helligkeit"
+    timer_led_blink: "Timer-LED-Blinken"
+    progress_auto_home: "Progress Auto-Home"
+    progress_led_blink: "Progress-LED-Blinken"
+    timer_knob_step: "Timer-Knob-Schritt"
+    timer_value_blink: "Timer-Wert-Blinken"
+    progress_value_blink: "Progress-Wert-Blinken"
+    timer_blink_color: "Timer-Blink-LED-Farbe"
+    timer_show_screen: "Timer-Bildschirm anzeigen"
+    progress_show_screen: "Progress-Bildschirm anzeigen"
+    progress_blink_color: "Progress-Blink-LED-Farbe"
+    timer_blink_brightness: "Timer-Blink-Helligkeit"
+    progress_blink_brightness: "Progress-Blink-Helligkeit"
+    notify_auto_home: "Notify Auto-Home"
+    notify_blink_brightness: "Notify-Blink-Helligkeit"
+    setup_guide: "Setup-Anleitung anzeigen"
+
+color:
+  green: "Grün"
+  red: "Rot"
+  blue: "Blau"
+  yellow: "Gelb"
+  orange: "Orange"
+  purple: "Lila"
+  cyan: "Cyan"
+  magenta: "Magenta"
+  white: "Weiß"
+  pink: "Pink"
+
+clock:
+  day:
+    sun: "So"
+    mon: "Mo"
+    tue: "Di"
+    wed: "Mi"
+    thu: "Do"
+    fri: "Fr"
+    sat: "Sa"
+  month:
+    jan: "Jan"
+    feb: "Feb"
+    mar: "Mär"
+    apr: "Apr"
+    may: "Mai"
+    jun: "Jun"
+    jul: "Jul"
+    aug: "Aug"
+    sep: "Sep"
+    oct: "Okt"
+    nov: "Nov"
+    dec: "Dez"
+  am: "AM"
+  pm: "PM"
+
+timer:
+  cancel_confirm_title: "Timer abbrechen?"
+  cancel_confirm_body: "Erneut drücken zum Bestätigen (%ds)"
+  add_hint: "Drehen zum Einstellen, drücken zum Hinzufügen"
+  remove_hint: "Drücken zum Entfernen"
+  default_title: "Timer"
+
+light:
+  mode_brightness: "Helligkeit"
+  mode_kelvin: "Kelvin"
+  mode_color: "Farbe"
+  value_off: "AUS"
+  state_on: "An"
+  state_off: "Aus"
+  state_unavailable: "Nicht verfügbar"
+  state_loading: "Lädt..."
+
+cover:
+  opening: "Öffnet"
+  closing: "Schließt"
+  open: "Geöffnet"
+  closed: "Geschlossen"
+  label_default: "Rollo"
+
+wizard:
+  welcome: "Willkommen"
+  language_hint: "Drehen zum Sprache wählen"
+  finish_hint: "Knob drücken zum Abschließen"
+  step0:
+    title: "Anleitung"
+    body: "QR-Code scannen für die ausführliche Anleitung mit Screenshots."
+  step1:
+    title: "1. WLAN"
+    waiting: "Warte auf WLAN-Verbindung..."
+    connected: "WLAN verbunden"
+  step2:
+    title: "2. ESPHome"
+    body: "In Home Assistant die ESPHome-Integration installieren, falls noch nicht geschehen."
+  step3:
+    title: "3. Gerät hinzufügen"
+    body: "Home Assistant sollte dieses Gerät automatisch erkennen. Einstellungen, dann Geräte und Dienste öffnen und das Gerät adoptieren."
+  step4:
+    title: "4. Aktionen erlauben"
+    body: "Wenn diese Funktion aktiviert ist, können ESPHome-Geräte Home Assistant-Aktionen durchführen oder Ereignisse senden. Aktiviere dies nur, wenn du dem Gerät vertraust."
+  step5:
+    title: "5. Home Assistant"
+    waiting: "Warte auf Home Assistant Verbindung..."
+    connected: "Home Assistant verbunden"
+  step6:
+    title: "6. HACS"
+    body: "Der nächste Schritt benötigt HACS in Home Assistant."
+  step7:
+    title: "7. Integration installieren"
+    body: "Smart Thermostat Knob über HACS installieren, oder den custom components Ordner manuell kopieren."
+  step8:
+    title: "8. Konfigurieren"
+    body: "Smart Thermostat Knob hinzufügen und Thermostate, Lichter und Rollos auswählen."
+  step9:
+    title: "9. Fertig"
+    body: "Fertig - dieser Bildschirm lädt automatisch, sobald Home Assistant die Konfiguration sendet."

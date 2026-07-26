@@ -6,7 +6,10 @@
     {
       "chipFamily": "ESP32-S3",
       "parts": [
-        { "path": "https://raw.githubusercontent.com/Jastreb07/elecrow-crowpanel-esphome-thermostat/master/web-flasher/firmware/thermostat_480/firmware.factory.bin", "offset": 0 }
+        {
+          "path": "https://raw.githubusercontent.com/Jastreb07/elecrow-crowpanel-esphome-thermostat/dev/firmware/thermostat_480/firmware.factory.bin",
+          "offset": 0
+        }
       ]
     }
   ]

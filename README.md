@@ -36,6 +36,11 @@ configuration.
   stop, and one-swipe full open/close.
 - One shared entity overview to jump between any configured thermostat,
   light, or cover.
+- Timer and Progress screens, each a full-circle arc with a countdown or
+  percentage in the center and an optional title — driven entirely by
+  plain Home Assistant entities (a text/number you set, a button you press
+  to show the screen), no extra configuration needed. See
+  [SETUP.md](SETUP.md#timer--progress) for the entities involved.
 - Shows the Home Assistant connection state right on the display.
 - Flash from the browser and configure Wi-Fi without installing anything —
   see the [Web Flasher](SETUP.md#web-flasher).
@@ -125,6 +130,7 @@ Done:
 - [x] Thermostat control (single- and dual-setpoint, HVAC mode, presets)
 - [x] Light control (brightness, color temperature, color)
 - [x] Cover control (position, stop, full open/close)
+- [x] Timer and Progress screens, activated from Home Assistant
 - [x] Shared entity overview and settings navigation
 - [x] Optional custom Home Assistant integration for entity selection
 - [x] Local LVGL HTML preview tool
