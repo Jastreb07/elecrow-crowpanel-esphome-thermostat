@@ -5,6 +5,12 @@ here. The version headings below match `firmware/version.txt` and the
 GitHub Release tags (`v<version>`) - the release workflow extracts the
 section for the version being released as the release notes body.
 
+## 1.0.4
+
+No functional changes - version bump to verify the OTA self-update flow
+(Settings > System > Update) end-to-end against a real release, now that
+1.0.2/1.0.3 fixed the compiled project version and manifest metadata.
+
 ## 1.0.3
 
 - Fixed the web flasher's "Connect and Install" dialog showing the version
