@@ -42,6 +42,14 @@
 substitutions:
   device_name: thermostat
   friendly_name: "Thermostat Knob"
+  # Overridden by the release workflow (esphome/build-action's substitutions
+  # input, sourced from firmware/version.txt) so the project: version below
+  # - and therefore update:'s current_version - matches the actual flashed
+  # firmware instead of ESPHome's own core version, which never changes
+  # between firmware releases and would make current_version == latest_version
+  # never hold true after a real update. Local/manual builds keep this
+  # placeholder, which is intentionally never equal to a real release tag.
+  firmware_version: "0.0.0-dev"
   # Home Assistant template sensor that provides the JSON attributes
   # `climates` and `lights`. It can also be changed later from Home Assistant.
   ha_config_entity_id: "sensor.smart_knob_config"
@@ -96,6 +104,9 @@ esphome:
   name_add_mac_suffix: true
   friendly_name: ${friendly_name}
   comment: "ESPHome CrowPanel Thermostat Knob"
+  project:
+    name: "jastreb07.thermostat_knob"
+    version: "${firmware_version}"
   includes:
     - thermostat_helpers.h
   platformio_options:
@@ -348,7 +359,7 @@ update:
                      x.latest_version.c_str());
             qn.title = body;
             qn.color = "00FF00";
-            qn.led_mode = 2;
+            qn.led_mode = 1;
             qn.priority = 2;
             qn.value_blink = false;
             auto items = parse_notify_queue(id(notify_queue));
@@ -5006,7 +5017,7 @@ script:
               case 10: snprintf(buf, sizeof(buf), "%d%%", (int) id(dim_level_num).state); val = buf; break;
               case 13: val = id(knob_step_select).current_option().str() + "°C"; break;
               case 14: val = id(wifi_ssid_txt).state; break;
-              case 15: val = id(fw_version).state; break;
+              case 15: val = "${firmware_version}"; break;
               case 16: val = ""; break;
               case 38:
                 val = id(update_available)
@@ -5172,7 +5183,7 @@ script:
                 snprintf(buf, sizeof(buf), "%s  %.0f dBm", id(wifi_ip_txt).state.c_str(), id(wifi_rssi).state);
                 val = buf;
                 break;
-              case 15: cur = id(fw_version).state; val = ""; break;
+              case 15: cur = "${firmware_version}"; val = ""; break;
               case 38: {
                 if (id(update_available)) {
                   auto m = bool_menu_window(id(submenu_index),
