@@ -14,6 +14,11 @@ packages:
 # PlatformIO build directory. MAC suffixes remain enabled in thermostat_common.
 substitutions:
   device_name: thermostat240
+  # GitHub Release asset filename prefix for this board (e.g.
+  # thermostat_240-ota-manifest.json) - see docs/GITHUB_RELEASES_PLAN.md.
+  # Kept separate from device_name (no underscore) since that's used
+  # elsewhere for the mDNS/API device name.
+  release_asset_board: thermostat_240
   settings_row_gap: "48"
   light_color_preset_border: "3"
   light_slider_range: "116"

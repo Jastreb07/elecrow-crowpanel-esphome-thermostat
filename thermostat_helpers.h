@@ -182,8 +182,9 @@ static const char *const MENU_ICONS[] = {
     "",   // 35 removed (Notify Value Blink)
     "",   // 36 removed (Notify Show Screen)
     "󰋽",  // 37 Setup guide    mdi-information-outline (reused)
+    "󰋽",  // 38 Update         mdi-information-outline (reused)
 };
-constexpr int SETTINGS_MENU_COUNT = 38;
+constexpr int SETTINGS_MENU_COUNT = 39;
 
 // Root groups for the hierarchical settings screen. The values below are the
 // stable setting IDs used by the existing editor/apply logic.
@@ -200,7 +201,7 @@ static constexpr int SETTINGS_GROUP_TIMER[] = {11, 19, 25, 29, 23, 22, 26};
 static constexpr int SETTINGS_GROUP_PROGRESS[] = {20, 30};
 static constexpr int SETTINGS_GROUP_NOTIFY[] = {31, 34};
 static constexpr int SETTINGS_GROUP_SYSTEM[] = {
-    2, 4, 3, 18, 17, 10, 9, 8, 14, 15, 37, 16};
+    2, 4, 3, 18, 17, 10, 9, 8, 14, 15, 38, 37, 16};
 
 inline int settings_group_count(int group) {
   switch (group) {
@@ -434,7 +435,7 @@ inline const char *settings_menu_name(int i) {
       "", "", "settings.item.timer_blink_brightness",
       "settings.item.progress_blink_brightness", "settings.item.notify_auto_home", "",
       "", "settings.item.notify_blink_brightness", "",
-      "", "settings.item.setup_guide"};
+      "", "settings.item.setup_guide", "settings.item.update"};
   if (i < 0 || i >= SETTINGS_MENU_COUNT) return "";
   return KEYS[i];
 }
@@ -920,6 +921,45 @@ inline std::string serialize_progress_entry(const QueuedProgress &q) {
   out += num;
   if (!q.arc_color.empty()) out += ";arc_color=" + q.arc_color;
   return out;
+}
+
+// Replace-or-insert a single entry into a progress_queue string by
+// entry_id, keeping every other entry untouched - same upsert semantics as
+// progress_add_to_queue's HA path. Used for the synthetic "fw_update" entry
+// driven by ota_http_request's on_begin/on_progress/on_end/on_error/
+// on_abort triggers (see docs/OTA_UPDATE_PLAN.md).
+inline std::string progress_queue_upsert(const std::string &raw, const QueuedProgress &entry) {
+  auto items = parse_progress_queue(raw);
+  std::string rebuilt;
+  bool replaced = false;
+  for (auto &existing : items) {
+    bool is_target = existing.entry_id == entry.entry_id;
+    if (is_target) replaced = true;
+    if (!rebuilt.empty()) rebuilt += "\n";
+    rebuilt += serialize_progress_entry(is_target ? entry : existing);
+  }
+  if (!replaced) {
+    if (!rebuilt.empty()) rebuilt += "\n";
+    rebuilt += serialize_progress_entry(entry);
+  }
+  return rebuilt;
+}
+
+// Drops one entry from a progress_queue string by entry_id - counterpart to
+// progress_queue_upsert(), used to clean up the synthetic "fw_update" entry
+// once an update finishes/fails without forcing a re-render (the caller
+// intentionally does not call refresh_progress right after, so whatever the
+// screen last showed - e.g. "Update failed" - stays visible until the user
+// navigates away themselves).
+inline std::string progress_queue_remove(const std::string &raw, const std::string &entry_id) {
+  auto items = parse_progress_queue(raw);
+  std::string rebuilt;
+  for (auto &existing : items) {
+    if (existing.entry_id == entry_id) continue;
+    if (!rebuilt.empty()) rebuilt += "\n";
+    rebuilt += serialize_progress_entry(existing);
+  }
+  return rebuilt;
 }
 
 // ------------------------------------------------------------------

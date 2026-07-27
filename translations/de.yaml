@@ -8,6 +8,7 @@ common:
   clock_24h: "24h"
   "no": "Nein"
   yes_reset: "Ja, zurücksetzen"
+  yes_update: "Ja, updaten"
   press_confirm: "Drücken = bestätigen"
   ha_unavailable: "Home Assistant nicht verfügbar"
   no_hvac_modes: "Keine HVAC-Modi"
@@ -27,6 +28,14 @@ conn:
 
 reboot:
   hint: "Knob drücken oder Display berühren zum Neustart"
+
+update:
+  available: "Update %s verfügbar"
+  up_to_date: "Auf dem neuesten Stand"
+  installing: "Update wird installiert..."
+  done: "Update abgeschlossen"
+  failed: "Update fehlgeschlagen"
+  cancelled: "Update abgebrochen"
 
 hvac:
   heat: "Heizen"
@@ -86,6 +95,7 @@ settings:
     notify_auto_home: "Notify Auto-Home"
     notify_blink_brightness: "Notify-Blink-Helligkeit"
     setup_guide: "Setup-Anleitung anzeigen"
+    update: "Update"
 
 color:
   green: "Grün"

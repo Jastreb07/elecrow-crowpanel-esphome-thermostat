@@ -1,24 +1,21 @@
 <#
 .SYNOPSIS
-    Compiles both boards and exports the merged factory image each into
-    web-flasher/firmware/<board>/, ready to commit and push.
+    Bumps firmware/version.txt (Patch/Minor/Major) - the single source of
+    truth for the firmware version.
 
 .DESCRIPTION
-    ESPHome/PlatformIO already merge the bootloader, partition table, OTA
-    marker, and application into one flashable-at-offset-0 image named
-    firmware.factory.bin. This script just compiles and copies that single
-    file per board - no manual offset bookkeeping needed.
+    Building and releasing firmware no longer happens locally - pushing
+    firmware/version.txt to master (via a merged PR) triggers
+    .github/workflows/release-firmware.yml, which compiles both boards,
+    generates manifest.json/ota-manifest.json/checksums.txt, and publishes
+    a GitHub Release. This script's only job is choosing and writing the
+    next version number, exactly like the interactive prompt the old
+    (removed) compile-and-export version of this script had - just without
+    the compile step, since that's CI's job now (see
+    docs/GITHUB_RELEASES_PLAN.md).
 
-    esphome.build_path is not honored by "esphome compile" in this ESPHome
-    version, so the build always lands in the default, hidden
-    .esphome/build/<device_name>/ cache directory regardless of YAML config.
-
-    The Web Flasher manifests (web-flasher/manifest_240.json,
-    web-flasher/manifest_480.json) fetch this binary straight from GitHub
-    (raw.githubusercontent.com), not from wherever web-flasher/index.html is
-    hosted. So the only thing that has to happen after this script is
-    "git add web-flasher/firmware", commit, and push - no separate upload to
-    the web space.
+    After running this script, commit the updated firmware/version.txt and
+    open a PR. Merging it to master triggers the release.
 
 .EXAMPLE
     .\build.ps1
@@ -28,40 +25,42 @@ $ErrorActionPreference = "Stop"
 
 Set-Location -Path $PSScriptRoot
 
-$boards = @("thermostat_240", "thermostat_480")
-# device_name substitution in each board YAML drops the underscore
-# (thermostat_240 -> thermostat240).
-$deviceNames = @{
-    thermostat_240 = "thermostat240"
-    thermostat_480 = "thermostat480"
+$versionPath = Join-Path "firmware" "version.txt"
+if (-not (Test-Path $versionPath)) {
+    throw "Missing $versionPath"
 }
+$currentVersion = (Get-Content -Path $versionPath -Raw).Trim()
+Write-Host "==> Current firmware version: $currentVersion"
 
-foreach ($board in $boards) {
-    $deviceName = $deviceNames[$board]
+Write-Host ""
+Write-Host "Bump version how?"
+Write-Host "  [1] Patch"
+Write-Host "  [2] Minor"
+Write-Host "  [3] Major"
+$choice = Read-Host "Choice (1-3)"
 
-    Write-Host "==> Compiling $board.yaml"
-    esphome compile "$board.yaml"
-    if ($LASTEXITCODE -ne 0) {
-        throw "esphome compile $board.yaml failed with exit code $LASTEXITCODE"
-    }
+$parts = $currentVersion.Split(".")
+[int]$major = $parts[0]
+[int]$minor = $parts[1]
+[int]$patch = $parts[2]
 
-    $pioenvDir = Join-Path ".esphome" "build\$deviceName\.pioenvs\$deviceName"
-    $destDir = Join-Path "firmware" $board
-    New-Item -ItemType Directory -Force -Path $destDir | Out-Null
-
-    $src = Join-Path $pioenvDir "firmware.factory.bin"
-    if (-not (Test-Path $src)) {
-        Write-Error "Missing $src"
-        Write-Error "PlatformIO may have named this file differently for your ESPHome/IDF version."
-        Write-Error "List $pioenvDir\ and update this script plus web-flasher\manifest_*.json to match."
-        exit 1
-    }
-
-    Write-Host "==> Exporting firmware.factory.bin to $destDir\"
-    Copy-Item -Path $src -Destination (Join-Path $destDir "firmware.factory.bin") -Force
+switch ($choice) {
+    "1" { $patch++ }
+    "2" { $minor++; $patch = 0 }
+    "3" { $major++; $minor = 0; $patch = 0 }
+    default { throw "Invalid choice '$choice' - expected 1, 2, or 3." }
 }
+$newVersion = "$major.$minor.$patch"
 
+Set-Content -Path $versionPath -Value $newVersion -NoNewline -Encoding utf8
+Add-Content -Path $versionPath -Value "" -Encoding utf8
+
+Write-Host "==> $versionPath -> $newVersion"
+Write-Host ""
+Write-Host "==> Don't forget to add a `"## $newVersion`" section to CHANGELOG.md"
+Write-Host "    (used as the GitHub Release body by the workflow)."
+Write-Host ""
 Write-Host "==> Done. Review the diff, then:"
-Write-Host "    git add firmware"
-Write-Host "    git commit -m `"chore(firmware): update firmware binaries`""
-Write-Host "    git push"
+Write-Host "    git add firmware/version.txt CHANGELOG.md"
+Write-Host "    git commit -m `"chore(firmware): bump version to $newVersion`""
+Write-Host "    (open a PR, merging to master triggers the release workflow)"
