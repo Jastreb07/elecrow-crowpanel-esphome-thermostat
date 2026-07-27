@@ -145,13 +145,16 @@ jobs:
             # in (the ESPHome project id, e.g. "jastreb07.thermostat_knob"),
             # which is meant to be a machine-readable namespaced identifier
             # (esphome/core/config.py's valid_project_name only requires
-            # exactly one "."), not a user-facing label. .version is forced
-            # to the same $version used everywhere else in this job as a
-            # second safeguard, independent of whether the compiled project
-            # version came out right (build-action fills it from the
-            # compiled binary's own project_version otherwise).
+            # exactly one "."), not a user-facing label. Version is NOT
+            # appended here - the dialog already appends manifest.version
+            # right after manifest.name on its own, so including it in both
+            # duplicated it ("... v1.0.2 1.0.2?"). .version is forced to the
+            # same $version used everywhere else in this job as a safeguard,
+            # independent of whether the compiled project version came out
+            # right (build-action fills it from the compiled binary's own
+            # project_version otherwise).
             jq --arg url "${repo_base}/${asset_board}-firmware.factory.bin" \
-               --arg name "${display_name} v${version}" \
+               --arg name "$display_name" \
                --arg version "$version" \
               '
                 .name = $name
