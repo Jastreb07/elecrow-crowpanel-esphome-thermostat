@@ -75,10 +75,9 @@ jobs:
       # Renames both boards' outputs with their release_asset_board prefix
       # (thermostat_240-/thermostat_480-, matching the substitution of the
       # same name in the board YAMLs), computes SHA256 checksums for all
-      # four .bin files, patches manifest.json's parts[].path to the final
-      # "latest/download" asset URL (done unconditionally rather than
-      # trusting complete-manifest/release-url alone to have produced it -
-      # see the "still open" point in docs/GITHUB_RELEASES_PLAN.md), and
+      # four .bin files, generates an ESP Web Tools manifest with the final
+      # "latest/download" factory-binary URL (without depending on the
+      # build action's internal manifest shape), and
       # generates ota-manifest.json (ESPHome's update:-component schema,
       # which build-action does not produce) with a freshly computed MD5.
       - name: Assemble release assets
@@ -95,9 +94,22 @@ jobs:
             cp "$build_dir"/*.factory.bin "release-assets/${asset_board}-firmware.factory.bin"
             cp "$build_dir"/*.ota.bin "release-assets/${asset_board}-firmware.ota.bin"
 
-            jq --arg url "${repo_base}/${asset_board}-firmware.factory.bin" \
-              '.builds[].parts[].path = $url' \
-              "$build_dir/manifest.json" > "release-assets/${asset_board}-manifest.json"
+            jq -n \
+              --arg name "$display_name" \
+              --arg version "$version" \
+              --arg path "${repo_base}/${asset_board}-firmware.factory.bin" \
+              '{
+                name: $name,
+                version: $version,
+                new_install_prompt_erase: true,
+                new_install_improv_wait_time: 30,
+                builds: [{
+                  chipFamily: "ESP32-S3",
+                  improv: true,
+                  parts: [{path: $path, offset: 0}]
+                }]
+              }' \
+              > "release-assets/${asset_board}-manifest.json"
 
             local md5
             md5=$(md5sum "release-assets/${asset_board}-firmware.ota.bin" | cut -d' ' -f1)
