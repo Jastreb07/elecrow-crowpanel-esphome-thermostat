@@ -224,9 +224,135 @@ api:
         id(ha_connected_since_ms) = 0;
     - script.execute: refresh_connection
 
+# ------------------------------------------------------------------
+# OTA self-update from GitHub (Settings > System > Update, see
+# docs/OTA_UPDATE_PLAN.md). http_request/ota/update below are ESPHome's own
+# components - the actual flash-write/verify/reboot is entirely handled by
+# them (ota_http_request), not reimplemented here. This uses a separate
+# ota-manifest.json (firmware/thermostat_XXX/ota-manifest.json) instead of
+# the esp-web-tools manifest.json used by the browser flasher - the two
+# have different, incompatible schemas.
+# ------------------------------------------------------------------
+http_request:
+  useragent: smart-thermostat-knob
+  timeout: 10s
+
 ota:
   - platform: esphome
     password: !secret ota_password
+  - platform: http_request
+    id: ota_http_request
+    on_begin:
+      then:
+        - lambda: |-
+            QueuedProgress qp{};
+            qp.entry_id = "fw_update";
+            qp.title = id(i18n_translations).translate("update.installing");
+            qp.value = 0.0f;
+            qp.color = "00FF00";
+            qp.led_mode = 0;
+            qp.value_blink = false;
+            id(progress_queue) = progress_queue_upsert(id(progress_queue), qp);
+            if (id(ui_context) == 9) id(refresh_progress).execute();
+    on_progress:
+      then:
+        - lambda: |-
+            QueuedProgress qp{};
+            qp.entry_id = "fw_update";
+            qp.title = id(i18n_translations).translate("update.installing");
+            qp.value = x;
+            qp.color = "00FF00";
+            qp.led_mode = 0;
+            qp.value_blink = false;
+            id(progress_queue) = progress_queue_upsert(id(progress_queue), qp);
+            if (id(ui_context) == 9) id(refresh_progress).execute();
+    on_end:
+      then:
+        - lambda: |-
+            QueuedProgress qp{};
+            qp.entry_id = "fw_update";
+            qp.title = id(i18n_translations).translate("update.done");
+            qp.value = 100.0f;
+            qp.color = "00FF00";
+            qp.led_mode = 0;
+            qp.value_blink = false;
+            id(progress_queue) = progress_queue_upsert(id(progress_queue), qp);
+            if (id(ui_context) == 9) id(refresh_progress).execute();
+            // The device reboots itself right after this (ota_http_request's
+            // standard behavior on a successful flash) - update_in_progress
+            // is a restore_value: false global, so it comes back false on
+            // its own; nothing further to unlock here.
+    on_error:
+      then:
+        - lambda: |-
+            QueuedProgress qp{};
+            qp.entry_id = "fw_update";
+            qp.title = id(i18n_translations).translate("update.failed");
+            qp.value = 0.0f;
+            qp.color = "00FF00";
+            qp.led_mode = 0;
+            qp.value_blink = false;
+            id(progress_queue) = progress_queue_upsert(id(progress_queue), qp);
+            if (id(ui_context) == 9) id(refresh_progress).execute();
+            id(update_in_progress) = false;
+            // Remove the entry from the underlying queue without a further
+            // refresh - the screen keeps showing "Update failed" (the frame
+            // just rendered above) until the user navigates away themselves.
+            id(progress_queue) = progress_queue_remove(id(progress_queue), "fw_update");
+    on_abort:
+      then:
+        - lambda: |-
+            QueuedProgress qp{};
+            qp.entry_id = "fw_update";
+            qp.title = id(i18n_translations).translate("update.cancelled");
+            qp.value = 0.0f;
+            qp.color = "00FF00";
+            qp.led_mode = 0;
+            qp.value_blink = false;
+            id(progress_queue) = progress_queue_upsert(id(progress_queue), qp);
+            if (id(ui_context) == 9) id(refresh_progress).execute();
+            id(update_in_progress) = false;
+            id(progress_queue) = progress_queue_remove(id(progress_queue), "fw_update");
+
+update:
+  - platform: http_request
+    id: fw_update
+    name: "${friendly_name} Update"
+    source: https://raw.githubusercontent.com/Jastreb07/elecrow-crowpanel-esphome-thermostat/master/firmware/${device_name}/ota-manifest.json
+    update_interval: 6h
+    on_update_available:
+      then:
+        - lambda: |-
+            // x is const update::UpdateInfo& - only act on a genuinely new
+            // version, so re-checks while already known-available don't
+            // keep rewriting/bumping the existing notify entry.
+            id(update_available) = true;
+            id(update_latest_version) = x.latest_version;
+            QueuedNotify qn{};
+            qn.entry_id = "fw_update";
+            char body[64];
+            snprintf(body, sizeof(body), id(i18n_translations).translate("update.available").c_str(),
+                     x.latest_version.c_str());
+            qn.title = body;
+            qn.color = "00FF00";
+            qn.led_mode = 2;
+            qn.priority = 2;
+            qn.value_blink = false;
+            auto items = parse_notify_queue(id(notify_queue));
+            std::string rebuilt;
+            bool replaced = false;
+            for (auto &existing : items) {
+              bool is_target = existing.entry_id == "fw_update";
+              if (is_target) { replaced = true; qn.seq = existing.seq; }
+              if (!rebuilt.empty()) rebuilt += "\n";
+              rebuilt += serialize_notify_entry(is_target ? qn : existing);
+            }
+            if (!replaced) {
+              qn.seq = id(notify_queue_seq)++;
+              if (!rebuilt.empty()) rebuilt += "\n";
+              rebuilt += serialize_notify_entry(qn);
+            }
+            id(notify_queue) = rebuilt;
 
 web_server:
   port: 80
@@ -570,6 +696,28 @@ globals:
   # goes from empty to non-empty. Drives the auto-show-screen action, which
   # needs to fire once on the transition, not on every tick.
   - id: notify_just_finished
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+  # OTA update state (Settings > System > Update, see docs/OTA_UPDATE_PLAN.md).
+  # update_available/update_latest_version reflect the "update" component's
+  # own state (id(fw_update).state/update_info), cached here so the settings
+  # list/submenu render logic doesn't need to reach into the component
+  # directly. update_in_progress is the wizard-style preemption guard - while
+  # true, nothing may leave/navigate away from the Progress screen (see
+  # activate_home_screen and friends) and refresh_progress shows exclusively
+  # the synthetic "fw_update" progress_queue entry, ignoring every other
+  # entry and progress_queue_index entirely.
+  - id: update_available
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: update_latest_version
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: update_in_progress
     type: bool
     restore_value: false
     initial_value: "false"
@@ -1210,23 +1358,31 @@ binary_sensor:
                     else:
                       - script.execute: wizard_next
               else:
+                # Same reasoning as the Setup Wizard case above, for the
+                # Progress screen while an OTA update is running - no
+                # quick-jump shortcut out of it either.
                 - if:
                     condition:
-                      lambda: 'return id(ui_context) == 5;'
-                    then:
-                      - script.execute: toggle_active_light
+                      lambda: 'return id(ui_context) == 9 && id(update_in_progress);'
+                    then: []
                     else:
                       - if:
                           condition:
-                            lambda: 'return id(ui_context) != 1;'
+                            lambda: 'return id(ui_context) == 5;'
                           then:
-                            - lambda: |-
-                                id(climate_index) = 0;
-                                id(ui_context) = 1;
-                            - script.execute: load_active_climate
-                            - lvgl.page.show: screen_thermostat
+                            - script.execute: toggle_active_light
                           else:
-                            - script.execute: toggle_adjust_target
+                            - if:
+                                condition:
+                                  lambda: 'return id(ui_context) != 1;'
+                                then:
+                                  - lambda: |-
+                                      id(climate_index) = 0;
+                                      id(ui_context) = 1;
+                                  - script.execute: load_active_climate
+                                  - lvgl.page.show: screen_thermostat
+                                else:
+                                  - script.execute: toggle_adjust_target
       # Single click: enter/select inside settings. On the thermostat it now
       # switches directly between the TRV and AC/cool target.
       - timing:
@@ -1278,6 +1434,14 @@ binary_sensor:
                                       then:
                                         - script.execute: timer_click
                                       else:
+                                        - if:
+                                            # Notify has no generic click action - this only
+                                            # special-cases the "fw_update" entry (see
+                                            # docs/OTA_UPDATE_PLAN.md), everything else stays a no-op.
+                                            condition:
+                                              lambda: 'return id(ui_context) == 10;'
+                                            then:
+                                              - script.execute: notify_click
                                         - if:
                                             condition:
                                               lambda: 'return id(ui_context) == 6;'
@@ -1547,6 +1711,11 @@ sensor:
                     case 19:
                     case 23: case 26:
                       id(submenu_index) = 1 - id(submenu_index);
+                      break;
+                    case 38:
+                      // Read-only (no Yes/No choice to turn between) until
+                      // an update is actually available.
+                      if (id(update_available)) id(submenu_index) = 1 - id(submenu_index);
                       break;
                     case 8:
                     case 9:
@@ -2114,47 +2283,54 @@ script:
 
   # Shared overview on screen_navigation. It lists every configured climate and
   # light, followed by Settings and Back. Pressing an entity opens it directly.
+  # No-op while update_in_progress - see the Progress-screen lock in
+  # docs/OTA_UPDATE_PLAN.md. Reached from every screen's swipe-up, so this
+  # is the single choke point rather than guarding each caller.
   - id: open_entity_overview
     then:
-      - script.execute: wake_display
-      - lambda: |-
-          if (id(ui_context) == 1) {
-            id(entity_return_kind) = 1;
-            id(entity_return_index) = id(climate_index);
-            id(entity_menu_index) = id(climate_index);
-          } else if (id(ui_context) == 5) {
-            id(entity_return_kind) = 2;
-            id(entity_return_index) = id(light_index);
-            id(entity_menu_index) = (int) id(ha_climates).size() + id(light_index);
-          } else if (id(ui_context) == 7) {
-            id(entity_return_kind) = 3;
-            id(entity_return_index) = id(cover_index);
-            id(entity_menu_index) =
-                (int) id(ha_climates).size() + (int) id(ha_lights).size() + id(cover_index);
-          } else if (id(ui_context) == 9) {
-            // Progress is first after Covers - see entity_menu_enter.
-            id(entity_return_kind) = 5;
-            id(entity_menu_index) =
-                (int) id(ha_climates).size() + (int) id(ha_lights).size() + (int) id(ha_covers).size();
-          } else if (id(ui_context) == 10) {
-            id(entity_return_kind) = 6;
-            int progress_count = !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0;
-            id(entity_menu_index) = (int) id(ha_climates).size() + (int) id(ha_lights).size() +
-                                     (int) id(ha_covers).size() + progress_count;
-          } else if (id(ui_context) == 8) {
-            // Timer always sits right before Settings, after Progress/Notify.
-            id(entity_return_kind) = 4;
-            int progress_count = !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0;
-            int notify_count = id(notify_finished) ? 1 : 0;
-            id(entity_menu_index) = (int) id(ha_climates).size() + (int) id(ha_lights).size() +
-                                     (int) id(ha_covers).size() + progress_count + notify_count;
-          }
-          id(thermostat_quick_stage) = 0;
-          id(ui_context) = 6;
-      - script.execute: update_settings_labels
-      - lvgl.page.show:
-          id: screen_navigation
-          animation: NONE
+      - if:
+          condition:
+            lambda: 'return !id(update_in_progress);'
+          then:
+            - script.execute: wake_display
+            - lambda: |-
+                if (id(ui_context) == 1) {
+                  id(entity_return_kind) = 1;
+                  id(entity_return_index) = id(climate_index);
+                  id(entity_menu_index) = id(climate_index);
+                } else if (id(ui_context) == 5) {
+                  id(entity_return_kind) = 2;
+                  id(entity_return_index) = id(light_index);
+                  id(entity_menu_index) = (int) id(ha_climates).size() + id(light_index);
+                } else if (id(ui_context) == 7) {
+                  id(entity_return_kind) = 3;
+                  id(entity_return_index) = id(cover_index);
+                  id(entity_menu_index) =
+                      (int) id(ha_climates).size() + (int) id(ha_lights).size() + id(cover_index);
+                } else if (id(ui_context) == 9) {
+                  // Progress is first after Covers - see entity_menu_enter.
+                  id(entity_return_kind) = 5;
+                  id(entity_menu_index) =
+                      (int) id(ha_climates).size() + (int) id(ha_lights).size() + (int) id(ha_covers).size();
+                } else if (id(ui_context) == 10) {
+                  id(entity_return_kind) = 6;
+                  int progress_count = !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0;
+                  id(entity_menu_index) = (int) id(ha_climates).size() + (int) id(ha_lights).size() +
+                                           (int) id(ha_covers).size() + progress_count;
+                } else if (id(ui_context) == 8) {
+                  // Timer always sits right before Settings, after Progress/Notify.
+                  id(entity_return_kind) = 4;
+                  int progress_count = !parse_progress_queue(id(progress_queue)).empty() ? 1 : 0;
+                  int notify_count = id(notify_finished) ? 1 : 0;
+                  id(entity_menu_index) = (int) id(ha_climates).size() + (int) id(ha_lights).size() +
+                                           (int) id(ha_covers).size() + progress_count + notify_count;
+                }
+                id(thermostat_quick_stage) = 0;
+                id(ui_context) = 6;
+            - script.execute: update_settings_labels
+            - lvgl.page.show:
+                id: screen_navigation
+                animation: NONE
 
   - id: close_entity_overview
     then:
@@ -2862,6 +3038,29 @@ script:
   - id: refresh_progress
     then:
       - lambda: |-
+          // While an OTA update is running, this screen shows exclusively
+          // the synthetic "fw_update" entry - no paging, no other entries,
+          // regardless of progress_queue_index - see docs/OTA_UPDATE_PLAN.md.
+          if (id(update_in_progress)) {
+            auto items = parse_progress_queue(id(progress_queue));
+            QueuedProgress qp{};
+            bool found = false;
+            for (auto &item : items) {
+              if (item.entry_id == "fw_update") { qp = item; found = true; break; }
+            }
+            char value[8];
+            snprintf(value, sizeof(value), "%.0f%%", found ? qp.value : 0.0f);
+            lv_label_set_text(id(label_progress_value), value);
+            lv_label_set_text(id(label_progress_title), found ? qp.title.c_str() : "");
+            lv_obj_clear_flag(id(label_progress_title), LV_OBJ_FLAG_HIDDEN);
+            lv_arc_set_value(id(arc_progress_value), found ? (int) roundf(qp.value) : 0);
+            lv_obj_set_style_arc_color(id(arc_progress_value),
+                lv_color_hex(found ? arc_color_or_default(qp.arc_color) : ARC_DEFAULT_COLOR), LV_PART_INDICATOR);
+            lv_obj_add_flag(id(label_progress_page), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(label_progress_arrow_prev), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(label_progress_arrow_next), LV_OBJ_FLAG_HIDDEN);
+            return;
+          }
           auto items = parse_progress_queue(id(progress_queue));
           int total = (int) items.size();
           if (total > 0) {
@@ -2985,13 +3184,16 @@ script:
   # Every activate_*_screen script below (called from timer/progress/notify
   # auto-home, and remotely from the [Standard] Show */Screen HA buttons)
   # is a no-op while the Setup Wizard is showing - nothing may preempt it
-  # except wizard_finish itself. See also the connection_state_changed
-  # handler in refresh_connection, guarded the same way.
+  # except wizard_finish itself - and, separately, while an OTA update is
+  # running (update_in_progress) nothing may leave the Progress screen
+  # except the update itself finishing/failing. See also the
+  # connection_state_changed handler in refresh_connection, guarded the
+  # same way, and docs/OTA_UPDATE_PLAN.md.
   - id: activate_home_screen
     then:
       - if:
           condition:
-            lambda: 'return id(ui_context) != 11;'
+            lambda: 'return id(ui_context) != 11 && !id(update_in_progress);'
           then:
             - script.execute: wake_display
             - lambda: 'id(ui_context) = 0;'
@@ -3003,7 +3205,7 @@ script:
     then:
       - if:
           condition:
-            lambda: 'return id(ui_context) != 11;'
+            lambda: 'return id(ui_context) != 11 && !id(update_in_progress);'
           then:
             - script.execute: wake_display
             - lambda: 'id(ui_context) = 8; id(timer_queue_index) = 0;'
@@ -3132,7 +3334,7 @@ script:
     then:
       - if:
           condition:
-            lambda: 'return id(ui_context) != 11;'
+            lambda: 'return id(ui_context) != 11 && !id(update_in_progress);'
           then:
             - script.execute: wake_display
             - lambda: 'id(ui_context) = 9; id(progress_queue_index) = 0;'
@@ -3143,7 +3345,7 @@ script:
     then:
       - if:
           condition:
-            lambda: 'return id(ui_context) != 11;'
+            lambda: 'return id(ui_context) != 11 && !id(update_in_progress);'
           then:
             - script.execute: wake_display
             - lambda: |-
@@ -3152,6 +3354,63 @@ script:
                 if (id(notify_finished)) id(notify_finished_at_ms) = millis();
             - script.execute: refresh_notify
             - lvgl.page.show: screen_notify
+
+  # Notify has no generic on-device click action - this only special-cases
+  # the "fw_update" entry (see docs/OTA_UPDATE_PLAN.md) to jump straight to
+  # Settings > System > Update, same idea as the Setup Wizard's QR code
+  # linking out. Every other notify entry is untouched (no-op on click).
+  - id: notify_click
+    then:
+      - if:
+          condition:
+            lambda: |-
+              auto items = parse_notify_queue(id(notify_queue));
+              if (items.empty()) return false;
+              int idx = clamp(id(notify_queue_index), 0, (int) items.size() - 1);
+              return items[idx].entry_id == "fw_update";
+          then:
+            - script.execute: activate_update_menu
+
+  # Navigates straight into Settings > System > Update (finds its position
+  # in SETTINGS_GROUP_SYSTEM at runtime rather than hardcoding an index, so
+  # this keeps working if that array is ever reordered).
+  - id: activate_update_menu
+    then:
+      - script.execute: wake_display
+      - lambda: |-
+          int pos = 0;
+          for (int i = 0; i < settings_group_count(4); i++) {
+            if (settings_group_type_at(4, i) == 38) { pos = i; break; }
+          }
+          id(menu_index) = 4;
+          id(group_item_index) = pos;
+          id(ui_context) = 3;
+      - script.execute: update_settings_labels
+      - lvgl.page.show: screen_navigation
+
+  # Confirmed from the Settings > System > Update submenu (apply_service ==
+  # 49, see submenu_apply) - locks the Progress screen and starts the
+  # flash. Actual progress/completion/failure feedback comes from
+  # ota_http_request's on_begin/on_progress/on_end/on_error/on_abort
+  # triggers (see the ota: platform: http_request block).
+  - id: update_start
+    then:
+      - script.execute: wake_display
+      - lambda: |-
+          id(update_in_progress) = true;
+          QueuedProgress qp{};
+          qp.entry_id = "fw_update";
+          qp.title = id(i18n_translations).translate("update.installing");
+          qp.value = 0.0f;
+          qp.color = "00FF00";
+          qp.led_mode = 0;
+          qp.value_blink = false;
+          id(progress_queue) = progress_queue_upsert(id(progress_queue), qp);
+          id(ui_context) = 9;
+          id(progress_queue_index) = 0;
+      - script.execute: refresh_progress
+      - lvgl.page.show: screen_progress
+      - update.perform: fw_update
 
   # First-boot/post-factory-reset setup wizard, and its re-invocation from
   # Settings > System > "Show Setup Guide" (see the settings-menu type-37
@@ -3484,21 +3743,31 @@ script:
           id(timer_queue_index) = menu_scroll_index(id(timer_queue_index), 1, total + 1);
       - script.execute: refresh_timer
 
+  # No-ops while update_in_progress - only the synthetic "fw_update" entry
+  # may be shown then, see refresh_progress and docs/OTA_UPDATE_PLAN.md.
   - id: progress_previous
     then:
-      - script.execute: wake_display
-      - lambda: |-
-          int total = (int) parse_progress_queue(id(progress_queue)).size();
-          id(progress_queue_index) = menu_scroll_index(id(progress_queue_index), -1, total);
-      - script.execute: refresh_progress
+      - if:
+          condition:
+            lambda: 'return !id(update_in_progress);'
+          then:
+            - script.execute: wake_display
+            - lambda: |-
+                int total = (int) parse_progress_queue(id(progress_queue)).size();
+                id(progress_queue_index) = menu_scroll_index(id(progress_queue_index), -1, total);
+            - script.execute: refresh_progress
 
   - id: progress_next
     then:
-      - script.execute: wake_display
-      - lambda: |-
-          int total = (int) parse_progress_queue(id(progress_queue)).size();
-          id(progress_queue_index) = menu_scroll_index(id(progress_queue_index), 1, total);
-      - script.execute: refresh_progress
+      - if:
+          condition:
+            lambda: 'return !id(update_in_progress);'
+          then:
+            - script.execute: wake_display
+            - lambda: |-
+                int total = (int) parse_progress_queue(id(progress_queue)).size();
+                id(progress_queue_index) = menu_scroll_index(id(progress_queue_index), 1, total);
+            - script.execute: refresh_progress
 
   # Runs every 500ms (see the interval: block). Handles what happens once a
   # timer/progress has finished: an optional status-LED blink (in the
@@ -4285,9 +4554,10 @@ script:
             # runs in the background regardless of ui_context, so Home
             # Assistant becoming reachable mid-wizard must not interrupt it.
             # wizard_finish is the only thing allowed to leave the wizard.
+            # Same reasoning for update_in_progress and the Progress screen.
             - if:
                 condition:
-                  lambda: 'return id(ui_context) != 11;'
+                  lambda: 'return id(ui_context) != 11 && !id(update_in_progress);'
                 then:
                   - if:
                       condition:
@@ -4323,45 +4593,52 @@ script:
             - lvgl.widget.hide: icon_mode_thermo
             - lvgl.widget.hide: icon_mode_home
 
+  # No-op while update_in_progress - see the Progress-screen lock in
+  # docs/OTA_UPDATE_PLAN.md. Reached from every screen's swipe-down, so this
+  # is the single choke point rather than guarding each caller.
   - id: open_settings
     then:
-      - lambda: |-
-          auto page_obj = [](esphome::lvgl::LvPageType *page) { return page->obj; };
-          lv_obj_t *target = page_obj(screen_navigation);
-          lv_obj_t *widgets[] = {
-              id(label_settings_title), id(label_menu_icon_prev2), id(label_menu_icon_prev),
-              id(label_menu_icon), id(label_menu_icon_next), id(label_menu_icon_next2),
-              id(label_menu_prev2), id(label_menu_prev), id(label_menu_current),
-              id(label_menu_next), id(label_menu_next2), id(label_menu_value)};
-          for (lv_obj_t *widget : widgets)
-            if (lv_obj_get_parent(widget) != target) lv_obj_set_parent(widget, target);
-          // Remember which real screen we came from so "Back" returns there,
-          // same as open_entity_overview. Entering from inside
-          // screen_navigation itself (e.g. "Settings" in the entity list)
-          // leaves the previously saved return screen untouched.
-          if (id(ui_context) == 1) {
-            id(entity_return_kind) = 1;
-            id(entity_return_index) = id(climate_index);
-          } else if (id(ui_context) == 5) {
-            id(entity_return_kind) = 2;
-            id(entity_return_index) = id(light_index);
-          } else if (id(ui_context) == 7) {
-            id(entity_return_kind) = 3;
-            id(entity_return_index) = id(cover_index);
-          } else if (id(ui_context) == 8) {
-            id(entity_return_kind) = 4;
-          } else if (id(ui_context) == 9) {
-            id(entity_return_kind) = 5;
-          } else if (id(ui_context) == 10) {
-            id(entity_return_kind) = 6;
-          }
-          id(thermostat_quick_stage) = 0;
-          id(ui_context) = 2;
-          id(menu_index) = 0;
-          id(group_item_index) = 0;
-      - script.execute: update_settings_labels
-      - lvgl.page.show:
-          id: screen_navigation
+      - if:
+          condition:
+            lambda: 'return !id(update_in_progress);'
+          then:
+            - lambda: |-
+                auto page_obj = [](esphome::lvgl::LvPageType *page) { return page->obj; };
+                lv_obj_t *target = page_obj(screen_navigation);
+                lv_obj_t *widgets[] = {
+                    id(label_settings_title), id(label_menu_icon_prev2), id(label_menu_icon_prev),
+                    id(label_menu_icon), id(label_menu_icon_next), id(label_menu_icon_next2),
+                    id(label_menu_prev2), id(label_menu_prev), id(label_menu_current),
+                    id(label_menu_next), id(label_menu_next2), id(label_menu_value)};
+                for (lv_obj_t *widget : widgets)
+                  if (lv_obj_get_parent(widget) != target) lv_obj_set_parent(widget, target);
+                // Remember which real screen we came from so "Back" returns there,
+                // same as open_entity_overview. Entering from inside
+                // screen_navigation itself (e.g. "Settings" in the entity list)
+                // leaves the previously saved return screen untouched.
+                if (id(ui_context) == 1) {
+                  id(entity_return_kind) = 1;
+                  id(entity_return_index) = id(climate_index);
+                } else if (id(ui_context) == 5) {
+                  id(entity_return_kind) = 2;
+                  id(entity_return_index) = id(light_index);
+                } else if (id(ui_context) == 7) {
+                  id(entity_return_kind) = 3;
+                  id(entity_return_index) = id(cover_index);
+                } else if (id(ui_context) == 8) {
+                  id(entity_return_kind) = 4;
+                } else if (id(ui_context) == 9) {
+                  id(entity_return_kind) = 5;
+                } else if (id(ui_context) == 10) {
+                  id(entity_return_kind) = 6;
+                }
+                id(thermostat_quick_stage) = 0;
+                id(ui_context) = 2;
+                id(menu_index) = 0;
+                id(group_item_index) = 0;
+            - script.execute: update_settings_labels
+            - lvgl.page.show:
+                id: screen_navigation
 
   - id: group_enter
     then:
@@ -4470,6 +4747,15 @@ script:
               break;
             }
             case 16: if (id(submenu_index) == 1) id(apply_service) = 7; break;
+            // 49 = start the update (only reachable when one is actually
+            // available and "Yes" was selected); 50 = manual "check now"
+            // when no update is known yet, pressing confirms straight
+            // away (nothing to accidentally trigger, same as Firmware/
+            // WiFi's plain read-only rows). See docs/OTA_UPDATE_PLAN.md.
+            case 38:
+              if (id(update_available)) { if (id(submenu_index) == 1) id(apply_service) = 49; }
+              else id(apply_service) = 50;
+              break;
             case 17: id(apply_service) = id(submenu_index) ? 23 : 22; break;
             case 18: id(apply_service) = 24; break;
             case 11: id(apply_service) = 25; break;
@@ -4596,6 +4882,12 @@ script:
           condition: {lambda: 'return id(apply_service) == 48;'}
           then: [{number.set: {id: notify_blink_led_brightness_num, value: !lambda 'return id(num_preview);'}}]
       - if:
+          condition: {lambda: 'return id(apply_service) == 49;'}
+          then: [script.execute: update_start]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 50;'}
+          then: [update.check: fw_update]
+      - if:
           condition:
             lambda: 'return id(thermostat_quick_stage) != 0;'
           then:
@@ -4703,6 +4995,11 @@ script:
               case 14: val = id(wifi_ssid_txt).state; break;
               case 15: val = id(fw_version).state; break;
               case 16: val = ""; break;
+              case 38:
+                val = id(update_available)
+                          ? id(update_latest_version)
+                          : id(i18n_translations).translate("update.up_to_date");
+                break;
               case 17:
                 val = id(i18n_translations).translate(id(led_enabled).state ? "common.on" : "common.off");
                 break;
@@ -4863,6 +5160,19 @@ script:
                 val = buf;
                 break;
               case 15: cur = id(fw_version).state; val = ""; break;
+              case 38: {
+                if (id(update_available)) {
+                  auto m = bool_menu_window(id(submenu_index),
+                                             id(i18n_translations).translate("common.no").c_str(),
+                                             id(i18n_translations).translate("common.yes_update").c_str());
+                  cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next;
+                  val = id(i18n_translations).translate("common.press_confirm");
+                } else {
+                  cur = id(i18n_translations).translate("update.up_to_date");
+                  val = "";
+                }
+                break;
+              }
               case 16: {
                 auto m = bool_menu_window(id(submenu_index),
                                            id(i18n_translations).translate("common.no").c_str(),
