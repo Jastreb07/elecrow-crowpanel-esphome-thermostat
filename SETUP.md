@@ -6,7 +6,7 @@ Thermostat Knob. For what the project is and what it looks like, see
 
 ## Requirements
 
-- Windows with Python 3.13+ and ESPHome 2026.6.5
+- Windows with Python 3.13+ and ESPHome 2026.7.2
 - Home Assistant with the target climate/light/cover entities
 - USB cable for the first flash
 - Wi-Fi credentials and ESPHome secrets in `secrets.yaml`
@@ -17,9 +17,9 @@ The current local setup uses:
 
 - Python 3.13.14
 - pip 26.1.2
-- ESPHome 2026.6.5
+- ESPHome 2026.7.2
 
-ESPHome 2026.6.5 requires Python `>=3.11,<3.15`, so Python 3.13.14 is a valid
+ESPHome 2026.7.2 requires Python `>=3.11,<3.15`, so Python 3.13.14 is a valid
 runtime for this project.
 
 ### Install Python
@@ -67,7 +67,7 @@ python -m pip --version
 Install or upgrade ESPHome globally in the Python 3.13 user installation:
 
 ```powershell
-python -m pip install --upgrade esphome
+python -m pip install --upgrade "esphome==2026.7.2"
 ```
 
 Verify:
@@ -191,24 +191,16 @@ ESPHome install needed), using
 walks through Wi-Fi setup with Improv, the same "pick a network, type the
 password" step other ESP Web Tools installers use.
 
-The page lives in [`web-flasher/`](web-flasher). Its manifests
-(`manifest_240.json`, `manifest_480.json`) fetch `firmware.factory.bin`
-straight from `raw.githubusercontent.com`, not from wherever the page
-itself is hosted — pushing it to `master` is the only "deploy" step firmware
-needs.
+The page lives in the separate
+[web-flasher repository](https://github.com/Jastreb07/elecrow-crowpanel-esphome-thermostat-web).
+Firmware builds and complete ESP Web Tools manifests are published as assets
+of the latest GitHub Release. The web page requests them through the
+same-origin `/firmware.php` endpoint, which fetches the release assets
+server-side and avoids browser CORS restrictions. Firmware binaries therefore
+do not need to be copied into either Git repository.
 
-```powershell
-.\build.ps1
-git add web-flasher/firmware
-git commit -m "chore(web-flasher): update firmware binaries"
-git push
-```
-
-`build.ps1` compiles both boards and copies each board's
-`firmware.factory.bin` into `web-flasher/firmware/<board>/`. The page
-itself (`index.html` + manifests) is hosted on our own web space, not
-GitHub Pages — see [`web-flasher/README.md`](web-flasher/README.md) for
-the upload steps.
+See the [Web Flasher README](https://github.com/Jastreb07/elecrow-crowpanel-esphome-thermostat-web#readme)
+for development and deployment details.
 
 ## LVGL Preview
 
@@ -439,7 +431,7 @@ thermostat/
 |-- secrets.yaml.example     # Template for Wi-Fi/API/OTA secrets
 |-- README.md                # Product overview
 |-- SETUP.md                 # This file: build, flash, and configure
-|-- build.ps1                # Compiles both boards, exports firmware.factory.bin to web-flasher/firmware/
+|-- build.ps1                # Compiles both boards and exports local firmware builds
 |-- .esphome/                # esphome compile output cache (git-ignored)
 |-- custom_components/
 |   `-- smart_thermostat_knob/ # Git-ignored: own repo (elecrow-crowpanel-esphome-thermostat-integration),
@@ -458,11 +450,7 @@ thermostat/
 |-- 3D Print/                # Printable knob/enclosure STL files, per board
 |-- integration/
 |   `-- README.md            # Pointer to the integration's own repository
-|-- web-flasher/             # Browser-based flasher (ESP Web Tools), hosted on our own web space
-|   |-- index.html
-|   |-- manifest_240.json
-|   |-- manifest_480.json
-|   `-- firmware/            # Flashable .bin parts per board (see web-flasher/README.md)
+|-- web-flasher/             # Separate browser-flasher checkout for local side-by-side development
 `-- components/
     |-- cst826/                 # Local CST826 touch component
     |-- ha_climate_controller/  # Variable-length Home Assistant climate list

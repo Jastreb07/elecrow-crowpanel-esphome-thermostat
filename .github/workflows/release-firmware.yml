@@ -76,8 +76,8 @@ jobs:
       # (thermostat_240-/thermostat_480-, matching the substitution of the
       # same name in the board YAMLs), computes SHA256 checksums for all
       # four .bin files, adjusts the complete ESP Web Tools manifest generated
-      # by build-action to use the final "latest/download" factory-binary URL
-      # and the project's Improv settings, and
+      # by build-action to use the final release factory-binary URL and the
+      # project's Improv settings, and
       # generates ota-manifest.json (ESPHome's update:-component schema,
       # which build-action does not produce) with a freshly computed MD5.
       - name: Assemble release assets
