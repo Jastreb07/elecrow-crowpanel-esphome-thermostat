@@ -318,7 +318,12 @@ update:
   - platform: http_request
     id: fw_update
     name: "${friendly_name} Update"
-    source: https://raw.githubusercontent.com/Jastreb07/elecrow-crowpanel-esphome-thermostat/master/firmware/${device_name}/ota-manifest.json
+    # Stable "latest release" URL (GitHub redirects to the actual asset -
+    # http_request: follows redirects by default) instead of a raw.
+    # githubusercontent.com path, so the device always finds the newest
+    # release without ever needing to be reflashed just to update this URL.
+    # See docs/GITHUB_RELEASES_PLAN.md.
+    source: https://github.com/Jastreb07/elecrow-crowpanel-esphome-thermostat/releases/latest/download/${release_asset_board}-ota-manifest.json
     update_interval: 6h
     on_update_available:
       then:

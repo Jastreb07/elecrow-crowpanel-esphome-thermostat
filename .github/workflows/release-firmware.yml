@@ -1,0 +1,142 @@
+name: Release firmware
+
+# See docs/GITHUB_RELEASES_PLAN.md for the full design/reasoning. Trigger:
+# every push to master, but the actual build+release only runs if
+# firmware/version.txt names a version that doesn't have a release yet -
+# so merging unrelated changes (that didn't bump the version) is a no-op.
+on:
+  push:
+    branches: [master]
+  workflow_dispatch: {} # for testing without a real push, see the plan doc
+
+permissions:
+  contents: write # to create the release + upload assets
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        run: echo "version=$(cat firmware/version.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if this version was already released
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # secrets.yaml is gitignored (never committed) - !secret values are
+      # only resolved at compile time. wifi_*/wifi_ap_password are never
+      # actually used by the shipped firmware (Wi-Fi is configured after
+      # flashing via Improv Serial); ota_password protects the *local*
+      # network ota:-platform-esphome debug receiver, not the self-update
+      # mechanism, so it comes from a real repo secret rather than a
+      # public placeholder.
+      - name: Write secrets.yaml
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          cat > secrets.yaml <<EOF
+          wifi_ssid: "placeholder"
+          wifi_password: "placeholder"
+          wifi_ap_password: "placeholder"
+          ota_password: "${{ secrets.OTA_PASSWORD }}"
+          EOF
+
+      - name: Build thermostat_240
+        if: steps.check.outputs.exists == 'false'
+        id: build-240
+        uses: esphome/build-action@v7.0.0
+        with:
+          yaml-file: thermostat_240.yaml
+          version: latest
+          complete-manifest: false
+          release-summary: "Smart Thermostat Knob ${{ steps.version.outputs.version }}"
+          release-url: "https://github.com/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.version }}"
+
+      - name: Build thermostat_480
+        if: steps.check.outputs.exists == 'false'
+        id: build-480
+        uses: esphome/build-action@v7.0.0
+        with:
+          yaml-file: thermostat_480.yaml
+          version: latest
+          complete-manifest: false
+          release-summary: "Smart Thermostat Knob ${{ steps.version.outputs.version }}"
+          release-url: "https://github.com/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.version }}"
+
+      # Renames both boards' outputs with their release_asset_board prefix
+      # (thermostat_240-/thermostat_480-, matching the substitution of the
+      # same name in the board YAMLs), computes SHA256 checksums for all
+      # four .bin files, patches manifest.json's parts[].path to the final
+      # "latest/download" asset URL (done unconditionally rather than
+      # trusting complete-manifest/release-url alone to have produced it -
+      # see the "still open" point in docs/GITHUB_RELEASES_PLAN.md), and
+      # generates ota-manifest.json (ESPHome's update:-component schema,
+      # which build-action does not produce) with a freshly computed MD5.
+      - name: Assemble release assets
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          repo_base="https://github.com/${{ github.repository }}/releases/latest/download"
+          version="${{ steps.version.outputs.version }}"
+
+          assemble_board() {
+            local build_dir="$1" asset_board="$2" display_name="$3"
+
+            cp "$build_dir"/*.factory.bin "release-assets/${asset_board}-firmware.factory.bin"
+            cp "$build_dir"/*.ota.bin "release-assets/${asset_board}-firmware.ota.bin"
+
+            jq --arg url "${repo_base}/${asset_board}-firmware.factory.bin" \
+              '.builds[].parts[].path = $url' \
+              "$build_dir/manifest.json" > "release-assets/${asset_board}-manifest.json"
+
+            local md5
+            md5=$(md5sum "release-assets/${asset_board}-firmware.ota.bin" | cut -d' ' -f1)
+            jq -n \
+              --arg name "$display_name" \
+              --arg version "$version" \
+              --arg path "${repo_base}/${asset_board}-firmware.ota.bin" \
+              --arg md5 "$md5" \
+              '{name: $name, version: $version, builds: [{chipFamily: "ESP32-S3", ota: {path: $path, md5: $md5}}]}' \
+              > "release-assets/${asset_board}-ota-manifest.json"
+          }
+
+          assemble_board "${{ steps.build-240.outputs.name }}" "thermostat_240" "Smart Thermostat Knob (CrowPanel 1.28\" 240x240)"
+          assemble_board "${{ steps.build-480.outputs.name }}" "thermostat_480" "Smart Thermostat Knob (CrowPanel 2.1\" 480x480)"
+
+          (cd release-assets && sha256sum ./*.bin > checksums.txt)
+
+      - name: Extract release notes from CHANGELOG.md
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          set -euo pipefail
+          awk -v ver="${{ steps.version.outputs.version }}" '
+            BEGIN { found = 0 }
+            /^## / {
+              if (found) exit
+              if ($0 == "## " ver) { found = 1; next }
+              next
+            }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "Smart Thermostat Knob ${{ steps.version.outputs.version }}" > release-notes.md
+          fi
+
+      - name: Create GitHub Release
+        if: steps.check.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v${{ steps.version.outputs.version }}"
+          name: "v${{ steps.version.outputs.version }}"
+          body_path: release-notes.md
+          files: release-assets/*
