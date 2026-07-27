@@ -5,6 +5,15 @@ here. The version headings below match `firmware/version.txt` and the
 GitHub Release tags (`v<version>`) - the release workflow extracts the
 section for the version being released as the release notes body.
 
+## 1.0.2
+
+- Fixed the release workflow not actually applying the firmware version to
+  compiled builds (`esphome/build-action` has no `substitutions` input, so
+  the override was silently ignored) - compiled firmware and both release
+  manifests were still reporting `0.0.0` instead of the real version.
+- The web flasher's "Connect and Install" dialog now shows a readable
+  release name instead of the raw internal project id.
+
 ## 1.0.1
 
 - Fixed the update entity reporting the ESPHome core version instead of the
