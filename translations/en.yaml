@@ -31,7 +31,10 @@ reboot:
 
 update:
   available: "Update %s available"
+  press_open: "Press = show update"
   up_to_date: "Up to date"
+  ignore: "Ignore"
+  ignored: "Update ignored"
   installing: "Installing update..."
   done: "Update finished"
   failed: "Update failed"

@@ -7,11 +7,11 @@
 #
 # Usage:
 #   python tools\lvgl_preview.py          -> watch mode with a local server at
-#       http://localhost:8123/tools/preview.html. The browser reloads whenever
-#       the 480/240/common YAML files change. Stop with Ctrl+C.
+#       http://localhost:8123/tools/preview/preview.html. The browser reloads
+#       whenever the 480/240/common YAML files change. Stop with Ctrl+C.
 #   python tools\lvgl_preview.py --once   -> generate once
 #
-# Output: tools\preview.html
+# Output: tools\preview\preview.html (gitignored - local dev artifact only)
 
 import colorsys
 import copy
@@ -33,8 +33,9 @@ import yaml
 HERE = Path(__file__).resolve().parent
 PROJECT = HERE.parent
 COMMON_FILE = PROJECT / "thermostat_common.yaml"
-OUT_FILE = HERE / "preview.html"
-VERSION_FILE = HERE / "preview_version.txt"
+PREVIEW_DIR = HERE / "preview"
+OUT_FILE = PREVIEW_DIR / "preview.html"
+VERSION_FILE = PREVIEW_DIR / "preview_version.txt"
 PORT = 8123
 
 # Board variants: name -> (YAML file, native panel size)
@@ -481,13 +482,13 @@ def generate():
 <title>LVGL Preview - thermostat_480 / thermostat_240</title>
 <style>
  @font-face{{font-family:'Rajdhani';font-weight:700;
-   src:url('../assets/fonts/Rajdhani-Bold.ttf') format('truetype')}}
+   src:url('../../assets/fonts/Rajdhani-Bold.ttf') format('truetype')}}
  @font-face{{font-family:'Rajdhani';font-weight:600;
-   src:url('../assets/fonts/Rajdhani-SemiBold.ttf') format('truetype')}}
+   src:url('../../assets/fonts/Rajdhani-SemiBold.ttf') format('truetype')}}
  @font-face{{font-family:'Rajdhani';font-weight:500;
-   src:url('../assets/fonts/Rajdhani-Medium.ttf') format('truetype')}}
+   src:url('../../assets/fonts/Rajdhani-Medium.ttf') format('truetype')}}
  @font-face{{font-family:'Rajdhani';font-weight:400;
-   src:url('../assets/fonts/Rajdhani-Regular.ttf') format('truetype')}}
+   src:url('../../assets/fonts/Rajdhani-Regular.ttf') format('truetype')}}
  @font-face{{font-family:'Material Design Icons';
    src:url('https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/fonts/materialdesignicons-webfont.woff2') format('woff2')}}
  body{{background:#1b1b1b;color:#ddd;font-family:'Rajdhani','Segoe UI',sans-serif;
@@ -677,6 +678,7 @@ poll();
     # Never expose a half-written HTML document to the browser. Publish the
     # completed page first and the version marker last, so a detected version
     # always points to a fully available preview.
+    PREVIEW_DIR.mkdir(exist_ok=True)
     atomic_write(OUT_FILE, html)
     atomic_write(VERSION_FILE, version)
     print(f"[{time.strftime('%H:%M:%S')}] preview.html updated")
@@ -765,7 +767,7 @@ def watch():
     stop_existing_watchers()
     generate()
     serve()
-    url = f"http://localhost:{PORT}/tools/preview.html"
+    url = f"http://localhost:{PORT}/tools/preview/preview.html"
     print(f"Watcher running: {url}  (Ctrl+C stops it)")
     if "--no-browser" not in sys.argv:
         webbrowser.open(url)
