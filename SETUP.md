@@ -216,7 +216,7 @@ Start the live watcher:
 python tools\lvgl_preview.py
 ```
 
-The preview opens at `http://localhost:8123/tools/preview.html`. YAML
+The preview opens at `http://localhost:8123/tools/preview/preview.html`. YAML
 changes are detected automatically and the browser reloads. Stop the
 watcher with `Ctrl+C`.
 
@@ -441,8 +441,9 @@ thermostat/
 |   `-- UI_CONCEPT.md        # Current UI model and interaction notes
 |-- tools/
 |   |-- lvgl_preview.py      # Local HTML preview generator
-|   |-- preview.html         # Generated preview
-|   `-- preview_version.txt  # Reload marker for the preview watcher
+|   `-- preview/             # Generated preview output (git-ignored)
+|       |-- preview.html         # Generated preview
+|       `-- preview_version.txt  # Reload marker for the preview watcher
 |-- assets/
 |   |-- icons/
 |   `-- fonts/
