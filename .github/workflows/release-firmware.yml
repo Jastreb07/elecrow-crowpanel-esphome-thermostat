@@ -82,6 +82,12 @@ jobs:
           ota_password: "${{ secrets.OTA_PASSWORD }}"
           EOF
 
+      # firmware_version drives the esphome: project: version: block, which
+      # is what update:'s current_version reports after flashing - without
+      # this override it would stay pinned to the "0.0.0-dev" local-build
+      # placeholder, and current_version would never match a real release's
+      # latest_version, so the device would keep reporting the same update
+      # as available forever, even right after successfully installing it.
       - name: Build thermostat_240
         id: build-240
         uses: esphome/build-action@v7.0.0
@@ -91,6 +97,8 @@ jobs:
           complete-manifest: true
           release-summary: "Smart Thermostat Knob ${{ steps.version.outputs.version }}"
           release-url: "https://github.com/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.version }}"
+          substitutions: |
+            firmware_version=${{ steps.version.outputs.version }}
 
       - name: Build thermostat_480
         id: build-480
@@ -101,6 +109,8 @@ jobs:
           complete-manifest: true
           release-summary: "Smart Thermostat Knob ${{ steps.version.outputs.version }}"
           release-url: "https://github.com/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.version }}"
+          substitutions: |
+            firmware_version=${{ steps.version.outputs.version }}
 
       # Renames both boards' outputs with their release_asset_board prefix
       # (thermostat_240-/thermostat_480-, matching the substitution of the
