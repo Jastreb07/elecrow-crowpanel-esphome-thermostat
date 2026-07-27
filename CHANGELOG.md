@@ -5,6 +5,12 @@ here. The version headings below match `firmware/version.txt` and the
 GitHub Release tags (`v<version>`) - the release workflow extracts the
 section for the version being released as the release notes body.
 
+## 1.0.3
+
+- Fixed the web flasher's "Connect and Install" dialog showing the version
+  twice ("... v1.0.2 1.0.2?") - the release name no longer duplicates the
+  version that the dialog already appends on its own.
+
 ## 1.0.2
 
 - Fixed the release workflow not actually applying the firmware version to
