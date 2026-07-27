@@ -5,6 +5,17 @@ here. The version headings below match `firmware/version.txt` and the
 GitHub Release tags (`v<version>`) - the release workflow extracts the
 section for the version being released as the release notes body.
 
+## 1.0.1
+
+- Fixed the update entity reporting the ESPHome core version instead of the
+  actual firmware version, which made "Update available" reappear right
+  after a successful install instead of clearing.
+- The update-available notification now shows a "Press = show update"
+  subtitle, and its LED lights up steady instead of blinking.
+- Settings > System > Update gains an "Ignore" choice: dismissing a
+  version persists across reboots and silences the notification/LED for
+  that release until a newer one is published.
+
 ## 1.0.0
 
 Initial public release.
