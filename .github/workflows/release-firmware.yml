@@ -57,7 +57,7 @@ jobs:
         with:
           yaml-file: thermostat_240.yaml
           version: latest
-          complete-manifest: false
+          complete-manifest: true
           release-summary: "Smart Thermostat Knob ${{ steps.version.outputs.version }}"
           release-url: "https://github.com/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.version }}"
 
@@ -68,16 +68,16 @@ jobs:
         with:
           yaml-file: thermostat_480.yaml
           version: latest
-          complete-manifest: false
+          complete-manifest: true
           release-summary: "Smart Thermostat Knob ${{ steps.version.outputs.version }}"
           release-url: "https://github.com/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.version }}"
 
       # Renames both boards' outputs with their release_asset_board prefix
       # (thermostat_240-/thermostat_480-, matching the substitution of the
       # same name in the board YAMLs), computes SHA256 checksums for all
-      # four .bin files, generates an ESP Web Tools manifest with the final
-      # "latest/download" factory-binary URL (without depending on the
-      # build action's internal manifest shape), and
+      # four .bin files, adjusts the complete ESP Web Tools manifest generated
+      # by build-action to use the final "latest/download" factory-binary URL
+      # and the project's Improv settings, and
       # generates ota-manifest.json (ESPHome's update:-component schema,
       # which build-action does not produce) with a freshly computed MD5.
       - name: Assemble release assets
@@ -94,22 +94,14 @@ jobs:
             cp "$build_dir"/*.factory.bin "release-assets/${asset_board}-firmware.factory.bin"
             cp "$build_dir"/*.ota.bin "release-assets/${asset_board}-firmware.ota.bin"
 
-            jq -n \
-              --arg name "$display_name" \
-              --arg version "$version" \
-              --arg path "${repo_base}/${asset_board}-firmware.factory.bin" \
-              '{
-                name: $name,
-                version: $version,
-                new_install_prompt_erase: true,
-                new_install_improv_wait_time: 30,
-                builds: [{
-                  chipFamily: "ESP32-S3",
-                  improv: true,
-                  parts: [{path: $path, offset: 0}]
-                }]
-              }' \
-              > "release-assets/${asset_board}-manifest.json"
+            jq --arg url "${repo_base}/${asset_board}-firmware.factory.bin" \
+              '
+                .new_install_prompt_erase = true
+                | .new_install_improv_wait_time = 30
+                | .builds[].improv = true
+                | .builds[].parts[].path = $url
+              ' \
+              "$build_dir/manifest.json" > "release-assets/${asset_board}-manifest.json"
 
             local md5
             md5=$(md5sum "release-assets/${asset_board}-firmware.ota.bin" | cut -d' ' -f1)
