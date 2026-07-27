@@ -84,10 +84,20 @@ jobs:
 
       # firmware_version drives the esphome: project: version: block, which
       # is what update:'s current_version reports after flashing - without
-      # this override it would stay pinned to the "0.0.0-dev" local-build
+      # it, current_version stays pinned to the "0.0.0" local-build
       # placeholder, and current_version would never match a real release's
       # latest_version, so the device would keep reporting the same update
       # as available forever, even right after successfully installing it.
+      # esphome/build-action@v7.0.0 has no "substitutions" input (verified
+      # against its actual entrypoint.py/action.yml - it only forwards
+      # yaml-file/version/release-summary/release-url to `esphome compile`),
+      # so the override has to happen by editing the checked-out YAML itself
+      # before the build, in this disposable CI checkout only.
+      - name: Set firmware_version substitution for this release
+        run: |
+          sed -i "s/firmware_version: \"0.0.0\"/firmware_version: \"${{ steps.version.outputs.version }}\"/" thermostat_common.yaml
+          grep -n 'firmware_version:' thermostat_common.yaml
+
       - name: Build thermostat_240
         id: build-240
         uses: esphome/build-action@v7.0.0
@@ -97,8 +107,6 @@ jobs:
           complete-manifest: true
           release-summary: "Smart Thermostat Knob ${{ steps.version.outputs.version }}"
           release-url: "https://github.com/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.version }}"
-          substitutions: |
-            firmware_version=${{ steps.version.outputs.version }}
 
       - name: Build thermostat_480
         id: build-480
@@ -109,8 +117,6 @@ jobs:
           complete-manifest: true
           release-summary: "Smart Thermostat Knob ${{ steps.version.outputs.version }}"
           release-url: "https://github.com/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.version }}"
-          substitutions: |
-            firmware_version=${{ steps.version.outputs.version }}
 
       # Renames both boards' outputs with their release_asset_board prefix
       # (thermostat_240-/thermostat_480-, matching the substitution of the
@@ -139,11 +145,17 @@ jobs:
             # in (the ESPHome project id, e.g. "jastreb07.thermostat_knob"),
             # which is meant to be a machine-readable namespaced identifier
             # (esphome/core/config.py's valid_project_name only requires
-            # exactly one "."), not a user-facing label.
+            # exactly one "."), not a user-facing label. .version is forced
+            # to the same $version used everywhere else in this job as a
+            # second safeguard, independent of whether the compiled project
+            # version came out right (build-action fills it from the
+            # compiled binary's own project_version otherwise).
             jq --arg url "${repo_base}/${asset_board}-firmware.factory.bin" \
                --arg name "${display_name} v${version}" \
+               --arg version "$version" \
               '
                 .name = $name
+                | .version = $version
                 | .new_install_prompt_erase = true
                 | .new_install_improv_wait_time = 30
                 | .builds[].improv = true
