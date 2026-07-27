@@ -1,9 +1,9 @@
 name: Release firmware
 
 # See docs/GITHUB_RELEASES_PLAN.md for the full design/reasoning. Trigger:
-# every push to master, but the actual build+release only runs if
-# firmware/version.txt names a version that doesn't have a release yet -
-# so merging unrelated changes (that didn't bump the version) is a no-op.
+# every push to master, but the workflow stops immediately with a failure if
+# firmware/version.txt names a version that already has a release. The failed
+# run also triggers GitHub's configured Actions email notifications.
 on:
   push:
     branches: [master]
@@ -22,15 +22,15 @@ jobs:
         id: version
         run: echo "version=$(cat firmware/version.txt)" >> "$GITHUB_OUTPUT"
 
-      - name: Skip if this version was already released
-        id: check
+      - name: Abort if this version was already released
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+
           if gh release view "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::error title=Version already released::Firmware version ${{ steps.version.outputs.version }} already exists as GitHub release v${{ steps.version.outputs.version }}. Increase firmware/version.txt before merging to master."
+            exit 1
           fi
 
       # secrets.yaml is gitignored (never committed) - !secret values are
@@ -41,7 +41,6 @@ jobs:
       # mechanism, so it comes from a real repo secret rather than a
       # public placeholder.
       - name: Write secrets.yaml
-        if: steps.check.outputs.exists == 'false'
         run: |
           cat > secrets.yaml <<EOF
           wifi_ssid: "placeholder"
@@ -51,7 +50,6 @@ jobs:
           EOF
 
       - name: Build thermostat_240
-        if: steps.check.outputs.exists == 'false'
         id: build-240
         uses: esphome/build-action@v7.0.0
         with:
@@ -62,7 +60,6 @@ jobs:
           release-url: "https://github.com/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.version }}"
 
       - name: Build thermostat_480
-        if: steps.check.outputs.exists == 'false'
         id: build-480
         uses: esphome/build-action@v7.0.0
         with:
@@ -81,7 +78,6 @@ jobs:
       # generates ota-manifest.json (ESPHome's update:-component schema,
       # which build-action does not produce) with a freshly computed MD5.
       - name: Assemble release assets
-        if: steps.check.outputs.exists == 'false'
         run: |
           set -euo pipefail
           mkdir -p release-assets
@@ -120,7 +116,6 @@ jobs:
           (cd release-assets && sha256sum ./*.bin > checksums.txt)
 
       - name: Extract release notes from CHANGELOG.md
-        if: steps.check.outputs.exists == 'false'
         run: |
           set -euo pipefail
           awk -v ver="${{ steps.version.outputs.version }}" '
@@ -137,7 +132,6 @@ jobs:
           fi
 
       - name: Create GitHub Release
-        if: steps.check.outputs.exists == 'false'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: "v${{ steps.version.outputs.version }}"
