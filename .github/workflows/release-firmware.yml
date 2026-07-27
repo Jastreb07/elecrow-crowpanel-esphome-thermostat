@@ -76,9 +76,8 @@ jobs:
       # (thermostat_240-/thermostat_480-, matching the substitution of the
       # same name in the board YAMLs), computes SHA256 checksums for all
       # four .bin files, adjusts the complete ESP Web Tools manifest generated
-      # by build-action to use the CORS-enabled raw GitHub factory-binary URL
-      # and the project's Improv settings, synchronizes the browser-flasher
-      # files into /firmware, and
+      # by build-action to use the final release factory-binary URL and the
+      # project's Improv settings, and
       # generates ota-manifest.json (ESPHome's update:-component schema,
       # which build-action does not produce) with a freshly computed MD5.
       - name: Assemble release assets
@@ -87,7 +86,6 @@ jobs:
           set -euo pipefail
           mkdir -p release-assets
           repo_base="https://github.com/${{ github.repository }}/releases/latest/download"
-          raw_base="https://raw.githubusercontent.com/${{ github.repository }}/master/firmware"
           version="${{ steps.version.outputs.version }}"
 
           assemble_board() {
@@ -95,19 +93,15 @@ jobs:
 
             cp "$build_dir"/*.factory.bin "release-assets/${asset_board}-firmware.factory.bin"
             cp "$build_dir"/*.ota.bin "release-assets/${asset_board}-firmware.ota.bin"
-            mkdir -p "firmware/${asset_board}"
-            cp "$build_dir"/*.factory.bin "firmware/${asset_board}/firmware.factory.bin"
 
-            jq --arg url "${raw_base}/${asset_board}/firmware.factory.bin" \
+            jq --arg url "${repo_base}/${asset_board}-firmware.factory.bin" \
               '
                 .new_install_prompt_erase = true
                 | .new_install_improv_wait_time = 30
                 | .builds[].improv = true
                 | .builds[].parts[].path = $url
               ' \
-              "$build_dir/manifest.json" > "firmware/${asset_board}/manifest.json"
-            cp "firmware/${asset_board}/manifest.json" \
-              "release-assets/${asset_board}-manifest.json"
+              "$build_dir/manifest.json" > "release-assets/${asset_board}-manifest.json"
 
             local md5
             md5=$(md5sum "release-assets/${asset_board}-firmware.ota.bin" | cut -d' ' -f1)
@@ -150,16 +144,3 @@ jobs:
           name: "v${{ steps.version.outputs.version }}"
           body_path: release-notes.md
           files: release-assets/*
-
-      - name: Publish browser-flasher firmware
-        if: steps.check.outputs.exists == 'false'
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f firmware/thermostat_240 firmware/thermostat_480
-          if git diff --cached --quiet; then
-            exit 0
-          fi
-          git commit -m "Update browser-flasher firmware to v${{ steps.version.outputs.version }}"
-          git push
