@@ -133,9 +133,18 @@ jobs:
             cp "$build_dir"/*.factory.bin "release-assets/${asset_board}-firmware.factory.bin"
             cp "$build_dir"/*.ota.bin "release-assets/${asset_board}-firmware.ota.bin"
 
+            # .name drives the esp-web-tools install dialog's title (see
+            # install-dialog.ts's _renderDashboard(), heading = manifest.name)
+            # - without this override it stays whatever build-action filled
+            # in (the ESPHome project id, e.g. "jastreb07.thermostat_knob"),
+            # which is meant to be a machine-readable namespaced identifier
+            # (esphome/core/config.py's valid_project_name only requires
+            # exactly one "."), not a user-facing label.
             jq --arg url "${repo_base}/${asset_board}-firmware.factory.bin" \
+               --arg name "${display_name} v${version}" \
               '
-                .new_install_prompt_erase = true
+                .name = $name
+                | .new_install_prompt_erase = true
                 | .new_install_improv_wait_time = 30
                 | .builds[].improv = true
                 | .builds[].parts[].path = $url
