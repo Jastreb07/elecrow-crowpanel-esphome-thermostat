@@ -235,7 +235,15 @@ api:
 # ------------------------------------------------------------------
 http_request:
   useragent: smart-thermostat-knob
-  timeout: 10s
+  # GitHub's releases/latest/download endpoint redirects to a signed asset URL.
+  # Its Location and security headers can exceed ESPHome's 512-byte ESP-IDF
+  # default receive buffer, causing "HTTP_CLIENT: Out of buffer" before the
+  # manifest or OTA image is downloaded.
+  buffer_size_rx: 4096
+  buffer_size_tx: 1024
+  follow_redirects: true
+  redirect_limit: 5
+  timeout: 30s
 
 ota:
   - platform: esphome
