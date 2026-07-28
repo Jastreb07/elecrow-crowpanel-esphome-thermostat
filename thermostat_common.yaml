@@ -191,10 +191,22 @@ psram:
 # ------------------------------------------------------------------
 # Network
 # ------------------------------------------------------------------
+
+# No static ssid:/password: here on purpose - this device is meant to be
+# provisioned entirely through Improv (see improv_serial: below) or the
+# ap:/captive_portal: fallback, never a compiled-in network. That used to
+# matter for a subtler reason too: WiFiComponent::start() (wifi_component.cpp)
+# keys the flash preference that stores Improv-saved credentials by
+# App.get_config_version_hash() *whenever a static ssid: is configured*
+# (has_sta() == true), falling back to a fixed constant key only when it
+# isn't. Since the config hash changes with every firmware build, having a
+# static ssid: here meant every single update - local reflash, web flasher,
+# or OTA alike - looked up the saved credentials under a brand new, empty
+# slot and silently fell back to the compiled placeholder network. Leaving
+# ssid:/password: unset keeps that preference key constant across builds,
+# so Improv-provisioned credentials actually survive updates.
 wifi:
   id: wifi_id
-  ssid: !secret wifi_ssid
-  password: !secret wifi_password
   on_connect:
     - script.execute: refresh_connection
   on_disconnect:
@@ -205,8 +217,7 @@ wifi:
 
 # Lets the web flasher (web-flasher/) offer a "configure Wi-Fi" step over
 # USB-serial right after installing, the same way esphome.github.io/esp-web-tools
-# does for other devices. Independent of the compiled-in network above: Improv
-# just stores whatever network the browser sends and takes priority on connect.
+# does for other devices.
 improv_serial:
 
 captive_portal:
