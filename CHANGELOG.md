@@ -5,6 +5,15 @@ here. The version headings below match `firmware/version.txt` and the
 GitHub Release tags (`v<version>`) - the release workflow extracts the
 section for the version being released as the release notes body.
 
+## 1.0.3
+
+- Replaced the frozen Progress screen during OTA updates with the Notify
+  screen showing "Bitte warten" / "Update läuft..." and a steady yellow
+  LED - the download still blocks the display for its duration (an
+  ESPHome core limitation, not fixable from here), but the screen now
+  reliably shows this message before that happens instead of sometimes
+  freezing mid-transition.
+
 ## 1.0.2
 
 No functional changes - version bump to test the on-device OTA
