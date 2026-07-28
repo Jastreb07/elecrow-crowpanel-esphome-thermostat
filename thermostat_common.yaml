@@ -111,7 +111,7 @@ esphome:
   # build_version_info_(), ESPHOME_PROJECT_NAME), so the identifier half is
   # kept human-readable to avoid that popup showing raw_snake_case text.
   project:
-    name: "jastreb07.Smart Thermostat Knob"
+    name: "Vexur-Software.Smart Thermostat Knob"
     version: "${firmware_version}"
   includes:
     - thermostat_helpers.h
