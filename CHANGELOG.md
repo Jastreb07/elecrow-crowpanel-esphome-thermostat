@@ -5,6 +5,17 @@ here. The version headings below match `firmware/version.txt` and the
 GitHub Release tags (`v<version>`) - the release workflow extracts the
 section for the version being released as the release notes body.
 
+## 1.0.5
+
+- Fixed Wi-Fi credentials set via Improv (Setup Wizard / web flasher) not
+  surviving firmware updates - ESPHome keys the saved-credentials flash slot
+  by the compiled config's version hash whenever a static `ssid:`/`password:`
+  is configured, and that hash changes with every release, so each update
+  looked up an empty slot and silently fell back to the placeholder network.
+  Removed the static network from `wifi:` so the lookup key stays constant
+  across builds. **Requires re-entering Wi-Fi once more after this update**
+  (the key changes one final time); it then survives all future updates.
+
 ## 1.0.4
 
 No functional changes - version bump to verify the OTA self-update flow
