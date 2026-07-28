@@ -5,6 +5,12 @@ here. The version headings below match `firmware/version.txt` and the
 GitHub Release tags (`v<version>`) - the release workflow extracts the
 section for the version being released as the release notes body.
 
+## 1.0.7
+
+- Renamed the project namespace shown in the Improv "Connected to ..."
+  popup from "jastreb07." to "Vexur-Software." to match the product's
+  branding.
+
 ## 1.0.6
 
 - The web flasher's "Connected to ..." popup (shown for an already-flashed
