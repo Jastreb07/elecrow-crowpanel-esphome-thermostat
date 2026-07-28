@@ -278,77 +278,73 @@ ota:
     password: !secret ota_password
   - platform: http_request
     id: ota_http_request
-    on_begin:
-      then:
-        - lambda: |-
-            QueuedProgress qp{};
-            qp.entry_id = "fw_update";
-            qp.title = id(i18n_translations).translate("update.installing");
-            qp.value = 0.0f;
-            qp.color = "00FF00";
-            qp.led_mode = 0;
-            qp.value_blink = false;
-            id(progress_queue) = progress_queue_upsert(id(progress_queue), qp);
-            if (id(ui_context) == 9) id(refresh_progress).execute();
-    on_progress:
-      then:
-        - lambda: |-
-            QueuedProgress qp{};
-            qp.entry_id = "fw_update";
-            qp.title = id(i18n_translations).translate("update.installing");
-            qp.value = x;
-            qp.color = "00FF00";
-            qp.led_mode = 0;
-            qp.value_blink = false;
-            id(progress_queue) = progress_queue_upsert(id(progress_queue), qp);
-            if (id(ui_context) == 9) id(refresh_progress).execute();
-    on_end:
-      then:
-        - lambda: |-
-            QueuedProgress qp{};
-            qp.entry_id = "fw_update";
-            qp.title = id(i18n_translations).translate("update.done");
-            qp.value = 100.0f;
-            qp.color = "00FF00";
-            qp.led_mode = 0;
-            qp.value_blink = false;
-            id(progress_queue) = progress_queue_upsert(id(progress_queue), qp);
-            if (id(ui_context) == 9) id(refresh_progress).execute();
-            // The device reboots itself right after this (ota_http_request's
-            // standard behavior on a successful flash) - update_in_progress
-            // is a restore_value: false global, so it comes back false on
-            // its own; nothing further to unlock here.
+    # No on_begin/on_progress/on_end anymore - the download blocks ESPHome's
+    # main loop for its whole duration (see update_start below), so nothing
+    # written here would ever actually get painted to the display before
+    # either a reboot (success) or on_error/on_abort firing. Those two are
+    # the only outcomes where the device stays up and the notify screen
+    # needs to reflect what happened.
     on_error:
       then:
         - lambda: |-
-            QueuedProgress qp{};
-            qp.entry_id = "fw_update";
-            qp.title = id(i18n_translations).translate("update.failed");
-            qp.value = 0.0f;
-            qp.color = "00FF00";
-            qp.led_mode = 0;
-            qp.value_blink = false;
-            id(progress_queue) = progress_queue_upsert(id(progress_queue), qp);
-            if (id(ui_context) == 9) id(refresh_progress).execute();
+            QueuedNotify qn{};
+            qn.entry_id = "fw_update";
+            qn.title = id(i18n_translations).translate("update.failed");
+            qn.color = "FFFF00";
+            qn.led_mode = 0;
+            qn.priority = 2;
+            qn.value_blink = false;
+            auto items = parse_notify_queue(id(notify_queue));
+            std::string rebuilt;
+            for (auto &existing : items) {
+              bool is_target = existing.entry_id == "fw_update";
+              if (is_target) qn.seq = existing.seq;
+              if (!rebuilt.empty()) rebuilt += "\n";
+              rebuilt += serialize_notify_entry(is_target ? qn : existing);
+            }
+            id(notify_queue) = rebuilt;
+            if (id(ui_context) == 10) id(refresh_notify).execute();
             id(update_in_progress) = false;
             // Remove the entry from the underlying queue without a further
             // refresh - the screen keeps showing "Update failed" (the frame
             // just rendered above) until the user navigates away themselves.
-            id(progress_queue) = progress_queue_remove(id(progress_queue), "fw_update");
+            auto remaining = parse_notify_queue(id(notify_queue));
+            std::string without_entry;
+            for (auto &existing : remaining) {
+              if (existing.entry_id == "fw_update") continue;
+              if (!without_entry.empty()) without_entry += "\n";
+              without_entry += serialize_notify_entry(existing);
+            }
+            id(notify_queue) = without_entry;
     on_abort:
       then:
         - lambda: |-
-            QueuedProgress qp{};
-            qp.entry_id = "fw_update";
-            qp.title = id(i18n_translations).translate("update.cancelled");
-            qp.value = 0.0f;
-            qp.color = "00FF00";
-            qp.led_mode = 0;
-            qp.value_blink = false;
-            id(progress_queue) = progress_queue_upsert(id(progress_queue), qp);
-            if (id(ui_context) == 9) id(refresh_progress).execute();
+            QueuedNotify qn{};
+            qn.entry_id = "fw_update";
+            qn.title = id(i18n_translations).translate("update.cancelled");
+            qn.color = "FFFF00";
+            qn.led_mode = 0;
+            qn.priority = 2;
+            qn.value_blink = false;
+            auto items = parse_notify_queue(id(notify_queue));
+            std::string rebuilt;
+            for (auto &existing : items) {
+              bool is_target = existing.entry_id == "fw_update";
+              if (is_target) qn.seq = existing.seq;
+              if (!rebuilt.empty()) rebuilt += "\n";
+              rebuilt += serialize_notify_entry(is_target ? qn : existing);
+            }
+            id(notify_queue) = rebuilt;
+            if (id(ui_context) == 10) id(refresh_notify).execute();
             id(update_in_progress) = false;
-            id(progress_queue) = progress_queue_remove(id(progress_queue), "fw_update");
+            auto remaining = parse_notify_queue(id(notify_queue));
+            std::string without_entry;
+            for (auto &existing : remaining) {
+              if (existing.entry_id == "fw_update") continue;
+              if (!without_entry.empty()) without_entry += "\n";
+              without_entry += serialize_notify_entry(existing);
+            }
+            id(notify_queue) = without_entry;
 
 update:
   - platform: http_request
@@ -752,10 +748,9 @@ globals:
   # own state (id(fw_update).state/update_info), cached here so the settings
   # list/submenu render logic doesn't need to reach into the component
   # directly. update_in_progress is the wizard-style preemption guard - while
-  # true, nothing may leave/navigate away from the Progress screen (see
-  # activate_home_screen and friends) and refresh_progress shows exclusively
-  # the synthetic "fw_update" progress_queue entry, ignoring every other
-  # entry and progress_queue_index entirely.
+  # true, nothing may leave/navigate away from the Notify screen showing the
+  # synthetic "fw_update" entry (see activate_home_screen and friends,
+  # update_start).
   - id: update_available
     type: bool
     restore_value: false
@@ -1416,11 +1411,11 @@ binary_sensor:
                       - script.execute: wizard_next
               else:
                 # Same reasoning as the Setup Wizard case above, for the
-                # Progress screen while an OTA update is running - no
+                # Notify screen while an OTA update is running - no
                 # quick-jump shortcut out of it either.
                 - if:
                     condition:
-                      lambda: 'return id(ui_context) == 9 && id(update_in_progress);'
+                      lambda: 'return id(ui_context) == 10 && id(update_in_progress);'
                     then: []
                     else:
                       - if:
@@ -2341,7 +2336,7 @@ script:
 
   # Shared overview on screen_navigation. It lists every configured climate and
   # light, followed by Settings and Back. Pressing an entity opens it directly.
-  # No-op while update_in_progress - see the Progress-screen lock in
+  # No-op while update_in_progress - see the OTA update lock in
   # docs/OTA_UPDATE_PLAN.md. Reached from every screen's swipe-up, so this
   # is the single choke point rather than guarding each caller.
   - id: open_entity_overview
@@ -3096,29 +3091,6 @@ script:
   - id: refresh_progress
     then:
       - lambda: |-
-          // While an OTA update is running, this screen shows exclusively
-          // the synthetic "fw_update" entry - no paging, no other entries,
-          // regardless of progress_queue_index - see docs/OTA_UPDATE_PLAN.md.
-          if (id(update_in_progress)) {
-            auto items = parse_progress_queue(id(progress_queue));
-            QueuedProgress qp{};
-            bool found = false;
-            for (auto &item : items) {
-              if (item.entry_id == "fw_update") { qp = item; found = true; break; }
-            }
-            char value[8];
-            snprintf(value, sizeof(value), "%.0f%%", found ? qp.value : 0.0f);
-            lv_label_set_text(id(label_progress_value), value);
-            lv_label_set_text(id(label_progress_title), found ? qp.title.c_str() : "");
-            lv_obj_clear_flag(id(label_progress_title), LV_OBJ_FLAG_HIDDEN);
-            lv_arc_set_value(id(arc_progress_value), found ? (int) roundf(qp.value) : 0);
-            lv_obj_set_style_arc_color(id(arc_progress_value),
-                lv_color_hex(found ? arc_color_or_default(qp.arc_color) : ARC_DEFAULT_COLOR), LV_PART_INDICATOR);
-            lv_obj_add_flag(id(label_progress_page), LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(id(label_progress_arrow_prev), LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(id(label_progress_arrow_next), LV_OBJ_FLAG_HIDDEN);
-            return;
-          }
           auto items = parse_progress_queue(id(progress_queue));
           int total = (int) items.size();
           if (total > 0) {
@@ -3243,7 +3215,7 @@ script:
   # auto-home, and remotely from the [Standard] Show */Screen HA buttons)
   # is a no-op while the Setup Wizard is showing - nothing may preempt it
   # except wizard_finish itself - and, separately, while an OTA update is
-  # running (update_in_progress) nothing may leave the Progress screen
+  # running (update_in_progress) nothing may leave the Notify screen
   # except the update itself finishing/failing. See also the
   # connection_state_changed handler in refresh_connection, guarded the
   # same way, and docs/OTA_UPDATE_PLAN.md.
@@ -3471,27 +3443,51 @@ script:
           then: [script.execute: refresh_notify]
 
   # Confirmed from the Settings > System > Update submenu (apply_service ==
-  # 49, see submenu_apply) - locks the Progress screen and starts the
-  # flash. Actual progress/completion/failure feedback comes from
-  # ota_http_request's on_begin/on_progress/on_end/on_error/on_abort
-  # triggers (see the ota: platform: http_request block).
+  # 49, see submenu_apply) - locks navigation to the Notify screen and
+  # starts the flash. Failure/cancellation feedback comes from
+  # ota_http_request's on_error/on_abort triggers (see the ota: platform:
+  # http_request block); there is no live progress - see update_start's
+  # delay: 1s comment for why.
   - id: update_start
     then:
       - script.execute: wake_display
       - lambda: |-
           id(update_in_progress) = true;
-          QueuedProgress qp{};
-          qp.entry_id = "fw_update";
-          qp.title = id(i18n_translations).translate("update.installing");
-          qp.value = 0.0f;
-          qp.color = "00FF00";
-          qp.led_mode = 0;
-          qp.value_blink = false;
-          id(progress_queue) = progress_queue_upsert(id(progress_queue), qp);
-          id(ui_context) = 9;
-          id(progress_queue_index) = 0;
-      - script.execute: refresh_progress
-      - lvgl.page.show: screen_progress
+          QueuedNotify qn{};
+          qn.entry_id = "fw_update";
+          qn.title = id(i18n_translations).translate("update.please_wait");
+          qn.subtitle = id(i18n_translations).translate("update.installing");
+          qn.color = "FFFF00";
+          qn.led_mode = 1;
+          qn.priority = 2;
+          qn.value_blink = false;
+          auto items = parse_notify_queue(id(notify_queue));
+          std::string rebuilt;
+          bool replaced = false;
+          for (auto &existing : items) {
+            bool is_target = existing.entry_id == "fw_update";
+            if (is_target) { replaced = true; qn.seq = existing.seq; }
+            if (!rebuilt.empty()) rebuilt += "\n";
+            rebuilt += serialize_notify_entry(is_target ? qn : existing);
+          }
+          if (!replaced) {
+            qn.seq = id(notify_queue_seq)++;
+            if (!rebuilt.empty()) rebuilt += "\n";
+            rebuilt += serialize_notify_entry(qn);
+          }
+          id(notify_queue) = rebuilt;
+          id(ui_context) = 10;
+          id(notify_queue_index) = 0;
+      - script.execute: refresh_notify
+      - lvgl.page.show: screen_notify
+      # This delay: step goes through ESPHome's scheduler (cooperative, lets
+      # the main loop keep running - LVGL included), unlike the OTA download
+      # itself below, which blocks the main loop for its whole duration. It
+      # exists purely so the notify screen actually gets to paint "Bitte
+      # warten / Update läuft..." before that blocking call starts -
+      # without it, the transition and the freeze can land in the same
+      # frame and the ESP sometimes never gets to paint the screen at all.
+      - delay: 1s
       - update.perform: fw_update
 
   # First-boot/post-factory-reset setup wizard, and its re-invocation from
@@ -4636,7 +4632,7 @@ script:
             # runs in the background regardless of ui_context, so Home
             # Assistant becoming reachable mid-wizard must not interrupt it.
             # wizard_finish is the only thing allowed to leave the wizard.
-            # Same reasoning for update_in_progress and the Progress screen.
+            # Same reasoning for update_in_progress and the Notify screen.
             - if:
                 condition:
                   lambda: 'return id(ui_context) != 11 && !id(update_in_progress);'
@@ -4675,7 +4671,7 @@ script:
             - lvgl.widget.hide: icon_mode_thermo
             - lvgl.widget.hide: icon_mode_home
 
-  # No-op while update_in_progress - see the Progress-screen lock in
+  # No-op while update_in_progress - see the OTA update lock in
   # docs/OTA_UPDATE_PLAN.md. Reached from every screen's swipe-down, so this
   # is the single choke point rather than guarding each caller.
   - id: open_settings
