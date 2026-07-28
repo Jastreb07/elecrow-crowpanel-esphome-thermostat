@@ -5,6 +5,15 @@ here. The version headings below match `firmware/version.txt` and the
 GitHub Release tags (`v<version>`) - the release workflow extracts the
 section for the version being released as the release notes body.
 
+## 1.0.6
+
+- The web flasher's "Connected to ..." popup (shown for an already-flashed
+  device, read live over Improv Serial) showed the raw internal project id
+  ("jastreb07.thermostat_knob") instead of a readable name. ESPHome
+  requires the project name to contain exactly one "." (it's a
+  machine-readable namespace, not a display string), so the readable part
+  is now kept after the dot.
+
 ## 1.0.5
 
 - Fixed Wi-Fi credentials set via Improv (Setup Wizard / web flasher) not

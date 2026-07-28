@@ -104,8 +104,14 @@ esphome:
   name_add_mac_suffix: true
   friendly_name: ${friendly_name}
   comment: "ESPHome CrowPanel Thermostat Knob"
+  # esphome/core/config.py's valid_project_name only requires exactly one
+  # "." (it's a machine-readable namespace.identifier, not a display
+  # string) - Improv Serial reports this name verbatim as the firmware name
+  # in the "Connected to ..." popup (see improv_serial_component.cpp's
+  # build_version_info_(), ESPHOME_PROJECT_NAME), so the identifier half is
+  # kept human-readable to avoid that popup showing raw_snake_case text.
   project:
-    name: "jastreb07.thermostat_knob"
+    name: "jastreb07.Smart Thermostat Knob"
     version: "${firmware_version}"
   includes:
     - thermostat_helpers.h
