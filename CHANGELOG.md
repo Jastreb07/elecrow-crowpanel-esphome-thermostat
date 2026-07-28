@@ -5,6 +5,12 @@ here. The version headings below match `firmware/version.txt` and the
 GitHub Release tags (`v<version>`) - the release workflow extracts the
 section for the version being released as the release notes body.
 
+## 1.0.2
+
+No functional changes - version bump to test the on-device OTA
+self-update flow (Settings > System > Update) end-to-end against a real
+release.
+
 ## 1.0.1
 
 - Fixed the update entity reporting the ESPHome core version instead of the
