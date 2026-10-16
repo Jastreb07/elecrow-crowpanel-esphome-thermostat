@@ -333,6 +333,11 @@ lvgl:
     # ================= Home-Screen =================
     - id: screen_home
       bg_color: "0x000000"
+      # The rotated CST816 reports physical vertical gestures as left/right.
+      on_swipe_left:
+        - script.execute: open_thermostat_quick
+      on_swipe_right:
+        - script.execute: open_thermostat_quick
       widgets:
         - button:
             id: button_home_background
@@ -344,7 +349,7 @@ lvgl:
             border_width: 0
             shadow_width: 0
             on_click:
-              - script.execute: wake_display
+              - script.execute: open_home_thermostat
 
         - label:
             id: label_home_hvac_mode

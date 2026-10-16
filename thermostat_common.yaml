@@ -15,9 +15,11 @@
 #
 # Knob controls:
 #   Home:        rotate or short-press -> thermostat screen
+#                touch -> thermostat screen
+#                vertical swipe -> preset, then HVAC quick selector
 #   Thermostat:  rotate -> target temperature +/- configured step
 #                short-press -> switch TRV/AC target
-#                vertical swipe -> HVAC, then preset quick selector
+#                vertical swipe -> preset, then HVAC quick selector
 #   Light:       rotate -> selected light value, short-press -> light.toggle
 #                vertical swipe -> next brightness/temperature/color mode
 #   Settings:    rotate = scroll/change value, short-press = select/OK
@@ -418,6 +420,11 @@ interval:
           condition:
             lambda: 'return id(ha_climates).consume_dirty(id(climate_index));'
           then:
+            - if:
+                condition:
+                  lambda: 'return id(ui_context) == 0;'
+                then:
+                  - script.execute: select_home_climate
             - script.execute: load_active_climate
       - if:
           condition:
@@ -558,11 +565,18 @@ globals:
     restore_value: false
     initial_value: "0"
 
-  # Quick thermostat selector: 0 normal settings, 1 HVAC, 2 presets.
+  # Quick thermostat selector: 0 normal settings, 1 presets, 2 HVAC.
   - id: thermostat_quick_stage
     type: int
     restore_value: false
     initial_value: "0"
+
+  # Screen to return to after a quick preset/HVAC selection (0 Home,
+  # 1 Thermostat). This lets Home expose the same swipe menus directly.
+  - id: thermostat_quick_return_context
+    type: int
+    restore_value: false
+    initial_value: "1"
 
   - id: submenu_index
     type: int
@@ -598,6 +612,14 @@ globals:
     type: int
     restore_value: false
     initial_value: "0"
+
+  # Persist the Home thermostat by entity ID because array positions can
+  # change whenever the Home Assistant configuration is edited.
+  - id: home_climate_entity_id
+    type: std::string
+    restore_value: true
+    max_restore_data_length: 96
+    initial_value: '""'
 
   - id: pending_climate_index
     type: int
@@ -1429,8 +1451,8 @@ binary_sensor:
                                   lambda: 'return id(ui_context) != 1;'
                                 then:
                                   - lambda: |-
-                                      id(climate_index) = 0;
                                       id(ui_context) = 1;
+                                  - script.execute: select_home_climate
                                   - script.execute: load_active_climate
                                   - lvgl.page.show: screen_thermostat
                                 else:
@@ -1456,11 +1478,7 @@ binary_sensor:
               condition:
                 lambda: 'return id(ui_context) == 0;'
               then:
-                - lambda: |-
-                    id(climate_index) = 0;
-                    id(ui_context) = 1;
-                - script.execute: load_active_climate
-                - lvgl.page.show: screen_thermostat
+                - script.execute: open_home_thermostat
               else:
                 - if:
                     condition:
@@ -1585,8 +1603,8 @@ sensor:
             then:
               - lambda: |-
                   id(ui_context) = 1;
-                  id(climate_index) = 0;
                   id(encoder_delta) = 0;
+              - script.execute: select_home_climate
               - script.execute: load_active_climate
               - lvgl.page.show: screen_thermostat
         - if:
@@ -1753,6 +1771,7 @@ sensor:
                     case 1:
                     case 13:
                     case 25:
+                    case 39:
                       id(submenu_index) = menu_scroll_index(id(submenu_index), id(encoder_delta), id(submenu_count));
                       break;
                     case 2:
@@ -1968,6 +1987,46 @@ text:
 # Scripts
 # ------------------------------------------------------------------
 script:
+  # Resolve the persisted Home thermostat entity against the current array.
+  # Missing/empty selections deliberately fall back to the first entry and
+  # persist that entity ID, so reordering the array does not change Home.
+  - id: select_home_climate
+    then:
+      - lambda: |-
+          if (id(ha_climates).empty()) {
+            id(climate_index) = 0;
+            return;
+          }
+          int selected = -1;
+          for (int i = 0; i < (int) id(ha_climates).size(); i++) {
+            if (id(ha_climates).get(i).entity_id == id(home_climate_entity_id)) {
+              selected = i;
+              break;
+            }
+          }
+          if (selected < 0) {
+            selected = 0;
+            id(home_climate_entity_id) = id(ha_climates).get(0).entity_id;
+          }
+          id(climate_index) = selected;
+
+  - id: open_home_thermostat
+    then:
+      # LVGL may emit a click after recognizing a swipe on the full-screen
+      # Home button. The swipe has already changed ui_context to the quick
+      # menu by then, so only a genuine tap may enter the Thermostat screen.
+      - if:
+          condition:
+            lambda: 'return id(ui_context) == 0;'
+          then:
+            - script.execute: wake_display
+            - script.execute: select_home_climate
+            - lambda: 'id(ui_context) = 1;'
+            - script.execute: load_active_climate
+            - lvgl.page.show:
+                id: screen_thermostat
+                animation: NONE
+
   # After API connect, force-copy Home Assistant states into globals. This
   # covers cases where individual on_value automations do not fire during init.
   - id: sync_ha_states
@@ -1997,6 +2056,14 @@ script:
             id(pending_temperature_change) = false;
             return;
           }
+          bool home_exists = false;
+          for (int i = 0; i < (int) id(ha_climates).size(); i++)
+            if (id(ha_climates).get(i).entity_id == id(home_climate_entity_id)) {
+              home_exists = true;
+              break;
+            }
+          if (!home_exists)
+            id(home_climate_entity_id) = id(ha_climates).get(0).entity_id;
           id(climate_index) = clamp(id(climate_index), 0, (int) id(ha_climates).size() - 1);
           auto &climate = id(ha_climates).get_mutable(id(climate_index));
           id(current_hvac_raw) = climate.state;
@@ -2140,9 +2207,15 @@ script:
                 then:
                   - lambda: |-
                       id(thermostat_quick_stage) = 0;
-                      id(ui_context) = 1;
+                      id(ui_context) = id(thermostat_quick_return_context);
                   - script.execute: load_active_climate
-                  - lvgl.page.show: screen_thermostat
+                  - if:
+                      condition:
+                        lambda: 'return id(ui_context) == 0;'
+                      then:
+                        - lvgl.page.show: screen_home
+                      else:
+                        - lvgl.page.show: screen_thermostat
                 else:
                   - if:
                       condition:
@@ -2458,11 +2531,15 @@ script:
           then:
             - lambda: |-
                 id(thermostat_quick_stage) = 0;
-                id(ui_context) = 1;
+                id(ui_context) = id(thermostat_quick_return_context);
             - script.execute: load_active_climate
-            - lvgl.page.show:
-                id: screen_thermostat
-                animation: NONE
+            - if:
+                condition:
+                  lambda: 'return id(ui_context) == 0;'
+                then:
+                  - lvgl.page.show: {id: screen_home, animation: NONE}
+                else:
+                  - lvgl.page.show: {id: screen_thermostat, animation: NONE}
           else:
             - if:
                 condition:
@@ -2582,8 +2659,9 @@ script:
                                               else:
                                                 - script.execute: close_entity_overview
 
-  # First vertical thermostat swipe opens HVAC. The following vertical swipe
-  # changes the same quick selector to presets without creating another page.
+  # First vertical swipe opens presets. The following vertical swipe changes
+  # the same quick selector to HVAC without creating another page. Home and
+  # Thermostat both use this path and return to their respective origin.
   - id: open_thermostat_quick
     then:
       - script.execute: wake_display
@@ -2597,13 +2675,14 @@ script:
               id(label_menu_next), id(label_menu_next2), id(label_menu_value)};
           for (lv_obj_t *widget : widgets)
             if (lv_obj_get_parent(widget) != target) lv_obj_set_parent(widget, target);
+          id(thermostat_quick_return_context) = id(ui_context) == 0 ? 0 : 1;
           id(thermostat_quick_stage) = 1;
-          id(submenu_type) = 0;
+          id(submenu_type) = 1;
           id(submenu_index) = 0;
-          auto vec = ha_filter_modes(id(hvac_modes_raw));
+          auto vec = ha_filter_presets(id(preset_modes_raw));
           id(submenu_count) = (int) vec.size();
           for (size_t i = 0; i < vec.size(); i++)
-            if (vec[i] == id(current_hvac_raw)) { id(submenu_index) = (int) i; break; }
+            if (vec[i] == id(current_preset_raw)) { id(submenu_index) = (int) i; break; }
           id(ui_context) = 4;
       - script.execute: update_settings_labels
       - lvgl.page.show:
@@ -2622,20 +2701,24 @@ script:
                 then:
                   - lambda: |-
                       id(thermostat_quick_stage) = 0;
-                      id(ui_context) = 1;
+                      id(ui_context) = id(thermostat_quick_return_context);
                   - script.execute: load_active_climate
-                  - lvgl.page.show:
-                      id: screen_thermostat
-                      animation: NONE
+                  - if:
+                      condition:
+                        lambda: 'return id(ui_context) == 0;'
+                      then:
+                        - lvgl.page.show: {id: screen_home, animation: NONE}
+                      else:
+                        - lvgl.page.show: {id: screen_thermostat, animation: NONE}
                 else:
                   - lambda: |-
                       id(thermostat_quick_stage) = 2;
-                      id(submenu_type) = 1;
+                      id(submenu_type) = 0;
                       id(submenu_index) = 0;
-                      auto vec = ha_filter_presets(id(preset_modes_raw));
+                      auto vec = ha_filter_modes(id(hvac_modes_raw));
                       id(submenu_count) = (int) vec.size();
                       for (size_t i = 0; i < vec.size(); i++)
-                        if (vec[i] == id(current_preset_raw)) { id(submenu_index) = (int) i; break; }
+                        if (vec[i] == id(current_hvac_raw)) { id(submenu_index) = (int) i; break; }
                   - script.execute: update_settings_labels
 
   - id: send_light_update
@@ -3226,7 +3309,9 @@ script:
             lambda: 'return id(ui_context) != 11 && !id(update_in_progress);'
           then:
             - script.execute: wake_display
+            - script.execute: select_home_climate
             - lambda: 'id(ui_context) = 0;'
+            - script.execute: load_active_climate
             - script.execute: refresh_temps
             - script.execute: refresh_status
             - lvgl.page.show: screen_home
@@ -4641,7 +4726,9 @@ script:
                       condition:
                         lambda: 'return id(connection_ready);'
                       then:
+                        - script.execute: select_home_climate
                         - lambda: 'id(ui_context) = 0;'
+                        - script.execute: load_active_climate
                         - lvgl.page.show:
                             id: screen_home
                             animation: NONE
@@ -4765,6 +4852,15 @@ script:
               break;
             }
             case 38: id(submenu_count) = 3; break;
+            case 39: {
+              id(submenu_count) = (int) id(ha_climates).size();
+              for (int i = 0; i < id(submenu_count); i++)
+                if (id(ha_climates).get(i).entity_id == id(home_climate_entity_id)) {
+                  id(submenu_index) = i;
+                  break;
+                }
+              break;
+            }
             case 17: id(submenu_index) = id(led_enabled).state ? 1 : 0; break;
             case 18: id(num_preview) = (int) id(led_brightness_num).state; break;
             case 11: id(num_preview) = (int) id(timer_auto_home_num).state; break;
@@ -4837,6 +4933,14 @@ script:
                 else if (id(submenu_index) == 2) id(apply_service) = 51;
               } else id(apply_service) = 50;
               break;
+            case 39: {
+              int n = (int) id(ha_climates).size();
+              if (n > 0) {
+                int idx = ((id(submenu_index) % n) + n) % n;
+                id(home_climate_entity_id) = id(ha_climates).get(idx).entity_id;
+              }
+              break;
+            }
             case 17: id(apply_service) = id(submenu_index) ? 23 : 22; break;
             case 18: id(apply_service) = 24; break;
             case 11: id(apply_service) = 25; break;
@@ -4975,11 +5079,17 @@ script:
           condition:
             lambda: 'return id(thermostat_quick_stage) != 0;'
           then:
-            - lambda: 'id(thermostat_quick_stage) = 0;'
+            - lambda: |-
+                id(thermostat_quick_stage) = 0;
+                id(ui_context) = id(thermostat_quick_return_context);
             - script.execute: load_active_climate
-            - lvgl.page.show:
-                id: screen_thermostat
-                animation: NONE
+            - if:
+                condition:
+                  lambda: 'return id(ui_context) == 0;'
+                then:
+                  - lvgl.page.show: {id: screen_home, animation: NONE}
+                else:
+                  - lvgl.page.show: {id: screen_thermostat, animation: NONE}
           else:
             - script.execute: update_settings_labels
 
@@ -5088,6 +5198,20 @@ script:
                   val = id(update_latest_version);
                 }
                 break;
+              case 39: {
+                std::string selected;
+                for (int i = 0; i < (int) id(ha_climates).size(); i++)
+                  if (id(ha_climates).get(i).entity_id == id(home_climate_entity_id)) {
+                    selected = id(ha_climates).get(i).name.empty()
+                        ? id(ha_climates).get(i).entity_id : id(ha_climates).get(i).name;
+                    break;
+                  }
+                if (selected.empty() && !id(ha_climates).empty())
+                  selected = id(ha_climates).get(0).name.empty()
+                      ? id(ha_climates).get(0).entity_id : id(ha_climates).get(0).name;
+                val = selected.empty() ? "-" : selected;
+                break;
+              }
               case 17:
                 val = id(i18n_translations).translate(id(led_enabled).state ? "common.on" : "common.off");
                 break;
@@ -5266,6 +5390,24 @@ script:
                   cur = id(i18n_translations).translate("update.up_to_date");
                   val = "";
                 }
+                break;
+              }
+              case 39: {
+                int n = (int) id(ha_climates).size();
+                id(submenu_count) = n;
+                if (n <= 0) {
+                  cur = id(i18n_translations).translate("common.no_climate");
+                  val = id(i18n_translations).translate("common.ha_unavailable");
+                  break;
+                }
+                auto m = menu_window(id(submenu_index), n, false, [](int p) -> std::string {
+                  const auto &climate = id(ha_climates).get(p);
+                  return climate.name.empty() ? climate.entity_id : climate.name;
+                });
+                cur = m.cur;
+                id(set_prev) = m.prev;
+                id(set_next) = m.next;
+                val = m.value;
                 break;
               }
               case 16: {

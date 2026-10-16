@@ -183,8 +183,9 @@ static const char *const MENU_ICONS[] = {
     "",   // 36 removed (Notify Show Screen)
     "󰋽",  // 37 Setup guide    mdi-information-outline (reused)
     "󰋽",  // 38 Update         mdi-information-outline (reused)
+    "󰎓",  // 39 Home thermostat mdi-thermostat (reused)
 };
-constexpr int SETTINGS_MENU_COUNT = 39;
+constexpr int SETTINGS_MENU_COUNT = 40;
 
 // Root groups for the hierarchical settings screen. The values below are the
 // stable setting IDs used by the existing editor/apply logic.
@@ -196,7 +197,7 @@ static const char *const SETTINGS_GROUP_KEYS[SETTINGS_GROUP_COUNT] = {
 static const char *const SETTINGS_GROUP_ICONS[SETTINGS_GROUP_COUNT] = {
     MENU_ICONS[0], MENU_ICONS[8], MENU_ICONS[10], ICON_SUN, MENU_ICONS[14]};
 
-static constexpr int SETTINGS_GROUP_THERMOSTAT[] = {0, 1, 7, 13};
+static constexpr int SETTINGS_GROUP_THERMOSTAT[] = {39, 0, 1, 7, 13};
 static constexpr int SETTINGS_GROUP_TIMER[] = {11, 19, 25, 29, 23, 22, 26};
 static constexpr int SETTINGS_GROUP_PROGRESS[] = {20, 30};
 static constexpr int SETTINGS_GROUP_NOTIFY[] = {31, 34};
@@ -435,7 +436,8 @@ inline const char *settings_menu_name(int i) {
       "", "", "settings.item.timer_blink_brightness",
       "settings.item.progress_blink_brightness", "settings.item.notify_auto_home", "",
       "", "settings.item.notify_blink_brightness", "",
-      "", "settings.item.setup_guide", "settings.item.update"};
+      "", "settings.item.setup_guide", "settings.item.update",
+      "settings.item.home_thermostat"};
   if (i < 0 || i >= SETTINGS_MENU_COUNT) return "";
   return KEYS[i];
 }

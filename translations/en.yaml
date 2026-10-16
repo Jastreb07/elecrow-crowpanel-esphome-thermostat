@@ -35,7 +35,7 @@ update:
   up_to_date: "Up to date"
   ignore: "Ignore"
   ignored: "Update ignored"
-  please_wait: "Please wait"
+  please_wait: "Update"
   installing: "Update in progress..."
   done: "Update finished"
   failed: "Update failed"
@@ -68,6 +68,7 @@ settings:
     notify: "Notify"
     system: "System"
   item:
+    home_thermostat: "Home Thermostat"
     hvac_mode: "HVAC Mode"
     preset: "Preset"
     brightness: "Brightness"

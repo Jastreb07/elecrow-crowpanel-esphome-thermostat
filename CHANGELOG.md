@@ -5,6 +5,19 @@ here. The version headings below match `firmware/version.txt` and the
 GitHub Release tags (`v<version>`) - the release workflow extracts the
 section for the version being released as the release notes body.
 
+## 1.0.4
+
+- The Home screen now opens the configured thermostat by touch as well as
+  with the rotary knob.
+- Preset and HVAC quick selectors can now be opened by swiping directly on
+  the Home screen. Presets are shown first, followed by HVAC modes.
+- Added a persistent Home thermostat setting for installations with multiple
+  climate entities. If the selected entity is removed, the first configured
+  thermostat is used automatically.
+- Fixed the Home swipe gesture also firing the background tap action and
+  immediately replacing the quick selector with the Thermostat screen.
+- Simplified the OTA wait-screen heading to "Update" in English and German.
+
 ## 1.0.3
 
 - Replaced the frozen Progress screen during OTA updates with the Notify
