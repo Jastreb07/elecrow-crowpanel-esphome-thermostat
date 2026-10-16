@@ -388,6 +388,10 @@ lvgl:
     # ================= Home-Screen =================
     - id: screen_home
       bg_color: "0x000000"
+      on_swipe_down:
+        - script.execute: open_thermostat_quick
+      on_swipe_up:
+        - script.execute: open_thermostat_quick
       widgets:
         - button:
             id: button_home_background
@@ -399,7 +403,7 @@ lvgl:
             border_width: 0
             shadow_width: 0
             on_click:
-              - script.execute: wake_display
+              - script.execute: open_home_thermostat
 
         - label:
             id: label_home_hvac_mode
