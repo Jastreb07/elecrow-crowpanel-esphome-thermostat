@@ -101,6 +101,7 @@ settings:
     notify_blink_brightness: "Notify-Blink-Helligkeit"
     setup_guide: "Setup-Anleitung anzeigen"
     update: "Update"
+    update_notifications: "Update-Hinweise"
 
 color:
   green: "Grün"
