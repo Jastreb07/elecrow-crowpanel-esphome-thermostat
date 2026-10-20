@@ -5,6 +5,13 @@ here. The version headings below match `firmware/version.txt` and the
 GitHub Release tags (`v<version>`) - the release workflow extracts the
 section for the version being released as the release notes body.
 
+## 1.0.5
+
+- Fixed unreliable reconnection after Home Assistant restarts when a new API
+  session overlaps the old session's delayed disconnect event.
+- Kept the Home Assistant loading spinner rotating continuously instead of
+  restarting its animation every two seconds.
+
 ## 1.0.4
 
 - The Home screen now opens the configured thermostat by touch as well as

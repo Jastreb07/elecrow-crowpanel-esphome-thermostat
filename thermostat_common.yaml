@@ -243,15 +243,23 @@ api:
         // Ignore ESPHome Logs/CLI clients; only a real Home Assistant API
         // session may mark HA as reachable.
         if (client_info.find("Home Assistant") == std::string::npos) return;
+        // HA can establish its replacement connection before ESPHome reports
+        // the old one as disconnected. Keep a count so that late disconnect
+        // cannot incorrectly take an already reconnected device offline.
+        if (id(ha_client_count) == 0)
+          id(ha_connected_since_ms) = millis();
+        id(ha_client_count)++;
         id(ha_connected) = true;
-        id(ha_connected_since_ms) = millis();
     - script.execute: refresh_connection
     - script.execute: sync_ha_states
   on_client_disconnected:
     - lambda: |-
         if (client_info.find("Home Assistant") == std::string::npos) return;
-        id(ha_connected) = false;
-        id(ha_connected_since_ms) = 0;
+        if (id(ha_client_count) > 0)
+          id(ha_client_count)--;
+        id(ha_connected) = id(ha_client_count) > 0;
+        if (!id(ha_connected))
+          id(ha_connected_since_ms) = 0;
     - script.execute: refresh_connection
 
 # ------------------------------------------------------------------
@@ -472,6 +480,11 @@ globals:
     type: bool
     restore_value: false
     initial_value: "false"
+
+  - id: ha_client_count
+    type: uint16_t
+    restore_value: false
+    initial_value: "0"
 
   - id: ha_connected_since_ms
     type: uint32_t
@@ -4692,15 +4705,26 @@ script:
           condition:
             lambda: 'return id(connection_message) == "Smart Knob config not found";'
           then:
-            - lvgl.widget.hide: spinner_ha_connection
-            - lvgl.widget.show: icon_loading_config_error
-            - lvgl.widget.show: button_loading_reboot_background
-            - lvgl.widget.show: label_loading_reboot_hint
+            - if:
+                condition:
+                  lambda: 'return !lv_obj_has_flag(id(spinner_ha_connection), LV_OBJ_FLAG_HIDDEN);'
+                then:
+                  - lvgl.widget.hide: spinner_ha_connection
+                  - lvgl.widget.show: icon_loading_config_error
+                  - lvgl.widget.show: button_loading_reboot_background
+                  - lvgl.widget.show: label_loading_reboot_hint
           else:
-            - lvgl.widget.show: spinner_ha_connection
-            - lvgl.widget.hide: icon_loading_config_error
-            - lvgl.widget.hide: button_loading_reboot_background
-            - lvgl.widget.hide: label_loading_reboot_hint
+            # Calling show on an already visible LVGL spinner restarts its
+            # animation. Only toggle the loading/error widgets when their
+            # visibility actually changes, so the spinner rotates smoothly.
+            - if:
+                condition:
+                  lambda: 'return lv_obj_has_flag(id(spinner_ha_connection), LV_OBJ_FLAG_HIDDEN);'
+                then:
+                  - lvgl.widget.show: spinner_ha_connection
+                  - lvgl.widget.hide: icon_loading_config_error
+                  - lvgl.widget.hide: button_loading_reboot_background
+                  - lvgl.widget.hide: label_loading_reboot_hint
       - lambda: |-
           static bool previous_ready = false;
           id(connection_state_changed) = previous_ready != id(connection_ready);
