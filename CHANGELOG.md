@@ -5,6 +5,12 @@ here. The version headings below match `firmware/version.txt` and the
 GitHub Release tags (`v<version>`) - the release workflow extracts the
 section for the version being released as the release notes body.
 
+## 1.0.7
+
+- Fixed a race that could leave the Home Assistant loading spinner visible
+  after the connection and configuration were already ready. The transition
+  to the Home screen now completes automatically without pressing the knob.
+
 ## 1.0.6
 
 - Added a persistent Update Notifications setting on the device and in Home
