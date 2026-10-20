@@ -2141,7 +2141,10 @@ script:
           lv_obj_update_layout(id(label_climate_name));
       - script.execute: refresh_temps
       - script.execute: refresh_status
-      - script.execute: refresh_connection
+      # Do not call refresh_connection from here. That script invokes
+      # load_active_climate while completing the loading -> home transition;
+      # restarting it here could cancel the pending lvgl.page.show action and
+      # leave the spinner visible even though connection_ready was already true.
 
   - id: send_temperature_update
     mode: restart
@@ -4765,10 +4768,14 @@ script:
           id(connection_state_changed) = previous_ready != id(connection_ready);
           previous_ready = id(connection_ready);
       # Update all HA-backed text exactly once on a ready/not-ready transition.
-      # In particular, do not restart the light-name marquee every two seconds.
+      # Also retry a ready loading-state transition if an earlier script run
+      # was interrupted before it could show screen_home. In particular, do
+      # not restart the light-name marquee every two seconds during normal UI.
       - if:
           condition:
-            lambda: 'return id(connection_state_changed);'
+            lambda: |-
+              return id(connection_state_changed) ||
+                     (id(connection_ready) && id(ui_context) == -1);
           then:
             - script.execute: refresh_temps
             - script.execute: refresh_light
@@ -4786,11 +4793,14 @@ script:
                         lambda: 'return id(connection_ready);'
                       then:
                         - script.execute: select_home_climate
-                        - lambda: 'id(ui_context) = 0;'
                         - script.execute: load_active_climate
                         - lvgl.page.show:
                             id: screen_home
                             animation: NONE
+                        # Set the context only after the page switch. If this
+                        # run is interrupted earlier, ui_context stays -1 and
+                        # the next 2s refresh retries the transition.
+                        - lambda: 'id(ui_context) = 0;'
                       else:
                         - lambda: 'id(ui_context) = -1;'
                         - lvgl.page.show:
