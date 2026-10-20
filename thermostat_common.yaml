@@ -375,6 +375,9 @@ update:
             // keep rewriting/bumping the existing notify entry.
             id(update_available) = true;
             id(update_latest_version) = x.latest_version;
+            // Keep update discovery and manual installation active while the
+            // user-facing notification screen is disabled.
+            if (!id(update_notifications_enabled).state) return;
             // The Settings > System > Update row still reflects this version
             // (see the settings switches below), but the user explicitly
             // dismissed it via "Ignore" - no notify banner until a different
@@ -982,6 +985,24 @@ switch:
       - script.execute: update_status_led
     on_turn_off:
       - script.execute: update_status_led
+
+  # Controls only the automatic "new update available" notification. Update
+  # checks, the HA update entity and Settings > System > Update remain active.
+  - platform: template
+    name: "[System] Update Notifications"
+    id: update_notifications_enabled
+    icon: "mdi:update"
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - if:
+          condition:
+            lambda: 'return id(app_booted);'
+          then:
+            - update.check: fw_update
+    on_turn_off:
+      - script.execute: clear_update_notification
 
   # Whether the Setup Wizard shows on the next boot (see the on_boot
   # handler). On by default, so a freshly flashed/erased ESP32 starts the
@@ -1793,7 +1814,7 @@ sensor:
                     case 3: case 4: case 7:
                     case 16: case 17:
                     case 19:
-                    case 23: case 26:
+                    case 23: case 26: case 40:
                       id(submenu_index) = 1 - id(submenu_index);
                       break;
                     case 38:
@@ -3524,8 +3545,16 @@ script:
   # or high-priority notification nagging about it.
   - id: ignore_update
     then:
+      - lambda: 'id(update_ignored_version) = id(update_latest_version);'
+      - script.execute: clear_update_notification
+
+  # Remove only the synthetic firmware-update entry, leaving ordinary HA
+  # notifications untouched. Used by both "Ignore" and the persistent
+  # Update Notifications switch exposed on-device and in Home Assistant.
+  - id: clear_update_notification
+    mode: restart
+    then:
       - lambda: |-
-          id(update_ignored_version) = id(update_latest_version);
           auto items = parse_notify_queue(id(notify_queue));
           std::string rebuilt;
           for (auto &qn : items) {
@@ -3538,7 +3567,13 @@ script:
           id(notify_queue_index) = clamp(id(notify_queue_index), 0, total > 0 ? total - 1 : 0);
       - if:
           condition: {lambda: 'return id(ui_context) == 10;'}
-          then: [script.execute: refresh_notify]
+          then:
+            - script.execute: refresh_notify
+            - if:
+                condition:
+                  lambda: 'return parse_notify_queue(id(notify_queue)).empty();'
+                then:
+                  - script.execute: activate_home_screen
 
   # Confirmed from the Settings > System > Update submenu (apply_service ==
   # 49, see submenu_apply) - locks navigation to the Notify screen and
@@ -4886,6 +4921,7 @@ script:
               break;
             }
             case 17: id(submenu_index) = id(led_enabled).state ? 1 : 0; break;
+            case 40: id(submenu_index) = id(update_notifications_enabled).state ? 1 : 0; break;
             case 18: id(num_preview) = (int) id(led_brightness_num).state; break;
             case 11: id(num_preview) = (int) id(timer_auto_home_num).state; break;
             case 19: id(submenu_index) = id(timer_finish_blink_switch).state ? 1 : 0; break;
@@ -4981,6 +5017,7 @@ script:
             case 30: id(apply_service) = 42; break;
             case 31: id(apply_service) = 44; break;
             case 34: id(apply_service) = 48; break;
+            case 40: id(apply_service) = id(submenu_index) ? 52 : 53; break;
             default: break;
           }
           id(ui_context) = id(thermostat_quick_stage) != 0 ? 1 : 3;
@@ -5100,6 +5137,12 @@ script:
           condition: {lambda: 'return id(apply_service) == 51;'}
           then: [script.execute: ignore_update]
       - if:
+          condition: {lambda: 'return id(apply_service) == 52;'}
+          then: [switch.turn_on: update_notifications_enabled]
+      - if:
+          condition: {lambda: 'return id(apply_service) == 53;'}
+          then: [switch.turn_off: update_notifications_enabled]
+      - if:
           condition:
             lambda: 'return id(thermostat_quick_stage) != 0;'
           then:
@@ -5213,6 +5256,10 @@ script:
               case 14: val = id(wifi_ssid_txt).state; break;
               case 15: val = "${firmware_version}"; break;
               case 16: val = ""; break;
+              case 40:
+                val = id(i18n_translations).translate(
+                    id(update_notifications_enabled).state ? "common.on" : "common.off");
+                break;
               case 38:
                 if (!id(update_available)) {
                   val = id(i18n_translations).translate("update.up_to_date");
@@ -5443,6 +5490,13 @@ script:
                 break;
               }
               case 17: {
+                auto m = bool_menu_window(id(submenu_index),
+                                           id(i18n_translations).translate("common.off").c_str(),
+                                           id(i18n_translations).translate("common.on").c_str());
+                cur = m.cur; id(set_prev) = m.prev; id(set_next) = m.next; val = m.value;
+                break;
+              }
+              case 40: {
                 auto m = bool_menu_window(id(submenu_index),
                                            id(i18n_translations).translate("common.off").c_str(),
                                            id(i18n_translations).translate("common.on").c_str());
@@ -5685,6 +5739,7 @@ script:
           add_bool("tvb", id(timer_value_blink_switch).state);
           add_bool("tss", id(timer_show_on_finish_switch).state);
           add_bool("wiz", id(setup_wizard_switch).state);
+          add_bool("un", id(update_notifications_enabled).state);
           add_chr("lang", id(language_select).current_option() == "Deutsch" ? 'd' : 'e');
           add_chr("unit", id(unit_select).current_option() == "Fahrenheit" ? 'F' : 'C');
           out += "kstep="; out += id(knob_step_select).current_option(); out += ";";
@@ -5730,6 +5785,7 @@ script:
             else if (key == "tvb") { if (bv) id(timer_value_blink_switch).turn_on(); else id(timer_value_blink_switch).turn_off(); }
             else if (key == "tss") { if (bv) id(timer_show_on_finish_switch).turn_on(); else id(timer_show_on_finish_switch).turn_off(); }
             else if (key == "wiz") { if (bv) id(setup_wizard_switch).turn_on(); else id(setup_wizard_switch).turn_off(); }
+            else if (key == "un") { if (bv) id(update_notifications_enabled).turn_on(); else id(update_notifications_enabled).turn_off(); }
             else if (key == "lang") { id(language_select).make_call().set_option(cv == 'd' ? "Deutsch" : "English").perform(); }
             else if (key == "unit") { id(unit_select).make_call().set_option(cv == 'F' ? "Fahrenheit" : "Celsius").perform(); }
             else if (key == "kstep") { id(knob_step_select).make_call().set_option(val).perform(); }
