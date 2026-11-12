@@ -4431,6 +4431,11 @@ script:
           id: label_current_temperature
           text: !lambda |-
             bool f = id(unit_select).current_option() == "Fahrenheit";
+            // Climates without a current temperature (e.g. a heat pump zone
+            // with no room sensor) leave this NAN; (int) NAN is undefined and
+            // showed as INT_MAX ("2147483647", clipped to "647" / ".21").
+            if (std::isnan(id(pending_current_temperature)))
+              return ha_text_or_placeholder(id(connection_ready), std::string("--°"), 5);
             char buf[16];
             snprintf(buf, sizeof(buf), "%.1f°", display_temp(id(pending_current_temperature), f));
             return ha_text_or_placeholder(id(connection_ready), std::string(buf), 5);
@@ -4438,12 +4443,16 @@ script:
           id: label_home_current_temperature
           text: !lambda |-
             bool f = id(unit_select).current_option() == "Fahrenheit";
+            if (std::isnan(id(pending_current_temperature)))
+              return ha_text_or_placeholder(id(connection_ready), std::string("--"), 2);
             return ha_text_or_placeholder(id(connection_ready),
                                           to_string((int) display_temp(id(pending_current_temperature), f)), 2);
       - lvgl.label.update:
           id: label_home_current_decimal
           text: !lambda |-
             bool f = id(unit_select).current_option() == "Fahrenheit";
+            if (std::isnan(id(pending_current_temperature)))
+              return ha_text_or_placeholder(id(connection_ready), std::string(""), 2);
             float c = display_temp(id(pending_current_temperature), f);
             int frac = (int) roundf((c - (int) c) * 10.0f);
             char buf[8];
@@ -4480,6 +4489,7 @@ script:
           };
 
           auto normalize_temperature = [](float temperature) {
+            if (std::isnan(temperature)) return (int32_t) 0;
             return clamp((int32_t) roundf((temperature - ${temperature_min}) /
                                           (${temperature_max} - ${temperature_min}) * 100.0f),
                          (int32_t) 0, (int32_t) 100);
