@@ -1,0 +1,1890 @@
+########################################################################
+# thermostat_360.yaml
+#
+# Board variant: CrowPanel 1.46" HMI ESP32-S3 rotary display, 360x360.
+# JD9866 SPI panel with the ili9xxx driver, CST816 touch, and direct GPIOs
+# without a PCF8574 expander. Pin values are based on the official Elecrow
+# example. Shared behavior comes from thermostat_common.yaml.
+########################################################################
+
+packages:
+  common: !include thermostat_common.yaml
+
+# Use a board-specific base name so switching variants does not reuse the same
+# PlatformIO build directory. MAC suffixes remain enabled in thermostat_common.
+substitutions:
+  device_name: thermostat360
+  # GitHub Release asset filename prefix for this board (e.g.
+  # thermostat_360-ota-manifest.json) - see docs/GITHUB_RELEASES_PLAN.md.
+  # Kept separate from device_name (no underscore) since that's used
+  # elsewhere for the mDNS/API device name.
+  release_asset_board: thermostat_360
+  settings_row_gap: "72"
+  light_color_preset_border: "5"
+  light_slider_range: "174"
+  light_kelvin_scale_width: "216"
+  light_kelvin_scale_height: "48"
+  cover_fill_max: "360"
+  cover_knob_margin: "24"
+
+esphome:
+  on_boot:
+    - priority: 800
+      then:
+        - output.turn_off: power_light
+        - output.turn_on: out1
+        - output.turn_on: out2
+
+# ------------------------------------------------------------------
+# I2C (Touch)
+# ------------------------------------------------------------------
+i2c:
+  sda: GPIO6
+  scl: GPIO7
+  id: bus_a
+  scan: true
+  frequency: 400kHz
+
+output:
+  - platform: ledc
+    pin: 
+      number: GPIO46    # Note: GPIO46 can trigger strapping warnings
+      ignore_strapping_warning: true
+    id: bl_pwm
+    frequency: 19531Hz
+  - platform: gpio
+    id: power_light
+    pin: GPIO40
+  - platform: gpio
+    id: out1
+    pin: GPIO1
+  - platform: gpio
+    id: out2
+    pin: GPIO2
+
+# ------------------------------------------------------------------
+# Display / touch, based on the Elecrow 1.28" reference.
+# ------------------------------------------------------------------
+spi:
+  id: spi_bus
+  mosi_pin: GPIO11
+  clk_pin: GPIO10
+
+touchscreen:
+  platform: cst816
+  id: my_touchscreen
+  i2c_id: bus_a
+  address: 0x15
+  interrupt_pin: GPIO5
+  reset_pin: GPIO13
+  transform:
+    mirror_x: false
+    mirror_y: true
+    swap_xy: true
+  on_touch:
+    - script.execute: wake_display
+
+display:
+  - platform: mipi_spi              # replaces deprectaed ILI9XXX display driver 
+    id: my_display                  # Display ID
+    model: CUSTOM                   # Custom display model
+    cs_pin: GPIO9                   # SPI chip select pin
+    dc_pin:                         # Data/command pin 
+      number: GPIO3                 # Note: GPIO3 can trigger strapping warnings
+      ignore_strapping_warning: true
+    reset_pin: GPIO14               # Display reset pin
+    dimensions:
+      width: 360                    # Screen width (px)
+      height: 360                   # Screen height (px)
+      offset_height: 0              # Vertical offset
+    data_rate: 40MHz                # SPI communication speed
+    color_order: RGB                # RGB color order
+    invert_colors: false            # No color inversion
+    init_sequence:                  # Display initialization commands
+      - [0xDE, 0x00]
+      - [0xDF, 0x98, 0x55]
+      - [0xB2, 0x1F]
+      - [0xB7, 0x00, 0x1D, 0x00, 0x45]
+      - [0xBB, 0x1B, 0x64, 0xC4, 0x1E, 0x3E, 0xF5]
+      - [0xBC, 0x03, 0x20, 0xF3, 0xC0]
+      - [0xC0, 0x22, 0xA1]
+      - [0xC3, 0x00, 0x02, 0x2A, 0x0B, 0x08, 0x48, 0x08, 0x04, 0x62, 0x30, 0x30]
+      - [0xC4, 0x40, 0x00, 0xAD, 0x68, 0x43, 0x07, 0x04, 0x16, 0x43, 0x07, 0x04]
+      - [0xD3, 0x28, 0x13]
+      - [0xD9, 0x00, 0x00, 0xFF, 0x00, 0xF0, 0x00]
+      - [0xDE, 0x01]
+      - [0xB7, 0x13, 0xE7, 0x64, 0x39, 0x06, 0x36, 0x19, 0x1C]
+      - [0xBE, 0x00]
+      - [0xC1, 0x00, 0x4A, 0x80]
+      - [0xC2, 0x00, 0x16, 0xDA, 0xE7]
+      - [0xC7, 0x00, 0x00, 0x00, 0x38, 0x08, 0x08, 0x00, 0x01]
+      - [0xC8, 0x00, 0x00, 0x00, 0x00, 0x15, 0x3B]
+      - [0xC9, 0x00, 0x16, 0x06, 0x04, 0x0A]
+      - [0xCA, 0x08, 0x35, 0x16, 0x1F, 0x1F]
+      - [0xCB, 0x01, 0x16, 0x07, 0x05, 0x0B]
+      - [0xCC, 0x09, 0x35, 0x16, 0x1F, 0x1F]
+      - [0xCD, 0x01, 0x16, 0x09, 0x0B, 0x05]
+      - [0xCE, 0x07, 0x15, 0x1F, 0x16, 0x1F]
+      - [0xCF, 0x00, 0x16, 0x08, 0x0A, 0x04]
+      - [0xD0, 0x06, 0x15, 0x1F, 0x16, 0x1F]
+      - [0xD1, 0x02, 0x30]
+      - [0xD2, 0x02, 0x03, 0x52, 0xDF, 0xDD]
+      - [0xD3, 0x3B, 0x04, 0x48]
+      - [0xD5, 0x10, 0x10, 0x07, 0x07, 0x0F, 0x94, 0x26]
+      - [0xD6, 0x00, 0x00, 0x40]
+      - [0xD7, 0x00, 0x00, 0x20]
+      - [0xDE, 0x02]
+      - [0xB6, 0x1C]
+      - [0xDE, 0x00]
+      - [0x4D, 0x00]
+      - [0x4E, 0x00]
+      - [0x4F, 0x00]
+      - [0x4C, 0x01]
+      - [0x4C, 0x00]
+      - [0x36, 0x00]
+      - [0x35]
+      - [0x2A, 0x00, 0x00, 0x01, 0x67]
+      - [0x2B, 0x00, 0x00, 0x01, 0x67]
+      - [0x11,120]
+      - [0x29,20]
+
+# ------------------------------------------------------------------
+# Encoder pins and button: this board uses direct GPIOs instead of the PCF8574.
+# Override the defaults from thermostat_common.yaml with !extend.
+# ------------------------------------------------------------------
+binary_sensor:
+  # Direct GPIO button without PCF8574 hardware debounce. Add an extra debounce
+  # filter so button bounce does not break the on_multi_click timing window.
+  - id: !extend encoder_button
+    pin:
+      pcf8574: !remove
+      number: GPIO41
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    filters:
+      - delayed_on_off: 30ms
+
+sensor:
+  - id: !extend temperature_encoder
+    resolution: 2
+    pin_a:
+      number: GPIO45 # Note: GPIO45 can trigger strapping warnings
+      ignore_strapping_warning: true
+      mode:
+        input: true
+        pullup: true
+    pin_b:
+      number: GPIO42
+      mode:
+        input: true
+        pullup: true
+
+# ------------------------------------------------------------------
+# LVGL – 3 Screens
+# ------------------------------------------------------------------
+lvgl:
+  # LVGL invalidates and redraws changed regions itself. Periodic full display
+  # updates make page transitions noticeably less fluid.
+  buffer_size: 12%
+  displays:
+    - my_display
+  touchscreens:
+    - my_touchscreen
+  bg_color: "0x000000"
+  default_font: rajdhani_medium_20
+  scrollable: false
+  scrollbar_mode: "OFF"
+
+  on_idle:
+    - timeout: !lambda 'return (uint32_t)(id(dim_delay_num).state * 1000.0f);'
+      then:
+        - lambda: 'id(display_dimmed) = true;'
+        - light.turn_on:
+            id: display_backlight
+            brightness: !lambda 'return id(dim_level_num).state / 100.0f;'
+        - script.execute: update_status_led
+    - timeout: !lambda 'return (uint32_t)(id(idle_home_num).state * 1000.0f);'
+      then:
+        - if:
+            condition:
+              lambda: |-
+                return id(connection_ready) && id(ui_context) != 8 && id(ui_context) != 9 &&
+                       id(ui_context) != 10 && id(ui_context) != 11;
+            then:
+              - lambda: 'id(ui_context) = 0;'
+              - script.execute: refresh_temps
+              - script.execute: refresh_status
+              - lvgl.page.show: screen_home
+
+  pages:
+    # ================= Home Assistant loading =================
+    - id: screen_loading
+      bg_color: "0x000000"
+      widgets:
+        - button:
+            id: button_loading_reboot_background
+            align: CENTER
+            width: 360
+            height: 360
+            radius: 0
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            hidden: true
+            on_click:
+              - button.press: restart_btn
+        - spinner:
+            id: spinner_ha_connection
+            align: CENTER
+            width: 114
+            height: 114
+            spin_time: 900ms
+            arc_length: 80deg
+            arc_color: 0x444444
+            arc_width: 10
+            indicator:
+              arc_color: 0xFFFFFF
+              arc_width: 10
+        - label:
+            id: icon_loading_config_error
+            text: "󰗖"
+            text_font: icons_alert_120
+            text_color: 0xFFFFFF
+            align: CENTER
+            hidden: true
+        - label:
+            id: label_loading_reboot_hint
+            text: "Press knob or touch\ndisplay to reboot"
+            text_font: rajdhani_medium_20
+            text_color: 0xB0B0B0
+            align: CENTER
+            y: 98
+            width: 240
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+            hidden: true
+        - label:
+            id: label_loading_status
+            text: "WiFi connecting..."
+            text_font: rajdhani_medium_20
+            text_color: 0x9A9A9A
+            align: CENTER
+            y: -90
+            width: 255
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+
+    # ================= First-boot setup wizard =================
+    # Welcome (auto-advances after 2s) -> language -> 10 HA-setup steps.
+    # No swipe/arrow navigation - each step only advances by pressing the
+    # knob. See refresh_wizard/wizard_next/wizard_finish.
+    - id: screen_wizard
+      bg_color: "0x000000"
+      widgets:
+        - button:
+            id: button_wizard_background
+            align: CENTER
+            width: 360
+            height: 360
+            radius: 0
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            on_click:
+              - script.execute: wake_display
+
+        # Shared by the Welcome page and the Language page (only one text is
+        # ever shown at a time - see refresh_wizard).
+        - label:
+            id: label_wizard_welcome
+            text: "Welcome"
+            text_font: rajdhani_semibold_60
+            text_color: 0xFFFFFF
+            align: CENTER
+            x: 0
+            y: 0
+            width: 285
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+            hidden: true
+        - label:
+            id: label_wizard_lang_hint
+            text: ""
+            text_font: rajdhani_medium_20
+            text_color: 0xCDBEEC
+            align: CENTER
+            y: 60
+            width: 255
+            text_align: CENTER
+            long_mode: WRAP
+            hidden: true
+
+        - label:
+            id: label_wizard_title
+            text: ""
+            text_font: rajdhani_medium_20
+            text_color: 0xCDBEEC
+            align: TOP_MID
+            y: 60
+            width: 285
+            text_align: CENTER
+            hidden: true
+        # Fixed-height clipping/scrolling viewport for label_wizard_body -
+        # some translations (esp. German step3/step4) are too long for the
+        # label height, so refresh_wizard/check_finish_effects auto-scroll
+        # the label inside this container top to bottom and back (see
+        # wizard_scroll_pause_until_ms). Hidden flag toggling now targets
+        # this container instead of the label directly.
+        - obj:
+            id: wizard_body_viewport
+            align: CENTER
+            width: 285
+            height: 173
+            bg_opa: TRANSP
+            border_width: 0
+            pad_all: 0
+            scrollbar_mode: "OFF"
+            hidden: true
+            widgets:
+              - label:
+                  id: label_wizard_body
+                  text: ""
+                  text_font: rajdhani_medium_20
+                  text_color: 0xEDEDED
+                  align: TOP_MID
+                  width: 285
+                  height: SIZE_CONTENT
+                  text_align: CENTER
+                  long_mode: WRAP
+        # Step 0 only - links to the full online guide (see refresh_wizard).
+        - qrcode:
+            id: wizard_qrcode
+            text: "https://smart-knob.vexur-software.com/guide/setup"
+            align: CENTER
+            size: 225
+            dark_color: 0x000000
+            light_color: 0xFFFFFF
+            hidden: true
+        - label:
+            id: label_wizard_finish_hint
+            text: ""
+            text_font: rajdhani_medium_20
+            text_color: 0x9A9A9A
+            align: BOTTOM_MID
+            y: -60
+            width: 285
+            text_align: CENTER
+            long_mode: WRAP
+            hidden: true
+
+        - label:
+            id: label_wizard_page
+            text: ""
+            text_font: rajdhani_medium_20
+            text_color: 0xCDBEEC
+            align: TOP_MID
+            y: 23
+            hidden: true
+
+    # ================= Home-Screen =================
+    - id: screen_home
+      bg_color: "0x000000"
+      # The rotated CST816 reports physical vertical gestures as left/right.
+      on_swipe_left:
+        - script.execute: open_thermostat_quick
+      on_swipe_right:
+        - script.execute: open_thermostat_quick
+      widgets:
+        - button:
+            id: button_home_background
+            align: CENTER
+            width: 360
+            height: 360
+            radius: 0
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            on_click:
+              - script.execute: open_home_thermostat
+
+        - label:
+            id: label_home_hvac_mode
+            text: "Heat"
+            text_font: rajdhani_medium_20
+            text_color: 0xEDEDED
+            align: TOP_MID
+            y: 38
+        - label:
+            id: label_home_preset
+            text: ""
+            text_font: rajdhani_medium_20
+            text_color: 0x9A9A9A
+            align: TOP_MID
+            y: 60
+        - label:
+            id: label_conn_home
+            text: "WiFi connecting..."
+            text_font: rajdhani_medium_20
+            text_color: 0x9A9A9A
+            align: TOP_MID
+            y: 60
+            width: 315
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+            hidden: true
+
+        - label:
+            id: label_home_current_temperature
+            text: "38"
+            text_font: rajdhani_bold_190
+            text_color: 0xFFFFFF
+            align: CENTER
+            x: -12
+            width: 225
+            text_align: RIGHT
+        - label:
+            id: label_home_current_unit
+            text: "°C"
+            text_font: rajdhani_semibold_60
+            text_color: 0xB0B0B0
+            align: CENTER
+            x: 130
+            y: -40
+            width: 75
+            text_align: LEFT
+        - label:
+            id: label_home_current_decimal
+            text: ".0"
+            text_font: rajdhani_semibold_60
+            text_color: 0xFFFFFF
+            align: CENTER
+            x: 138
+            y: 36
+            width: 75
+            text_align: LEFT
+        - label:
+            id: icon_mode_home
+            text: ""
+            text_font: icons_64
+            text_color: 0x9A9A9A
+            align: CENTER
+            x: -141
+
+        - label:
+            id: label_home_humidity
+            text: "43%"
+            text_font: rajdhani_semibold_36
+            text_color: 0x9A9A9A
+            align: CENTER
+            y: 87
+            text_align: CENTER
+            hidden: true
+
+        - label:
+            id: label_home_time
+            text: "21:05"
+            text_font: rajdhani_semibold_38
+            text_color: 0xE0E0E0
+            align: BOTTOM_MID
+            x: -45
+            y: -30
+            width: 105
+            text_align: RIGHT
+        - label:
+            id: label_home_weekday
+            text: "Tue"
+            text_font: rajdhani_medium_20
+            text_color: 0xB0B0B0
+            align: BOTTOM_MID
+            x: 48
+            y: -49
+            width: 68
+            text_align: LEFT
+        - label:
+            id: label_home_date
+            text: "07 Jul"
+            text_font: rajdhani_medium_20
+            text_color: 0x8A8A8A
+            align: BOTTOM_MID
+            x: 48
+            y: -32
+            width: 68
+            text_align: LEFT
+
+    # ================= Thermostat-Screen =================
+    - id: screen_thermostat
+      bg_color: "0x000000"
+      # CST816 is mounted rotated: physical horizontal gestures are reported
+      # by LVGL on the vertical gesture axis.
+      on_swipe_down:
+        - script.execute: open_settings
+      on_swipe_up:
+        - script.execute: open_entity_overview
+      # On the rotated CST816, physical vertical gestures arrive as left/right.
+      on_swipe_left:
+        - script.execute: open_thermostat_quick
+      on_swipe_right:
+        - script.execute: open_thermostat_quick
+      widgets:
+        - button:
+            id: button_thermostat_background
+            align: CENTER
+            width: 357
+            height: 357
+            radius: 0
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            on_click:
+              - script.execute: wake_display
+
+        - arc:
+            id: arc_temperature_track
+            align: CENTER
+            width: 357
+            height: 357
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 135
+            end_angle: 45
+            rotation: 0
+            arc_color: 0x1C1C1C
+            arc_width: 24
+            arc_rounded: true
+            adjustable: false
+            clickable: false
+            x: 0
+            y: 0
+            indicator:
+              arc_opa: TRANSP
+
+        - arc:
+            id: arc_temperature_heat
+            align: CENTER
+            width: 357
+            height: 357
+            min_value: 0
+            max_value: 100
+            value: 18
+            start_angle: 135
+            end_angle: 45
+            rotation: 0
+            arc_color: 0xDCE3E7
+            arc_opa: TRANSP
+            arc_width: 24
+            arc_rounded: true
+            adjustable: true
+            clickable: false
+            x: 0
+            y: 0
+            indicator:
+              arc_color: 0xF3A0A8
+              arc_width: 24
+              arc_rounded: true
+            knob:
+              bg_color: 0xF7FBFD
+              bg_opa: COVER
+              border_color: 0xEE5263
+              border_width: 3
+              radius: 100%
+              pad_all: 0
+
+        - arc:
+            id: arc_temperature_cool
+            align: CENTER
+            width: 357
+            height: 357
+            min_value: 0
+            max_value: 100
+            value: 12
+            start_angle: 135
+            end_angle: 45
+            rotation: 0
+            mode: REVERSE
+            arc_color: 0xDCE3E7
+            arc_opa: TRANSP
+            arc_width: 24
+            arc_rounded: true
+            adjustable: true
+            clickable: false
+            x: 0
+            y: 0
+            indicator:
+              arc_color: 0x72C7F2
+              arc_width: 24
+              arc_rounded: true
+            knob:
+              bg_color: 0xF7FBFD
+              bg_opa: COVER
+              border_color: 0x159DDD
+              border_width: 3
+              radius: 100%
+              pad_all: 0
+
+        - arc:
+            id: arc_temperature_current
+            align: CENTER
+            width: 357
+            height: 357
+            min_value: 0
+            max_value: 100
+            value: 60
+            start_angle: 135
+            end_angle: 45
+            rotation: 0
+            arc_color: 0xDCE3E7
+            arc_opa: TRANSP
+            arc_width: 24
+            arc_rounded: true
+            adjustable: true
+            clickable: false
+            x: 0
+            y: 0
+            indicator:
+              arc_color: 0x808081
+              arc_opa: TRANSP
+              arc_width: 24
+            knob:
+              bg_color: 0x808081
+              bg_opa: COVER
+              border_width: 0
+              radius: 100%
+              pad_all: -5
+
+        - label:
+            id: label_hvac_mode
+            text: "Heat"
+            text_font: rajdhani_medium_20
+            text_color: 0xEDEDED
+            align: TOP_MID
+            y: 60
+        - label:
+            id: label_preset
+            text: ""
+            text_font: rajdhani_medium_20
+            text_color: 0x9A9A9A
+            align: TOP_MID
+            y: 83
+        - label:
+            id: label_conn_thermo
+            text: "WiFi connecting..."
+            text_font: rajdhani_medium_20
+            text_color: 0x9A9A9A
+            align: TOP_MID
+            y: 83
+            width: 315
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+            hidden: true
+
+        - label:
+            id: icon_mode_thermo
+            text: ""
+            text_font: icons_48
+            text_color: 0x9A9A9A
+            align: CENTER
+            x: -84
+            y: -45
+        - label:
+            id: icon_thermo_current
+            text: ""
+            text_font: icons_22
+            text_color: 0xFF5A2D
+            align: CENTER
+            x: -120
+            y: 0
+            hidden: true
+        - label:
+            id: label_current_temperature
+            text: "20.5°"
+            text_font: rajdhani_semibold_30
+            text_color: 0xDADADA
+            align: CENTER
+            x: -87
+            y: 0
+            width: 83
+            text_align: RIGHT
+        - label:
+            id: icon_hum_thermo
+            text: ""
+            text_font: icons_22
+            text_color: 0x6EC6FF
+            align: CENTER
+            x: -120
+            y: 38
+            hidden: true
+        - label:
+            id: label_humidity_thermo
+            text: "48%"
+            text_font: rajdhani_semibold_30
+            text_color: 0x9A9A9A
+            align: CENTER
+            x: -87
+            y: 38
+            width: 83
+            text_align: RIGHT
+            hidden: true
+
+        - obj:
+            id: divider_thermostat
+            align: CENTER
+            x: -39
+            y: 3
+            width: 3
+            height: 120
+            bg_color: 0x3A3A3A
+            border_width: 0
+            radius: 0
+
+        - label:
+            id: label_target_temperature
+            text: "38"
+            text_font: rajdhani_bold_130
+            text_color: 0xFFFFFF
+            align: CENTER
+            x: 25
+            y: 8
+            width: 160
+            text_align: RIGHT
+        - label:
+            id: label_target_unit
+            text: "°C"
+            text_font: rajdhani_semibold_44
+            text_color: 0xB0B0B0
+            align: CENTER
+            x: 122
+            y: -18
+            width: 45
+            text_align: LEFT
+        - label:
+            id: label_target_decimal
+            text: ".0"
+            text_font: rajdhani_semibold_44
+            text_color: 0xFFFFFF
+            align: CENTER
+            x: 128
+            y: 30
+            width: 45
+            text_align: LEFT
+        # Shows which target the encoder changes in dual-setpoint mode:
+        # TRV/low or AC/high.
+        - label:
+            id: label_setpoint_mode
+            text: ""
+            text_font: rajdhani_medium_20
+            text_color: 0x9A9A9A
+            align: CENTER
+            x: 48
+            y: 72
+            hidden: true
+
+        - label:
+            id: label_climate_name
+            text: ""
+            text_font: rajdhani_medium_20
+            text_color: 0x9A9A9A
+            align: BOTTOM_MID
+            y: -42
+            width: 150
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+        - label:
+            id: label_climate_page
+            text: "1 / 1"
+            text_font: rajdhani_medium_20
+            text_color: 0x555555
+            align: BOTTOM_MID
+            y: -18
+
+    # ================= Light control =================
+    - id: screen_light_brightness
+      bg_color: "0x000000"
+      # With swap_xy, physical left/right arrive as up/down.
+      on_swipe_down:
+        - script.execute: open_settings
+      on_swipe_up:
+        - script.execute: open_entity_overview
+      on_swipe_left:
+        - script.execute: {id: cycle_light_mode, direction: -1}
+      on_swipe_right:
+        - script.execute: {id: cycle_light_mode, direction: 1}
+      widgets:
+        - button:
+            id: button_light_background
+            align: CENTER
+            width: 357
+            height: 357
+            radius: 0
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            on_click:
+              - script.execute: wake_display
+
+        # Brightness scale: slim outlined pill, subtle ticks and one white
+        # vertical position marker, matching the physical dial reference.
+        - obj:
+            id: light_brightness_scale
+            align: CENTER
+            y: 105
+            width: 255
+            height: 51
+            radius: 26
+            bg_color: 0x08090A
+            bg_opa: COVER
+            border_color: 0x35383B
+            border_width: 1
+            shadow_width: 0
+        - label:
+            id: label_light_brightness_ticks
+            text: "| | | | | | | | | | | | |"
+            text_font: rajdhani_medium_20
+            text_color: 0x34373A
+            align: CENTER
+            y: 105
+            width: 201
+            text_align: CENTER
+
+        # Kelvin scale. The adjacent blocks are deliberately narrow enough
+        # to read as one continuous warm-to-cool gradient on the round panel.
+        # Native rounded gradient fill instead of two clipped child rectangles:
+        # clip_corner masking a hard-edged gradient rectangle at the rounded
+        # cap left pale/washed-out pixels right at the curve on this panel.
+        - obj:
+            id: light_kelvin_scale
+            align: CENTER
+            y: 105
+            width: 216
+            height: 48
+            radius: 24
+            bg_color: 0xFFAA32
+            bg_grad_color: 0x55B5E8
+            bg_grad_dir: HOR
+            bg_opa: COVER
+            border_color: 0x35383B
+            border_width: 1
+            shadow_width: 0
+            hidden: true
+        - obj:
+            id: light_slider_knob
+            align: CENTER
+            y: 105
+            width: 8
+            height: 42
+            radius: 5
+            bg_color: 0xFFFFFF
+            bg_opa: COVER
+            border_width: 0
+            shadow_width: 0
+
+        - label:
+            id: label_light_name
+            text: "Light"
+            text_font: rajdhani_medium_30
+            text_color: 0x9A9A9A
+            align: CENTER
+            y: -60
+            width: 225
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+        - label:
+            id: label_light_mode
+            text: "Helligkeit"
+            text_font: rajdhani_medium_20
+            text_color: 0xB0B0B0
+            align: CENTER
+            y: 53
+            width: 225
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+        - label:
+            id: label_light_value
+            text: "50%"
+            text_font: rajdhani_semibold_60
+            text_color: 0xFFFFFF
+            align: CENTER
+            y: 0
+            width: 225
+            text_align: CENTER
+        - label:
+            id: label_light_icon_brightness
+            text: "\U000F00DF"
+            text_font: icons_54
+            text_color: 0x555555
+            align: CENTER
+            y: -120
+        - label:
+            id: label_light_state
+            text: "Loading..."
+            text_font: rajdhani_medium_20
+            text_color: 0x777777
+            align: BOTTOM_MID
+            y: -41
+            width: 180
+            hidden: true
+        - label:
+            id: label_light_page
+            text: "1 / 1"
+            text_font: rajdhani_medium_20
+            text_color: 0x555555
+            align: TOP_RIGHT
+            x: -15
+            y: 12
+        - obj: &light_mode_dot_240
+            align: LEFT_MID
+            x: 43
+            width: 10
+            height: 10
+            radius: 6
+            bg_opa: COVER
+            border_width: 0
+        - obj: { <<: *light_mode_dot_240, id: light_mode_dot_0, y: -24, bg_color: 0xFFFFFF }
+        - obj: { <<: *light_mode_dot_240, id: light_mode_dot_1, y: 0, bg_color: 0x292B2E }
+        - obj: { <<: *light_mode_dot_240, id: light_mode_dot_2, y: 24, bg_color: 0x292B2E }
+
+    - id: screen_light_temperature
+      bg_color: "0x000000"
+      on_swipe_down:
+        - script.execute: open_settings
+      on_swipe_up:
+        - script.execute: open_entity_overview
+      on_swipe_left:
+        - script.execute: {id: cycle_light_mode, direction: -1}
+      on_swipe_right:
+        - script.execute: {id: cycle_light_mode, direction: 1}
+      widgets:
+        - button:
+            align: CENTER
+            width: 357
+            height: 357
+            radius: 0
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            on_click:
+              - script.execute: wake_display
+        - label:
+            id: label_light_icon_temperature
+            text: "\U000F18D7"
+            text_font: icons_54
+            text_color: 0x555555
+            align: CENTER
+            y: -120
+
+    - id: screen_light_color
+      bg_color: "0x000000"
+      on_swipe_down:
+        - script.execute: open_settings
+      on_swipe_up:
+        - script.execute: open_entity_overview
+      on_swipe_left:
+        - script.execute: {id: cycle_light_mode, direction: -1}
+      on_swipe_right:
+        - script.execute: {id: cycle_light_mode, direction: 1}
+      widgets:
+        - button:
+            align: CENTER
+            width: 357
+            height: 357
+            radius: 0
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            on_click:
+              - script.execute: wake_display
+        - label:
+            id: label_light_icon_color
+            text: "\U000F03D8"
+            text_font: icons_54
+            text_color: 0x555555
+            align: CENTER
+            y: -120
+        # Center preview of the currently selected color preset.
+        - obj:
+            id: light_color_swatch
+            align: CENTER
+            width: 42
+            height: 42
+            radius: 21
+            bg_color: 0xFF6655
+            bg_opa: COVER
+            border_color: 0xD7D7D7
+            border_width: 3
+
+        # 18 fixed color presets in a ring instead of a full hue arc: cycling
+        # a 96-segment arc every refresh was too slow on this panel, and
+        # precomputed swatch colors (LIGHT_COLOR_PRESETS) need no per-refresh
+        # HSV conversion at all.
+        - obj: &light_color_preset_240
+            align: CENTER
+            width: 27
+            height: 27
+            radius: 14
+            bg_color: 0xFFFFFF
+            bg_opa: COVER
+            border_width: 0
+            shadow_width: 0
+        - obj: { <<: *light_color_preset_240, id: light_color_preset_0, x: 0, y: -156 }
+        - obj: { <<: *light_color_preset_240, id: light_color_preset_1, x: 54, y: -147 }
+        - obj: { <<: *light_color_preset_240, id: light_color_preset_2, x: 101, y: -120 }
+        - obj: { <<: *light_color_preset_240, id: light_color_preset_3, x: 135, y: -78 }
+        - obj: { <<: *light_color_preset_240, id: light_color_preset_4, x: 153, y: -27 }
+        - obj: { <<: *light_color_preset_240, id: light_color_preset_5, x: 153, y: 27 }
+        - obj: { <<: *light_color_preset_240, id: light_color_preset_6, x: 135, y: 78 }
+        - obj: { <<: *light_color_preset_240, id: light_color_preset_7, x: 101, y: 120 }
+        - obj: { <<: *light_color_preset_240, id: light_color_preset_8, x: 54, y: 147 }
+        - obj: { <<: *light_color_preset_240, id: light_color_preset_9, x: 0, y: 156 }
+        - obj: { <<: *light_color_preset_240, id: light_color_preset_10, x: -54, y: 147 }
+        - obj: { <<: *light_color_preset_240, id: light_color_preset_11, x: -101, y: 120 }
+        - obj: { <<: *light_color_preset_240, id: light_color_preset_12, x: -135, y: 78 }
+        - obj: { <<: *light_color_preset_240, id: light_color_preset_13, x: -153, y: 27 }
+        - obj: { <<: *light_color_preset_240, id: light_color_preset_14, x: -153, y: -27 }
+        - obj: { <<: *light_color_preset_240, id: light_color_preset_15, x: -135, y: -78 }
+        - obj: { <<: *light_color_preset_240, id: light_color_preset_16, x: -101, y: -120 }
+        - obj: { <<: *light_color_preset_240, id: light_color_preset_17, x: -54, y: -147 }
+
+    # ================= Cover control (Rollos/Gardinen) =================
+    - id: screen_cover
+      bg_color: "0x241B3D"
+      # With swap_xy, physical left/right arrive as up/down.
+      on_swipe_down:
+        - script.execute: open_settings
+      on_swipe_up:
+        - script.execute: open_entity_overview
+      on_swipe_left:
+        - script.execute: cover_close_full
+      on_swipe_right:
+        - script.execute: cover_open_full
+      widgets:
+        - button:
+            id: button_cover_background
+            align: CENTER
+            width: 357
+            height: 357
+            radius: 0
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            on_click:
+              - script.execute: wake_display
+
+        # Liquid-fill gauge: grows up from the bottom edge with the cover
+        # position, so the colored area itself is the slider.
+        - obj:
+            id: cover_fill
+            align: TOP_MID
+            width: 360
+            height: 0
+            radius: 0
+            bg_color: 0x6E4FBD
+            bg_opa: COVER
+            border_width: 0
+            shadow_width: 0
+
+        # Handle riding the bottom edge of cover_fill.
+        - obj:
+            id: cover_fill_knob
+            align: TOP_MID
+            y: 64
+            width: 105
+            height: 12
+            radius: 6
+            bg_color: 0xFFFFFF
+            bg_opa: COVER
+            border_color: 0x9A9A9A
+            border_width: 3
+            shadow_width: 0
+
+        # Direction hints: up = open, down = close.
+        - label:
+            id: label_cover_arrow_up
+            text: "\U000F0143"
+            text_font: icons_54
+            text_color: 0xCDBEEC
+            align: TOP_MID
+            y: 27
+        - label:
+            id: label_cover_arrow_down
+            text: "\U000F0140"
+            text_font: icons_54
+            text_color: 0xCDBEEC
+            align: BOTTOM_MID
+            y: -27
+
+        - label:
+            id: label_cover_icon
+            text: "\U000F111C"
+            text_font: icons_54
+            text_color: 0xFFFFFF
+            align: CENTER
+            y: -68
+
+        - label:
+            id: label_cover_value
+            text: "50%"
+            text_font: rajdhani_semibold_60
+            text_color: 0xFFFFFF
+            align: CENTER
+            width: 225
+            text_align: CENTER
+
+        - label:
+            id: label_cover_name
+            text: "Cover"
+            text_font: rajdhani_medium_20
+            text_color: 0xF0EDFB
+            align: CENTER
+            y: 44
+            width: 225
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+        - label:
+            id: label_cover_mode
+            text: "Rollo"
+            text_font: rajdhani_medium_20
+            text_color: 0xCDBEEC
+            align: CENTER
+            y: 83
+            width: 225
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+
+        - label:
+            id: label_cover_page
+            text: "1 / 1"
+            text_font: rajdhani_medium_20
+            text_color: 0xCDBEEC
+            align: TOP_RIGHT
+            x: -15
+            y: 12
+
+    # ================= Timer =================
+    - id: screen_timer
+      bg_color: "0x000000"
+      on_swipe_down:
+        - script.execute: open_settings
+      on_swipe_up:
+        - script.execute: open_entity_overview
+      on_swipe_left:
+        - script.execute: timer_next
+      on_swipe_right:
+        - script.execute: timer_previous
+      widgets:
+        - button:
+            id: button_timer_background
+            align: CENTER
+            width: 357
+            height: 357
+            radius: 0
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            on_click:
+              - script.execute: wake_display
+
+        - arc:
+            id: arc_timer_track
+            align: CENTER
+            width: 357
+            height: 357
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 0
+            end_angle: 360
+            rotation: 270
+            arc_color: 0x1C1C1C
+            arc_width: 24
+            arc_rounded: true
+            adjustable: false
+            clickable: false
+            indicator:
+              arc_opa: TRANSP
+
+        - arc:
+            id: arc_timer_value
+            align: CENTER
+            width: 357
+            height: 357
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 0
+            end_angle: 360
+            rotation: 270
+            arc_color: 0xDCE3E7
+            arc_opa: TRANSP
+            arc_width: 24
+            arc_rounded: true
+            adjustable: false
+            clickable: false
+            indicator:
+              arc_color: 0x6E4FBD
+              arc_width: 24
+              arc_rounded: true
+
+        - label:
+            id: label_timer_value
+            text: "--:--:--"
+            text_font: rajdhani_semibold_60
+            text_color: 0xFFFFFF
+            align: CENTER
+            width: 270
+            text_align: CENTER
+
+        - label:
+            id: label_timer_title
+            text: ""
+            text_font: rajdhani_medium_20
+            text_color: 0xCDBEEC
+            align: CENTER
+            y: 60
+            width: 270
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+            hidden: true
+
+        # Shown instead of the cancel-confirm dialog once the entry has
+        # finished - a single press removes it right away (see timer_click).
+        - label:
+            id: label_timer_remove_hint
+            text: ""
+            text_font: rajdhani_medium_20
+            text_color: 0x9A9A9A
+            align: CENTER
+            y: 93
+            width: 270
+            text_align: CENTER
+            long_mode: WRAP
+            hidden: true
+
+        # Cancel-confirmation overlay, shown on the first knob click while
+        # this screen is open. Hidden by default.
+        - obj:
+            id: timer_cancel_backdrop
+            align: CENTER
+            width: 357
+            height: 357
+            radius: 178
+            bg_color: 0x000000
+            bg_opa: 85%
+            border_width: 0
+            shadow_width: 0
+            hidden: true
+        - label:
+            id: label_timer_cancel_confirm
+            text: "Cancel timer?\nPress again to confirm"
+            text_font: rajdhani_medium_20
+            text_color: 0xFFFFFF
+            align: CENTER
+            width: 285
+            text_align: CENTER
+            hidden: true
+
+        # Shown only while more than one page (real entries + the add page)
+        # is available - same glyphs/positions as the Notify screen's.
+        - label:
+            id: label_timer_arrow_prev
+            text: "\U000F0143"
+            text_font: icons_54
+            text_color: 0xCDBEEC
+            align: TOP_MID
+            y: 27
+            hidden: true
+        - label:
+            id: label_timer_arrow_next
+            text: "\U000F0140"
+            text_font: icons_54
+            text_color: 0xCDBEEC
+            align: BOTTOM_MID
+            y: -27
+            hidden: true
+        - label:
+            id: label_timer_page
+            text: ""
+            text_font: rajdhani_medium_20
+            text_color: 0xCDBEEC
+            align: TOP_MID
+            y: 68
+            hidden: true
+
+    # ================= Progress =================
+    - id: screen_progress
+      bg_color: "0x000000"
+      on_swipe_down:
+        - script.execute: open_settings
+      on_swipe_up:
+        - script.execute: open_entity_overview
+      on_swipe_left:
+        - script.execute: progress_next
+      on_swipe_right:
+        - script.execute: progress_previous
+      widgets:
+        - button:
+            id: button_progress_background
+            align: CENTER
+            width: 357
+            height: 357
+            radius: 0
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            on_click:
+              - script.execute: wake_display
+
+        - arc:
+            id: arc_progress_track
+            align: CENTER
+            width: 357
+            height: 357
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 0
+            end_angle: 360
+            rotation: 270
+            arc_color: 0x1C1C1C
+            arc_width: 24
+            arc_rounded: true
+            adjustable: false
+            clickable: false
+            indicator:
+              arc_opa: TRANSP
+
+        - arc:
+            id: arc_progress_value
+            align: CENTER
+            width: 357
+            height: 357
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 0
+            end_angle: 360
+            rotation: 270
+            arc_color: 0xDCE3E7
+            arc_opa: TRANSP
+            arc_width: 24
+            arc_rounded: true
+            adjustable: false
+            clickable: false
+            indicator:
+              arc_color: 0x6E4FBD
+              arc_width: 24
+              arc_rounded: true
+
+        - label:
+            id: label_progress_value
+            text: "0%"
+            text_font: rajdhani_semibold_60
+            text_color: 0xFFFFFF
+            align: CENTER
+            width: 285
+            text_align: CENTER
+
+        - label:
+            id: label_progress_title
+            text: ""
+            text_font: rajdhani_medium_20
+            text_color: 0xCDBEEC
+            align: CENTER
+            y: 60
+            width: 285
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+            hidden: true
+
+        - label:
+            id: label_progress_arrow_prev
+            text: "\U000F0143"
+            text_font: icons_54
+            text_color: 0xCDBEEC
+            align: TOP_MID
+            y: 27
+            hidden: true
+        - label:
+            id: label_progress_arrow_next
+            text: "\U000F0140"
+            text_font: icons_54
+            text_color: 0xCDBEEC
+            align: BOTTOM_MID
+            y: -27
+            hidden: true
+        - label:
+            id: label_progress_page
+            text: ""
+            text_font: rajdhani_medium_20
+            text_color: 0xCDBEEC
+            align: TOP_MID
+            y: 68
+            hidden: true
+
+    # ================= Notify =================
+    # Same construction as Progress above, but the two labels swap roles:
+    # the big center label is the notify title (not a "%" value), and the
+    # small label becomes a subtext pinned to the top instead of below.
+    - id: screen_notify
+      bg_color: "0x000000"
+      on_swipe_down:
+        - script.execute: open_settings
+      on_swipe_up:
+        - script.execute: open_entity_overview
+      # With swap_xy, physical up/down arrive as left/right - same axis the
+      # Cover screen uses for its own open/close swipe action.
+      on_swipe_left:
+        - script.execute: notify_next
+      on_swipe_right:
+        - script.execute: notify_previous
+      widgets:
+        - button:
+            id: button_notify_background
+            align: CENTER
+            width: 357
+            height: 357
+            radius: 0
+            bg_opa: TRANSP
+            border_width: 0
+            shadow_width: 0
+            on_click:
+              - script.execute: wake_display
+
+        # Hidden by default - only shown for a queue entry that set an
+        # "end" date-time (see refresh_notify), same countdown behavior as
+        # the Timer screen's arc.
+        - arc:
+            id: arc_notify_track
+            align: CENTER
+            width: 357
+            height: 357
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 0
+            end_angle: 360
+            rotation: 270
+            arc_color: 0x1C1C1C
+            arc_width: 24
+            arc_rounded: true
+            adjustable: false
+            clickable: false
+            hidden: true
+            indicator:
+              arc_opa: TRANSP
+
+        - arc:
+            id: arc_notify_value
+            align: CENTER
+            width: 357
+            height: 357
+            min_value: 0
+            max_value: 100
+            value: 0
+            start_angle: 0
+            end_angle: 360
+            rotation: 270
+            arc_color: 0xDCE3E7
+            arc_opa: TRANSP
+            arc_width: 24
+            arc_rounded: true
+            adjustable: false
+            clickable: false
+            hidden: true
+            indicator:
+              arc_color: 0x6E4FBD
+              arc_width: 24
+              arc_rounded: true
+
+        - label:
+            id: label_notify_title
+            text: ""
+            text_font: rajdhani_semibold_60
+            text_color: 0xFFFFFF
+            align: CENTER
+            width: 285
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+
+        - label:
+            id: label_notify_subtext
+            text: ""
+            text_font: rajdhani_medium_20
+            text_color: 0xCDBEEC
+            align: CENTER
+            y: 60
+            width: 285
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+            hidden: true
+
+        # Shown only while more than one notification (static + queue) is
+        # available - same glyphs/positions as the Cover screen's direction
+        # hints, repurposed here for "swipe to browse".
+        - label:
+            id: label_notify_arrow_prev
+            text: "\U000F0143"
+            text_font: icons_54
+            text_color: 0xCDBEEC
+            align: TOP_MID
+            y: 27
+            hidden: true
+        - label:
+            id: label_notify_arrow_next
+            text: "\U000F0140"
+            text_font: icons_54
+            text_color: 0xCDBEEC
+            align: BOTTOM_MID
+            y: -27
+            hidden: true
+        - label:
+            id: label_notify_page
+            text: ""
+            text_font: rajdhani_medium_20
+            text_color: 0xCDBEEC
+            align: TOP_MID
+            y: 68
+            hidden: true
+
+    # ================= Settings menu =================
+    - id: screen_navigation
+      bg_color: "0x000000"
+      on_swipe_up:
+        - script.execute: settings_swipe_back
+      on_swipe_left:
+        - script.execute: cycle_thermostat_quick
+      on_swipe_right:
+        - script.execute: cycle_thermostat_quick
+      widgets:
+        - label:
+            id: label_settings_title
+            text: "Settings"
+            text_font: rajdhani_medium_20
+            text_color: 0x686868
+            align: TOP_MID
+            y: 18
+        # Required by the shared five-row renderer; kept hidden on 240x240.
+        - label:
+            id: label_menu_icon_prev2
+            text: ""
+            text_font: icons_22
+            hidden: true
+        - label:
+            id: label_menu_icon_prev
+            text: ""
+            text_font: icons_24
+            text_color: 0x555555
+            align: CENTER
+            x: -108
+            y: -72
+            width: 42
+            text_align: CENTER
+        - label:
+            id: label_menu_icon
+            text: ""
+            text_font: icons_48
+            text_color: 0xFFFFFF
+            align: CENTER
+            x: -138
+            width: 42
+            text_align: CENTER
+        - label:
+            id: label_menu_icon_next
+            text: ""
+            text_font: icons_24
+            text_color: 0x555555
+            align: CENTER
+            x: -108
+            y: 72
+            width: 42
+            text_align: CENTER
+        - label:
+            id: label_menu_icon_next2
+            text: ""
+            text_font: icons_22
+            hidden: true
+
+        - label:
+            id: label_menu_prev2
+            text: ""
+            text_font: rajdhani_medium_20
+            hidden: true
+        - label:
+            id: label_menu_prev
+            text: ""
+            text_font: rajdhani_medium_20
+            text_color: 0x555555
+            align: CENTER
+            x: 45
+            y: -72
+            width: 225
+            text_align: LEFT
+            long_mode: SCROLL_CIRCULAR
+        - label:
+            id: label_menu_current
+            text: ""
+            text_font: rajdhani_semibold_36
+            text_color: 0xFFFFFF
+            align: CENTER
+            x: 30
+            width: 255
+            text_align: LEFT
+            long_mode: SCROLL_CIRCULAR
+        - label:
+            id: label_menu_next
+            text: ""
+            text_font: rajdhani_medium_20
+            text_color: 0x555555
+            align: CENTER
+            x: 45
+            y: 72
+            width: 255
+            text_align: LEFT
+            long_mode: SCROLL_CIRCULAR
+        - label:
+            id: label_menu_next2
+            text: ""
+            text_font: rajdhani_medium_20
+            hidden: true
+
+        - label:
+            id: label_menu_value
+            text: ""
+            text_font: rajdhani_medium_20
+            text_color: 0x9A9A9A
+            align: BOTTOM_MID
+            y: -33
+            width: 285
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+
+# ------------------------------------------------------------------
+# Extra font sizes for the native 240x240 layout.
+# ------------------------------------------------------------------
+font:
+  - file: "assets/fonts/Rajdhani-Bold.ttf"
+    id: rajdhani_bold_130
+    size: 130
+    bpp: 4
+    glyphs: &rajdhani_glyphs [
+        "0123456789",
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        "abcdefghijklmnopqrstuvwxyz",
+        "äöüÄÖÜß",
+        " .,:%°·-/=()|?",
+      ]
+  - file: "assets/fonts/Rajdhani-Bold.ttf"
+    id: rajdhani_bold_190
+    size: 190
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
+    id: icons_22
+    size: 22
+    bpp: 4
+    glyphs: &mdi_glyphs_all [
+        "\U000F05A8", "\U000F020A",
+        "󰈸", "󰜗", "󰔢", "󰐥",
+        "󰔏", "󰖎", "󰗖",
+        "󰎓", "󰘮", "󰃞", "󰅐",
+        "󰗊", "󰏘", "󰈈", "󰔄",
+        "󰔟", "󰃜", "󰏰", "󰇣",
+        "󰔡", "󰑧", "󰖩", "󰋽",
+        "󰜉", "󰌵", "󰃟", "󰁍",
+        "\U000F18D7", "\U000F111C",
+        "\U000F0143", "\U000F0140",
+      ]
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
+    id: icons_24
+    size: 24
+    bpp: 4
+    glyphs: *mdi_glyphs_all
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
+    id: icons_48
+    size: 48
+    bpp: 4
+    glyphs: *mdi_glyphs_all  
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
+    id: icons_54
+    size: 54
+    bpp: 4
+    glyphs: *mdi_glyphs_all
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
+    id: icons_64
+    size: 64
+    bpp: 4
+    glyphs: *mdi_glyphs_all
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
+    id: icons_alert_120
+    size: 120
+    bpp: 4
+    glyphs: ["󰗖"]
+  - file: "assets/fonts/Rajdhani-SemiBold.ttf"
+    id: rajdhani_semibold_30
+    size: 30
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+  - file: "assets/fonts/Rajdhani-SemiBold.ttf"
+    id: rajdhani_semibold_36
+    size: 36
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+  - file: "assets/fonts/Rajdhani-SemiBold.ttf"
+    id: rajdhani_semibold_38
+    size: 38
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+  - file: "assets/fonts/Rajdhani-SemiBold.ttf"
+    id: rajdhani_semibold_44
+    size: 44
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+  - file: "assets/fonts/Rajdhani-SemiBold.ttf"
+    id: rajdhani_semibold_60
+    size: 60
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+  - file: "assets/fonts/Rajdhani-Medium.ttf"
+    id: rajdhani_medium_20
+    size: 20
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+  - file: "assets/fonts/Rajdhani-Medium.ttf"
+    id: rajdhani_medium_30
+    size: 30
+    bpp: 4
+    glyphs: *rajdhani_glyphs
+
+
+# ------------------------------------------------------------------
+# Status LED, WS2812 strip according to Elecrow docs: LED_PIN=48, LED_NUM=5.
+# It glows blue-white outside idle mode and turns off while dimmed.
+# ------------------------------------------------------------------
+light:
+  - platform: esp32_rmt_led_strip
+    id: status_led
+    name: "Status LED"
+    internal: true
+    pin: GPIO48
+    num_leds: 5
+    channel_colors: GRB
+    chipset: WS2812
+    default_transition_length: 0s
+
+script:
+  - id: !extend update_status_led
+    then:
+      - if:
+          # Do not touch the LED before on_boot(-100) is complete. Restored
+          # select values can trigger refresh_status before RMT/WS2812 setup.
+          condition:
+            lambda: 'return !id(app_booted);'
+          then: []
+          else:
+            # Timer/Progress/Notify finish LED takes priority over the normal
+            # HVAC-color display - it's a deliberate alert, so it ignores
+            # led_enabled/display_dimmed the same way the old forced-
+            # backlight blink used to. Only while still on the respective
+            # screen - leaving it (even with the entry still finished) stops
+            # the effect. All three read led_mode (0 off/1 on-solid/2 blink)
+            # and color from whichever queue entry is currently displayed -
+            # there is no separate global switch/select for any of them.
+            - if:
+                condition:
+                  lambda: |-
+                    return current_screen_led_mode(id(ui_context), id(timer_queue), id(timer_queue_index),
+                                                     id(progress_queue), id(progress_queue_index),
+                                                     id(notify_queue), id(notify_queue_index),
+                                                     id(notify_finished), id(ha_time).now()) == 2;
+                then:
+                  - if:
+                      condition:
+                        lambda: 'return id(blink_led_on);'
+                      then:
+                        - light.turn_on:
+                            id: status_led
+                            brightness: !lambda |-
+                                if (id(ui_context) == 8) return id(timer_blink_led_brightness_num).state / 100.0f;
+                                if (id(ui_context) == 9) return id(progress_blink_led_brightness_num).state / 100.0f;
+                                return id(notify_blink_led_brightness_num).state / 100.0f;
+                            red: !lambda |-
+                                return current_screen_led_color(id(ui_context), id(timer_queue), id(timer_queue_index),
+                                                                 id(progress_queue), id(progress_queue_index),
+                                                                 id(notify_queue), id(notify_queue_index)).r;
+                            green: !lambda |-
+                                return current_screen_led_color(id(ui_context), id(timer_queue), id(timer_queue_index),
+                                                                 id(progress_queue), id(progress_queue_index),
+                                                                 id(notify_queue), id(notify_queue_index)).g;
+                            blue: !lambda |-
+                                return current_screen_led_color(id(ui_context), id(timer_queue), id(timer_queue_index),
+                                                                 id(progress_queue), id(progress_queue_index),
+                                                                 id(notify_queue), id(notify_queue_index)).b;
+                      else:
+                        - light.turn_off: status_led
+                else:
+                  - if:
+                      # "On" (solid, not blinking) mode.
+                      condition:
+                        lambda: |-
+                          return current_screen_led_mode(id(ui_context), id(timer_queue), id(timer_queue_index),
+                                                          id(progress_queue), id(progress_queue_index),
+                                                          id(notify_queue), id(notify_queue_index),
+                                                          id(notify_finished), id(ha_time).now()) == 1;
+                      then:
+                        - light.turn_on:
+                            id: status_led
+                            brightness: !lambda |-
+                                if (id(ui_context) == 8) return id(timer_blink_led_brightness_num).state / 100.0f;
+                                if (id(ui_context) == 9) return id(progress_blink_led_brightness_num).state / 100.0f;
+                                return id(notify_blink_led_brightness_num).state / 100.0f;
+                            red: !lambda |-
+                                return current_screen_led_color(id(ui_context), id(timer_queue), id(timer_queue_index),
+                                                                 id(progress_queue), id(progress_queue_index),
+                                                                 id(notify_queue), id(notify_queue_index)).r;
+                            green: !lambda |-
+                                return current_screen_led_color(id(ui_context), id(timer_queue), id(timer_queue_index),
+                                                                 id(progress_queue), id(progress_queue_index),
+                                                                 id(notify_queue), id(notify_queue_index)).g;
+                            blue: !lambda |-
+                                return current_screen_led_color(id(ui_context), id(timer_queue), id(timer_queue_index),
+                                                                 id(progress_queue), id(progress_queue_index),
+                                                                 id(notify_queue), id(notify_queue_index)).b;
+                      else:
+                        - if:
+                            condition:
+                              lambda: 'return id(display_dimmed) || !id(led_enabled).state;'
+                            then:
+                              - light.turn_off: status_led
+                            else:
+                              - light.turn_on:
+                                  id: status_led
+                                  brightness: !lambda 'return id(led_brightness_num).state / 100.0f;'
+                                  red: !lambda |-
+                                      bool dual = !std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v));
+                                      return hvac_led_color(id(current_hvac_raw), dual, id(adjust_target)).r;
+                                  green: !lambda |-
+                                      bool dual = !std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v));
+                                      return hvac_led_color(id(current_hvac_raw), dual, id(adjust_target)).g;
+                                  blue: !lambda |-
+                                      bool dual = !std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v));
+                                      return hvac_led_color(id(current_hvac_raw), dual, id(adjust_target)).b;
+
+  - id: !extend preview_led_brightness
+    then:
+      - if:
+          condition:
+            lambda: 'return id(app_booted);'
+          then:
+            - light.turn_on:
+                id: status_led
+                brightness: !lambda 'return id(num_preview) / 100.0f;'
+                red: !lambda |-
+                    bool dual = !std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v));
+                    return hvac_led_color(id(current_hvac_raw), dual, id(adjust_target)).r;
+                green: !lambda |-
+                    bool dual = !std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v));
+                    return hvac_led_color(id(current_hvac_raw), dual, id(adjust_target)).g;
+                blue: !lambda |-
+                    bool dual = !std::isnan(id(target_low_v)) && !std::isnan(id(target_high_v));
+                    return hvac_led_color(id(current_hvac_raw), dual, id(adjust_target)).b;
