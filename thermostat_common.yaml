@@ -172,10 +172,10 @@ esp32:
   # setup-wizard flag, brightness, ...) reset once on the first boot after
   # flashing this change - expected, they'll persist normally afterwards.
   flash_size: 16MB
+  cpu_frequency: 240MHz
   framework:
     type: esp-idf
     sdkconfig_options:
-      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: y
       CONFIG_ESP32S3_DATA_CACHE_64KB: y
       # Both off: code/rodata execute from flash (via flash cache) instead
       # of being placed in PSRAM. When these are on, esp_psram.c has to
@@ -1618,9 +1618,9 @@ sensor:
       then:
         - script.execute: wake_display
         - lambda: |-
-            // Erstes Event nur als Referenz nehmen: der Encoder kann nach
-            // einem Neustart einen alten Zaehlerstand liefern -> sonst
-            // entsteht ein Riesen-Delta (Symptom: Sprung auf Max-Temp).
+            // Take the first event as a reference only: after a restart the
+            // encoder can report a stale counter value -> otherwise this
+            // yields a huge delta (symptom: jump to max temperature).
             static bool first_event = true;
             static int32_t last_raw = 0;
             int32_t raw = (int32_t) x;
@@ -1965,7 +1965,7 @@ text:
   # replaces that entry (upsert), which is how HA updates a running
   # percentage.
   - platform: template
-    name: "[Progress] Add/Update Progress"
+    name: "[Progress] Add|Update Progress"
     id: progress_add_txt
     icon: "mdi:progress-check"
     optimistic: true

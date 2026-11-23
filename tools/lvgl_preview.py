@@ -41,6 +41,7 @@ PORT = 8123
 # Board variants: name -> (YAML file, native panel size)
 BOARDS = [
     ("480x480", PROJECT / "thermostat_480.yaml", 480),
+    ("360x360", PROJECT / "thermostat_360.yaml", 360),
     ("240x240", PROJECT / "thermostat_240.yaml", 240),
 ]
 WATCH_FILES = [COMMON_FILE] + [p for _, p, _ in BOARDS]
